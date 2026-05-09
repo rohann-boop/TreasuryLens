@@ -1,5 +1,5 @@
 import type { InstrumentSnapshot } from "@shared/schema";
-import { fmtPrice, fmtPct, fmtCompact } from "@/lib/format";
+import { fmtPrice, fmtPct, fmtCompact, fmtNum } from "@/lib/format";
 import { Delta } from "@/components/Delta";
 import { cn } from "@/lib/utils";
 
@@ -37,8 +37,11 @@ export function ComparisonTable({
               <th className="px-3 py-2 font-medium text-right">YTD</th>
               <th className="px-3 py-2 font-medium text-right">RSI 14</th>
               <th className="px-3 py-2 font-medium text-right">Vol 30D</th>
+              <th className="px-3 py-2 font-medium text-right hidden lg:table-cell">Max DD</th>
+              <th className="px-3 py-2 font-medium text-right hidden lg:table-cell">β 90D BTC</th>
               <th className="px-3 py-2 font-medium text-right hidden md:table-cell">52W↓</th>
               <th className="px-3 py-2 font-medium text-right hidden md:table-cell">Mkt Cap</th>
+              <th className="px-3 py-2 font-medium text-right hidden md:table-cell">P/E</th>
               <th className="px-3 py-2 font-medium text-right">Status</th>
             </tr>
           </thead>
@@ -80,15 +83,47 @@ export function ComparisonTable({
                 <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
                   {fmtPct(s.vol30dAnnualized, 0, false)}
                 </td>
+                <td
+                  className={cn(
+                    "px-3 py-2 text-right tabular-nums hidden lg:table-cell",
+                    s.maxDrawdownPct != null && s.maxDrawdownPct <= -25
+                      ? "text-neg"
+                      : "text-muted-foreground",
+                  )}
+                  data-testid={`cell-mdd-${s.instrument.id}`}
+                >
+                  {s.maxDrawdownPct != null
+                    ? fmtPct(s.maxDrawdownPct, 0)
+                    : "—"}
+                </td>
+                <td
+                  className="px-3 py-2 text-right tabular-nums text-muted-foreground hidden lg:table-cell"
+                  data-testid={`cell-beta-${s.instrument.id}`}
+                >
+                  {s.relIsSelf
+                    ? "—"
+                    : s.betaToBtc90d != null
+                    ? fmtNum(s.betaToBtc90d, 2)
+                    : "—"}
+                </td>
                 <td className="px-3 py-2 text-right tabular-nums hidden md:table-cell">
                   <span className={cn(s.distFrom52wHigh != null && s.distFrom52wHigh <= -25 ? "text-neg" : "text-muted-foreground")}>
                     {fmtPct(s.distFrom52wHigh, 1)}
                   </span>
                 </td>
-                <td className="px-3 py-2 text-right tabular-nums text-muted-foreground hidden md:table-cell">
+                <td
+                  className="px-3 py-2 text-right tabular-nums text-muted-foreground hidden md:table-cell"
+                  data-testid={`cell-mcap-${s.instrument.id}`}
+                >
                   {s.marketCap != null
                     ? `${s.currency === "JPY" ? "¥" : "$"}${fmtCompact(s.marketCap)}`
                     : "—"}
+                </td>
+                <td
+                  className="px-3 py-2 text-right tabular-nums text-muted-foreground hidden md:table-cell"
+                  data-testid={`cell-pe-${s.instrument.id}`}
+                >
+                  {s.peRatio != null ? fmtNum(s.peRatio, 1) : "N/A"}
                 </td>
                 <td className="px-3 py-2 text-right">
                   <StatusBadge status={s.status} source={s.source} />
@@ -98,7 +133,7 @@ export function ComparisonTable({
             {snaps.length === 0 && (
               <tr>
                 <td
-                  colSpan={11}
+                  colSpan={14}
                   className="px-4 py-8 text-center text-sm text-muted-foreground"
                 >
                   No instruments to compare.

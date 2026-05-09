@@ -1,9 +1,10 @@
-import { instruments, treasuryMetrics } from "@shared/schema";
+import { instruments, treasuryMetrics, treasuryHistory } from "@shared/schema";
 import type {
   Instrument,
   InsertInstrument,
   Treasury,
   InsertTreasury,
+  TreasuryHistory,
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
@@ -36,6 +37,16 @@ CREATE TABLE IF NOT EXISTS treasury_metrics (
   notes TEXT,
   updated_at INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS treasury_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  instrument_id INTEGER NOT NULL,
+  btc_holdings REAL,
+  shares_outstanding REAL,
+  fx_rate REAL,
+  captured_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_treasury_history_instrument
+  ON treasury_history(instrument_id, captured_at);
 `);
 
 export interface IStorage {
@@ -46,6 +57,7 @@ export interface IStorage {
   deleteInstrument(id: number): Promise<boolean>;
   getTreasury(instrumentId: number): Promise<Treasury | undefined>;
   upsertTreasury(data: InsertTreasury): Promise<Treasury>;
+  listTreasuryHistory(instrumentId: number): Promise<TreasuryHistory[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -91,26 +103,70 @@ export class DatabaseStorage implements IStorage {
 
   async upsertTreasury(data: InsertTreasury): Promise<Treasury> {
     const existing = await this.getTreasury(data.instrumentId);
-    const payload = { ...data, updatedAt: Date.now() };
+    const now = Date.now();
+    const payload = { ...data, updatedAt: now };
+    let row: Treasury;
     if (existing) {
-      return db
+      row = db
         .update(treasuryMetrics)
         .set(payload)
         .where(eq(treasuryMetrics.id, existing.id))
         .returning()
         .get();
+    } else {
+      row = db.insert(treasuryMetrics).values(payload).returning().get();
     }
-    return db.insert(treasuryMetrics).values(payload).returning().get();
+    // Record a history point only when at least one numeric input is present.
+    // Avoids logging blank "placeholder" rows. We also skip if the most
+    // recent history row is identical to the new one (no information added).
+    if (
+      data.btcHoldings != null ||
+      data.sharesOutstanding != null ||
+      data.fxRate != null
+    ) {
+      const recent = db
+        .select()
+        .from(treasuryHistory)
+        .where(eq(treasuryHistory.instrumentId, data.instrumentId))
+        .orderBy(asc(treasuryHistory.capturedAt))
+        .all();
+      const last = recent[recent.length - 1];
+      const same =
+        last &&
+        last.btcHoldings === (data.btcHoldings ?? null) &&
+        last.sharesOutstanding === (data.sharesOutstanding ?? null) &&
+        last.fxRate === (data.fxRate ?? null);
+      if (!same) {
+        db.insert(treasuryHistory)
+          .values({
+            instrumentId: data.instrumentId,
+            btcHoldings: data.btcHoldings ?? null,
+            sharesOutstanding: data.sharesOutstanding ?? null,
+            fxRate: data.fxRate ?? null,
+            capturedAt: now,
+          })
+          .run();
+      }
+    }
+    return row;
+  }
+
+  async listTreasuryHistory(instrumentId: number): Promise<TreasuryHistory[]> {
+    return db
+      .select()
+      .from(treasuryHistory)
+      .where(eq(treasuryHistory.instrumentId, instrumentId))
+      .orderBy(asc(treasuryHistory.capturedAt))
+      .all();
   }
 }
 
 export const storage = new DatabaseStorage();
 
-// Seed Bitcoin and Metaplanet on first boot
-async function seed() {
-  const existing = await storage.listInstruments();
-  if (existing.length > 0) return;
-  await storage.createInstrument({
+// Default instruments — idempotently ensured on every boot. New entries
+// added here are added to existing databases without duplicating.
+const DEFAULT_INSTRUMENTS: InsertInstrument[] = [
+  {
     symbol: "BTC-USD",
     displayName: "Bitcoin",
     assetClass: "crypto",
@@ -119,8 +175,8 @@ async function seed() {
     notes: "Reference benchmark for digital assets.",
     sortOrder: 0,
     pinned: true,
-  });
-  const meta = await storage.createInstrument({
+  },
+  {
     symbol: "3350.T",
     displayName: "Metaplanet",
     assetClass: "equity",
@@ -129,17 +185,43 @@ async function seed() {
     notes: "Tokyo-listed Bitcoin treasury company.",
     sortOrder: 1,
     pinned: true,
-  });
-  // Seed empty Metaplanet treasury record so the panel renders
-  await storage.upsertTreasury({
-    instrumentId: meta.id,
-    btcHoldings: null,
-    sharesOutstanding: null,
-    fxRate: null,
-    notes:
-      "Metaplanet does not publish a real-time API. Enter the latest disclosed BTC holdings and share count from corporate filings to compute BTC NAV and mNAV.",
-    updatedAt: Date.now(),
-  });
+  },
+  {
+    symbol: "TSLA",
+    displayName: "Tesla",
+    assetClass: "equity",
+    quoteCurrency: "USD",
+    dataSource: "yahoo",
+    notes: "NASDAQ-listed equity tracked alongside crypto-treasury names.",
+    sortOrder: 2,
+    pinned: true,
+  },
+];
+
+async function ensureSeed() {
+  for (const def of DEFAULT_INSTRUMENTS) {
+    const existing = await storage.getInstrumentBySymbol(def.symbol);
+    if (!existing) {
+      await storage.createInstrument(def);
+    }
+  }
+  // Seed empty Metaplanet treasury record so the panel renders — only if
+  // no row exists yet (preserves user edits on subsequent boots).
+  const meta = await storage.getInstrumentBySymbol("3350.T");
+  if (meta) {
+    const t = await storage.getTreasury(meta.id);
+    if (!t) {
+      await storage.upsertTreasury({
+        instrumentId: meta.id,
+        btcHoldings: null,
+        sharesOutstanding: null,
+        fxRate: null,
+        notes:
+          "Metaplanet does not publish a real-time API. Enter the latest disclosed BTC holdings and share count from corporate filings to compute BTC NAV, mNAV, BTC/share and BTC yield.",
+        updatedAt: Date.now(),
+      });
+    }
+  }
 }
 
-seed().catch((e) => console.error("Seed error", e));
+ensureSeed().catch((e) => console.error("Seed error", e));

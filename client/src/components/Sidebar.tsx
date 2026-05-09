@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Plus, Bitcoin, LineChart, BarChart3, Trash2 } from "lucide-react";
+import { Plus, Bitcoin, LineChart, BarChart3, Trash2, PanelLeftClose } from "lucide-react";
 import type { Instrument, InstrumentSnapshot } from "@shared/schema";
 import { fmtPrice } from "@/lib/format";
 import { Delta } from "@/components/Delta";
@@ -23,11 +23,13 @@ export function Sidebar({
   selectedId,
   onSelect,
   onAdd,
+  onCollapse,
 }: {
   instruments: Instrument[];
   selectedId: number | null;
   onSelect: (id: number) => void;
   onAdd: () => void;
+  onCollapse?: () => void;
 }) {
   const { data: snaps = [] } = useQuery<InstrumentSnapshot[]>({
     queryKey: ["/api/snapshots"],
@@ -52,8 +54,20 @@ export function Sidebar({
       className="flex flex-col h-full bg-sidebar border-r border-sidebar-border w-[260px] shrink-0"
       data-testid="sidebar"
     >
-      <div className="px-4 h-14 flex items-center border-b border-sidebar-border">
-        <WordMark />
+      <div className="px-3 h-14 flex items-center justify-between gap-2 border-b border-sidebar-border">
+        <div className="pl-1"><WordMark /></div>
+        {onCollapse && (
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-8 w-8"
+            onClick={onCollapse}
+            aria-label="Collapse sidebar"
+            data-testid="button-sidebar-collapse"
+          >
+            <PanelLeftClose className="h-4 w-4" />
+          </Button>
+        )}
       </div>
 
       <div className="px-3 py-3 flex items-center justify-between border-b border-sidebar-border">

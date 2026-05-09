@@ -3,79 +3,156 @@ import { createServer } from "node:http";
 import type { Server } from "node:http";
 import { storage } from "./storage";
 import { buildSnapshot } from "./marketData";
+import type { Bar } from "./indicators";
 import {
   insertInstrumentSchema,
   insertTreasurySchema,
+  type Instrument,
   type InstrumentSnapshot,
   type TreasurySnapshot,
+  type TreasuryHistoryPoint,
 } from "@shared/schema";
 import { z } from "zod";
 
-// Tiny in-memory cache for snapshots: 60s TTL
+// Tiny in-memory cache for snapshots: 60s TTL. Reused by /api/snapshots,
+// /api/ticker, and the per-instrument endpoints to avoid hammering Yahoo /
+// CoinGecko on rapid polls.
 const cache = new Map<string, { at: number; data: InstrumentSnapshot }>();
 const TTL_MS = 60_000;
+
+/**
+ * Build (or hit cache for) the BTC snapshot first, then build the requested
+ * instrument with BTC's bars passed in so relative metrics (corr/beta/relPerf)
+ * can be computed without a second provider hit.
+ */
+async function getBtcContext(): Promise<{
+  btcSnap: InstrumentSnapshot | null;
+  btcBars: Bar[] | null;
+}> {
+  const btcInst = await storage.getInstrumentBySymbol("BTC-USD");
+  if (!btcInst) return { btcSnap: null, btcBars: null };
+  const key = `${btcInst.id}:${btcInst.symbol}`;
+  const c = cache.get(key);
+  if (c && Date.now() - c.at < TTL_MS) {
+    return {
+      btcSnap: c.data,
+      btcBars: c.data.history.map((h) => ({
+        t: h.t,
+        o: h.o,
+        h: h.h,
+        l: h.l,
+        c: h.c,
+        v: h.v,
+      })),
+    };
+  }
+  const snap = await buildSnapshot(btcInst, null);
+  cache.set(key, { at: Date.now(), data: snap });
+  return {
+    btcSnap: snap,
+    btcBars: snap.history.map((h) => ({
+      t: h.t,
+      o: h.o,
+      h: h.h,
+      l: h.l,
+      c: h.c,
+      v: h.v,
+    })),
+  };
+}
+
+async function attachTreasury(
+  inst: Instrument,
+  snap: InstrumentSnapshot,
+  btcSpot: number | null,
+): Promise<void> {
+  const t = await storage.getTreasury(inst.id);
+  if (!t) return;
+  const btcNavUsd =
+    t.btcHoldings != null && btcSpot != null ? t.btcHoldings * btcSpot : null;
+  // fxRate convention: units of quote currency per 1 USD (e.g. JPY≈150).
+  const fx = t.fxRate ?? (snap.currency === "USD" ? 1 : null);
+  const btcNavQuote = btcNavUsd != null && fx != null ? btcNavUsd * fx : null;
+  const btcNavPerShare =
+    btcNavQuote != null && t.sharesOutstanding && t.sharesOutstanding > 0
+      ? btcNavQuote / t.sharesOutstanding
+      : null;
+  const marketCap =
+    snap.marketCap ??
+    (snap.price != null && t.sharesOutstanding != null
+      ? snap.price * t.sharesOutstanding
+      : null);
+  const mNav =
+    marketCap != null && btcNavQuote && btcNavQuote > 0
+      ? marketCap / btcNavQuote
+      : null;
+  const btcPerShare =
+    t.btcHoldings != null && t.sharesOutstanding && t.sharesOutstanding > 0
+      ? t.btcHoldings / t.sharesOutstanding
+      : null;
+
+  // BTC yield = % change in BTC/share since the earliest historical
+  // snapshot. Requires at least 2 history points with both fields set.
+  const rawHistory = await storage.listTreasuryHistory(inst.id);
+  const history: TreasuryHistoryPoint[] = rawHistory.map((h) => ({
+    capturedAt: h.capturedAt,
+    btcHoldings: h.btcHoldings,
+    sharesOutstanding: h.sharesOutstanding,
+    btcPerShare:
+      h.btcHoldings != null && h.sharesOutstanding && h.sharesOutstanding > 0
+        ? h.btcHoldings / h.sharesOutstanding
+        : null,
+  }));
+  let btcYieldPct: number | null = null;
+  let yieldSinceMs: number | null = null;
+  const usable = history.filter((h) => h.btcPerShare != null);
+  if (usable.length >= 2 && btcPerShare != null) {
+    const first = usable[0];
+    if (first.btcPerShare != null && first.btcPerShare > 0) {
+      btcYieldPct =
+        ((btcPerShare - first.btcPerShare) / first.btcPerShare) * 100;
+      yieldSinceMs = first.capturedAt;
+    }
+  }
+
+  const treasury: TreasurySnapshot = {
+    btcHoldings: t.btcHoldings,
+    sharesOutstanding: t.sharesOutstanding,
+    fxRate: t.fxRate,
+    btcNavUsd,
+    btcNavPerShare,
+    mNav,
+    marketCap,
+    notes: t.notes,
+    updatedAt: t.updatedAt,
+    btcPerShare,
+    btcYieldPct,
+    historyPoints: usable.length,
+    yieldSinceMs,
+    history,
+  };
+  snap.treasury = treasury;
+}
 
 async function getSnapshot(
   instrumentId: number,
   force = false,
+  btcCtx?: { btcSnap: InstrumentSnapshot | null; btcBars: Bar[] | null },
 ): Promise<InstrumentSnapshot | null> {
   const inst = await storage.getInstrument(instrumentId);
   if (!inst) return null;
   const key = `${inst.id}:${inst.symbol}`;
   const c = cache.get(key);
   if (!force && c && Date.now() - c.at < TTL_MS) return c.data;
-  const snap = await buildSnapshot(inst);
-  // Attach treasury data if present
-  const t = await storage.getTreasury(inst.id);
-  if (t) {
-    let btcSpot: number | null = null;
-    if (t.btcHoldings != null) {
-      // Need a BTC USD price — find BTC instrument snapshot or fetch
-      const btcInst = await storage.getInstrumentBySymbol("BTC-USD");
-      if (btcInst) {
-        const btcKey = `${btcInst.id}:${btcInst.symbol}`;
-        let btcSnap: InstrumentSnapshot | undefined =
-          cache.get(btcKey)?.data;
-        if (!btcSnap || Date.now() - (cache.get(btcKey)?.at ?? 0) > TTL_MS) {
-          btcSnap = await buildSnapshot(btcInst);
-          cache.set(btcKey, { at: Date.now(), data: btcSnap });
-        }
-        btcSpot = btcSnap.price;
-      }
-    }
-    const btcNavUsd =
-      t.btcHoldings != null && btcSpot != null ? t.btcHoldings * btcSpot : null;
-    // fxRate convention: units of quote currency per 1 USD (e.g. JPY≈150).
-    // For USD-quoted instruments, default to 1.
-    const fx = t.fxRate ?? (snap.currency === "USD" ? 1 : null);
-    const btcNavQuote =
-      btcNavUsd != null && fx != null ? btcNavUsd * fx : null;
-    const btcNavPerShare =
-      btcNavQuote != null && t.sharesOutstanding && t.sharesOutstanding > 0
-        ? btcNavQuote / t.sharesOutstanding
-        : null;
-    const marketCap =
-      snap.marketCap ??
-      (snap.price != null && t.sharesOutstanding != null
-        ? snap.price * t.sharesOutstanding
-        : null);
-    const mNav =
-      marketCap != null && btcNavQuote && btcNavQuote > 0
-        ? marketCap / btcNavQuote
-        : null;
-    const treasury: TreasurySnapshot = {
-      btcHoldings: t.btcHoldings,
-      sharesOutstanding: t.sharesOutstanding,
-      fxRate: t.fxRate,
-      btcNavUsd,
-      btcNavPerShare,
-      mNav,
-      marketCap,
-      notes: t.notes,
-      updatedAt: t.updatedAt,
-    };
-    snap.treasury = treasury;
-  }
+
+  // Resolve BTC bars / spot once \u2014 needed both for relative metrics and
+  // for treasury NAV calculations on equity instruments.
+  const ctx = btcCtx ?? (await getBtcContext());
+  const btcBars =
+    inst.symbol === "BTC-USD" ? null : ctx.btcBars;
+
+  const snap = await buildSnapshot(inst, btcBars);
+  await attachTreasury(inst, snap, ctx.btcSnap?.price ?? null);
   cache.set(key, { at: Date.now(), data: snap });
   return snap;
 }
@@ -94,7 +171,6 @@ export async function registerRoutes(
   app.post("/api/instruments", async (req, res) => {
     try {
       const parsed = insertInstrumentSchema.parse(req.body);
-      // dedupe symbol
       const existing = await storage.getInstrumentBySymbol(parsed.symbol);
       if (existing) {
         return res
@@ -129,23 +205,29 @@ export async function registerRoutes(
     res.json(snap);
   });
 
-  // Bulk snapshots
+  // Bulk snapshots \u2014 build BTC first, then thread its bars through to all
+  // other instruments so relative metrics can be computed without a second
+  // BTC provider hit.
   app.get("/api/snapshots", async (req, res) => {
     const force = req.query.refresh === "1";
     const list = await storage.listInstruments();
+    if (force) {
+      // Bust cache for everyone in this batch
+      for (const i of list) cache.delete(`${i.id}:${i.symbol}`);
+    }
+    const btcCtx = await getBtcContext();
     const snaps = await Promise.all(
-      list.map((i) => getSnapshot(i.id, force).catch(() => null)),
+      list.map((i) => getSnapshot(i.id, false, btcCtx).catch(() => null)),
     );
     res.json(snaps.filter(Boolean));
   });
 
   // Lightweight ticker: minimal snapshot fields for the ticker tape.
-  // Reuses the same snapshot cache so it never triggers extra provider calls
-  // when the cache is warm. Returns only the fields the strip renders.
   app.get("/api/ticker", async (_req, res) => {
     const list = await storage.listInstruments();
+    const btcCtx = await getBtcContext();
     const snaps = await Promise.all(
-      list.map((i) => getSnapshot(i.id, false).catch(() => null)),
+      list.map((i) => getSnapshot(i.id, false, btcCtx).catch(() => null)),
     );
     const items = snaps
       .filter((s): s is InstrumentSnapshot => !!s)
@@ -175,7 +257,6 @@ export async function registerRoutes(
         instrumentId: id,
       });
       const t = await storage.upsertTreasury(parsed);
-      // bust cache
       const inst = await storage.getInstrument(id);
       if (inst) cache.delete(`${inst.id}:${inst.symbol}`);
       res.json(t);
@@ -191,6 +272,15 @@ export async function registerRoutes(
     const id = Number(req.params.id);
     const t = await storage.getTreasury(id);
     res.json(t ?? null);
+  });
+
+  // Treasury history \u2014 used by the BTC yield calc and (optionally) the UI
+  // for a sparkline of BTC/share over time.
+  app.get("/api/instruments/:id/treasury/history", async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "bad id" });
+    const hist = await storage.listTreasuryHistory(id);
+    res.json(hist);
   });
 
   return httpServer;

@@ -8,8 +8,11 @@ import {
   high52w,
   lastSma,
   low52w,
+  maxDrawdown,
+  relativeMetrics,
   returnPct,
   rsi,
+  sharpeLike,
   trendOf,
   ytdReturn,
 } from "./indicators";
@@ -63,6 +66,11 @@ interface YahooQuote {
       marketCap?: number;
       currency?: string;
       symbol?: string;
+      // Trailing P/E — not always present (Yahoo strips it for some
+      // ETFs / international tickers / crypto pairs).
+      trailingPE?: number;
+      forwardPE?: number;
+      epsTrailingTwelveMonths?: number;
     }>;
     error?: unknown;
   };
@@ -130,6 +138,79 @@ export async function fetchYahooQuote(symbol: string) {
     } catch {}
   }
   return null;
+}
+
+/**
+ * Stooq quote fallback. Stooq's `/q/l/` endpoint returns a single line of
+ * CSV with the latest open/high/low/close/volume for almost any symbol
+ * without an API key. We use it as a safety net when Yahoo blocks (HTTP 429
+ * is common from sandboxed IPs). It only gives one bar, so we still need a
+ * historical series — we splice the Stooq close onto the cached/demo bars
+ * so the price tile can be live even when Yahoo is unreachable.
+ */
+function yahooToStooqSymbol(yahooSymbol: string): string | null {
+  // Yahoo crypto pair: BTC-USD → stooq btcusd
+  if (/-USD$/.test(yahooSymbol)) {
+    return yahooSymbol.replace(/-USD$/, "").toLowerCase() + "usd";
+  }
+  // Yahoo Tokyo equity: 3350.T → stooq 3350.jp
+  const tokyo = yahooSymbol.match(/^(\d{4})\.T$/);
+  if (tokyo) return `${tokyo[1].toLowerCase()}.jp`;
+  // Yahoo London: BARC.L → stooq barc.uk
+  const london = yahooSymbol.match(/^([A-Z]+)\.L$/);
+  if (london) return `${london[1].toLowerCase()}.uk`;
+  // Default: assume US equity → lower-case + .us
+  if (/^[A-Z]{1,5}$/.test(yahooSymbol)) return `${yahooSymbol.toLowerCase()}.us`;
+  return null;
+}
+
+export interface StooqQuote {
+  symbol: string;
+  date: string;
+  time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  ts: number; // epoch ms parsed from date+time (UTC — Stooq uses CET/CEST without offset)
+}
+
+export async function fetchStooqQuote(
+  yahooSymbol: string,
+): Promise<StooqQuote | null> {
+  const sym = yahooToStooqSymbol(yahooSymbol);
+  if (!sym) return null;
+  try {
+    const url = `https://stooq.com/q/l/?s=${encodeURIComponent(sym)}&f=sd2t2ohlcv&h&e=csv`;
+    const r = await fetch(url, {
+      headers: { "User-Agent": YAHOO_HEADERS["User-Agent"] },
+    });
+    if (!r.ok) return null;
+    const text = await r.text();
+    const lines = text.trim().split(/\r?\n/);
+    if (lines.length < 2) return null;
+    const row = lines[1].split(",");
+    if (row.length < 7) return null;
+    const [s, date, time, o, h, l, c, v] = row;
+    const close = Number(c);
+    if (!Number.isFinite(close) || close <= 0) return null;
+    // Stooq's date/time is roughly the last trade timestamp. Parse loosely.
+    const ts = Date.parse(`${date}T${time || "00:00:00"}Z`);
+    return {
+      symbol: s,
+      date,
+      time,
+      open: Number(o),
+      high: Number(h),
+      low: Number(l),
+      close,
+      volume: Number(v) || 0,
+      ts: Number.isFinite(ts) ? ts : Date.now(),
+    };
+  } catch {
+    return null;
+  }
 }
 
 // CoinGecko fallback (BTC market data, dominance)
@@ -210,6 +291,7 @@ function seededDemoBars(seed: number, base: number, days = 400): Bar[] {
 
 export async function buildSnapshot(
   instrument: Instrument,
+  btcBars?: Bar[] | null,
 ): Promise<InstrumentSnapshot> {
   let bars: Bar[] | null = null;
   let status: "live" | "demo" | "error" = "live";
@@ -253,7 +335,9 @@ export async function buildSnapshot(
     source = "yahoo";
   }
 
-  // Yahoo quote for marketCap + volume (where available)
+  // Yahoo quote for marketCap + volume + P/E (where available)
+  let peRatio: number | null = null;
+  let peSource: string | null = null;
   if (instrument.dataSource === "yahoo" || source === "yahoo") {
     const q = await fetchYahooQuote(instrument.symbol);
     if (q) {
@@ -262,18 +346,69 @@ export async function buildSnapshot(
       if (q.averageDailyVolume3Month != null)
         avgVolume = q.averageDailyVolume3Month;
       if (q.currency) currency = q.currency;
+      if (typeof q.trailingPE === "number" && Number.isFinite(q.trailingPE)) {
+        peRatio = q.trailingPE;
+        peSource = "yahoo";
+      } else if (
+        typeof q.forwardPE === "number" &&
+        Number.isFinite(q.forwardPE)
+      ) {
+        // Fall back to forward P/E when trailing is unavailable. Forward is
+        // less ideal but better than N/A for fast-moving names.
+        peRatio = q.forwardPE;
+        peSource = "yahoo";
+      }
     }
   }
 
+  // Yahoo failed — try Stooq's quote endpoint as a live-price safety net.
+  // We splice the Stooq close onto a seeded historical series so price/
+  // change KPIs can stay near-live even when Yahoo blocks. Indicators that
+  // depend on long history are still computed off the synthetic series; the
+  // status message tells the user clearly.
+  let stooqQuote: typeof undefined | Awaited<ReturnType<typeof fetchStooqQuote>> = undefined;
   if (!bars || bars.length < 5) {
-    status = "demo";
-    message = "Live data unavailable — showing seeded demo series.";
+    stooqQuote = await fetchStooqQuote(instrument.symbol);
+  }
+
+  if (!bars || bars.length < 5) {
     const seed =
       Array.from(instrument.symbol).reduce((a, c) => a + c.charCodeAt(0), 0) +
       instrument.id;
     const base = instrument.assetClass === "crypto" ? 60000 : 100;
-    bars = seededDemoBars(seed, base);
-    source = "demo";
+    const synthetic = seededDemoBars(seed, base);
+    if (stooqQuote) {
+      // Splice Stooq's latest open/close onto the last two bars so 1D change
+      // is meaningful and the displayed price is real.
+      const last = synthetic[synthetic.length - 1];
+      const prev = synthetic[synthetic.length - 2];
+      // Anchor the last bar to Stooq's actual values.
+      synthetic[synthetic.length - 1] = {
+        ...last,
+        t: stooqQuote.ts || last.t,
+        o: stooqQuote.open,
+        h: stooqQuote.high,
+        l: stooqQuote.low,
+        c: stooqQuote.close,
+        v: stooqQuote.volume || last.v,
+      };
+      // Anchor the previous bar's close so 1D % change uses Stooq's open as
+      // a reasonable proxy for prior close (Stooq's CSV does not return
+      // prior close on this endpoint).
+      synthetic[synthetic.length - 2] = {
+        ...prev,
+        c: stooqQuote.open,
+      };
+      status = "live";
+      source = "stooq";
+      message =
+        "Live price via Stooq. Long-history indicators (vol, drawdown, SMAs) use a seeded series because Yahoo chart was rate-limited.";
+    } else {
+      status = "demo";
+      source = "demo";
+      message = "Live data unavailable — showing seeded demo series.";
+    }
+    bars = synthetic;
   }
 
   const closes = bars.map((b) => b.c);
@@ -301,6 +436,40 @@ export async function buildSnapshot(
   const lo52 = low52w(bars);
   const distHi =
     hi52 != null && price ? ((price - hi52) / hi52) * 100 : null;
+
+  // Advanced indicators — deterministic, history-based.
+  const mdd = maxDrawdown(closes);
+  const sharpe30 = sharpeLike(closes, 30);
+
+  // Relative-to-BTC metrics. For BTC itself, these are self-referential and
+  // intentionally null (the UI flags `relIsSelf`).
+  const relIsSelf = instrument.symbol === "BTC-USD";
+  let corr30: number | null = null;
+  let corr90: number | null = null;
+  let b30: number | null = null;
+  let b90: number | null = null;
+  let relPerf30: number | null = null;
+  let relPerf90: number | null = null;
+  if (!relIsSelf && btcBars && btcBars.length > 30) {
+    const rel = relativeMetrics(
+      bars.map((b) => ({ t: b.t, c: b.c })),
+      btcBars.map((b) => ({ t: b.t, c: b.c })),
+    );
+    corr30 = rel.corr30d;
+    corr90 = rel.corr90d;
+    b30 = rel.beta30d;
+    b90 = rel.beta90d;
+    // Relative performance: asset return minus BTC return over same window.
+    const btcCloses = btcBars.map((b) => b.c);
+    const r30Asset = returnPct(closes, 30);
+    const r90Asset = returnPct(closes, 90);
+    const r30Btc = returnPct(btcCloses, 30);
+    const r90Btc = returnPct(btcCloses, 90);
+    relPerf30 =
+      r30Asset != null && r30Btc != null ? r30Asset - r30Btc : null;
+    relPerf90 =
+      r90Asset != null && r90Btc != null ? r90Asset - r90Btc : null;
+  }
 
   return {
     instrument,
@@ -333,6 +502,18 @@ export async function buildSnapshot(
       instrument.symbol === "BTC-USD" || instrument.symbol === "BTC"
         ? btcDominance
         : undefined,
+    maxDrawdownPct: mdd,
+    maxDrawdownLookbackDays: bars.length > 0 ? bars.length : null,
+    sharpeLike30d: sharpe30,
+    relIsSelf,
+    relPerf30d: relPerf30,
+    relPerf90d: relPerf90,
+    corrToBtc30d: corr30,
+    corrToBtc90d: corr90,
+    betaToBtc30d: b30,
+    betaToBtc90d: b90,
+    peRatio,
+    peSource,
     history: bars.slice(-365),
     message,
   };

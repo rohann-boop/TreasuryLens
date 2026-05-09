@@ -198,7 +198,32 @@ export function IndicatorPanel({ snap }: { snap: InstrumentSnapshot }) {
         />
       </Section>
 
-      <Section title="Liquidity">
+      <Section title="Fundamentals & Liquidity">
+        <Row
+          label="Market Cap"
+          value={
+            snap.marketCap != null ? `${snap.currency === "JPY" ? "¥" : "$"}${fmtCompact(snap.marketCap)}` : "—"
+          }
+          testId="row-mcap"
+        />
+        <Row
+          label="P/E (TTM)"
+          value={
+            snap.peRatio != null ? (
+              fmtNum(snap.peRatio, 2)
+            ) : (
+              <span className="text-muted-foreground">N/A</span>
+            )
+          }
+          sub={
+            snap.peRatio != null
+              ? `via ${snap.peSource ?? "provider"}`
+              : snap.instrument.assetClass === "crypto"
+              ? "not applicable"
+              : "provider unavailable"
+          }
+          testId="row-pe"
+        />
         <Row
           label="Volume"
           value={fmtCompact(snap.volume)}
@@ -208,13 +233,6 @@ export function IndicatorPanel({ snap }: { snap: InstrumentSnapshot }) {
           label="Avg Volume (30D)"
           value={fmtCompact(snap.avgVolume)}
           testId="row-avg-volume"
-        />
-        <Row
-          label="Market Cap"
-          value={
-            snap.marketCap != null ? `${snap.currency === "JPY" ? "¥" : "$"}${fmtCompact(snap.marketCap)}` : "—"
-          }
-          testId="row-mcap"
         />
         {snap.btcDominance !== undefined && (
           <Row

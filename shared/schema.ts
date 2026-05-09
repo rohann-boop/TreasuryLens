@@ -56,6 +56,27 @@ export const insertTreasurySchema = createInsertSchema(treasuryMetrics)
 export type InsertTreasury = z.infer<typeof insertTreasurySchema>;
 export type Treasury = typeof treasuryMetrics.$inferSelect;
 
+// Historical treasury snapshots — captured each time the user edits the
+// manual treasury form. Used to compute BTC yield (change in BTC/share over
+// time) and other multi-period treasury indicators.
+export const treasuryHistory = sqliteTable("treasury_history", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  instrumentId: integer("instrument_id").notNull(),
+  btcHoldings: real("btc_holdings"),
+  sharesOutstanding: real("shares_outstanding"),
+  fxRate: real("fx_rate"),
+  capturedAt: integer("captured_at").notNull(),
+});
+
+export type TreasuryHistory = typeof treasuryHistory.$inferSelect;
+
+export interface TreasuryHistoryPoint {
+  capturedAt: number;
+  btcHoldings: number | null;
+  sharesOutstanding: number | null;
+  btcPerShare: number | null;
+}
+
 // Snapshot returned by the API for one instrument (computed indicators)
 export type IndicatorTrend = "up" | "down" | "flat";
 
@@ -88,6 +109,22 @@ export interface InstrumentSnapshot {
   marketCap: number | null;
   // Bitcoin-specific
   btcDominance?: number | null;
+  // Advanced / risk indicators (deterministic, computed server-side).
+  // `null` indicates insufficient history rather than zero.
+  maxDrawdownPct: number | null; // worst peak-to-trough decline over available bars (negative %)
+  maxDrawdownLookbackDays: number | null; // bars used for the calc
+  sharpeLike30d: number | null; // (mean daily return / sd) * sqrt(252) over last 30 trading days
+  // Relative metrics vs BTC. For BTC itself these are null with `relIsSelf=true`.
+  relIsSelf: boolean;
+  relPerf30d: number | null; // (asset 30d %) - (BTC 30d %)
+  relPerf90d: number | null;
+  corrToBtc30d: number | null; // Pearson correlation of daily log returns
+  corrToBtc90d: number | null;
+  betaToBtc30d: number | null; // OLS slope of asset returns on BTC returns
+  betaToBtc90d: number | null;
+  // Fundamentals — may be unavailable for crypto / when provider rate-limits.
+  peRatio: number | null; // trailing P/E from quote provider (null = N/A)
+  peSource: string | null; // "yahoo" | null — used to badge availability
   // OHLCV history for chart
   history: { t: number; o: number; h: number; l: number; c: number; v: number }[];
   // Treasury info if applicable
@@ -128,4 +165,13 @@ export interface TreasurySnapshot {
   marketCap: number | null;
   notes: string | null;
   updatedAt: number;
+  // BTC per share — straight ratio of holdings to shares (BTC units).
+  btcPerShare: number | null;
+  // Change in BTC/share since first historical snapshot, %
+  btcYieldPct: number | null;
+  // Number of historical snapshots backing the yield calc
+  historyPoints: number;
+  // Earliest captured_at used for the yield baseline
+  yieldSinceMs: number | null;
+  history: TreasuryHistoryPoint[];
 }

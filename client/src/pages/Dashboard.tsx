@@ -5,6 +5,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { KpiCard } from "@/components/KpiCard";
 import { Delta } from "@/components/Delta";
 import { IndicatorPanel } from "@/components/IndicatorPanel";
+import { AdvancedIndicators } from "@/components/AdvancedIndicators";
 import { TreasuryPanel } from "@/components/TreasuryPanel";
 import { PriceChart } from "@/components/PriceChart";
 import { AddInstrumentDialog } from "@/components/AddInstrumentDialog";
@@ -26,8 +27,10 @@ import {
   Info,
   LineChart as LineIcon,
   BarChart3,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
-import { fmtAgo, fmtCompact, fmtPrice } from "@/lib/format";
+import { fmtAgo, fmtCompact, fmtNum, fmtPrice } from "@/lib/format";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -48,6 +51,9 @@ export default function Dashboard() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  // Desktop sidebar collapse — stored in React state only (no
+  // localStorage in the sandboxed iframe). Mobile uses the Sheet trigger.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   // Default to 30s polling. State is in-memory only — no localStorage in the
   // sandboxed iframe.
   const [interval, setInterval] = useState<RefreshInterval>(30_000);
@@ -102,21 +108,32 @@ export default function Dashboard() {
   const errorCount = snaps.filter((s) => s.status === "error").length;
 
   return (
-    <div className="h-[100dvh] grid grid-cols-[auto_1fr] grid-rows-[auto_1fr] overflow-hidden bg-background text-foreground">
-      {/* Sidebar */}
-      <div className="row-span-2 hidden md:block">
-        <Sidebar
-          instruments={instruments}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
-          onAdd={() => setAddOpen(true)}
-        />
+    <div className="h-[100dvh] grid grid-cols-[auto_minmax(0,1fr)] grid-rows-[auto_auto_1fr] overflow-hidden bg-background text-foreground">
+      {/* Sidebar (desktop) — collapsible. Hidden on mobile; mobile uses Sheet. */}
+      <div className="row-span-3 hidden md:flex h-full overflow-hidden">
+        {sidebarCollapsed ? (
+          <CollapsedRail
+            instruments={instruments}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            onExpand={() => setSidebarCollapsed(false)}
+            onAdd={() => setAddOpen(true)}
+          />
+        ) : (
+          <Sidebar
+            instruments={instruments}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            onAdd={() => setAddOpen(true)}
+            onCollapse={() => setSidebarCollapsed(true)}
+          />
+        )}
       </div>
 
       {/* Header */}
-      <header className="col-start-2 h-14 border-b border-border bg-background/80 backdrop-blur sticky top-0 z-20 flex items-center justify-between px-4 md:px-6">
+      <header className="col-start-2 min-w-0 h-14 border-b border-border bg-background/80 backdrop-blur sticky top-0 z-20 flex items-center justify-between px-4 md:px-6">
         <div className="flex items-center gap-3 min-w-0">
-          {/* Mobile sidebar */}
+          {/* Mobile sidebar trigger */}
           <Sheet>
             <SheetTrigger asChild>
               <Button variant="ghost" size="icon" className="md:hidden" data-testid="button-mobile-menu">
@@ -197,17 +214,23 @@ export default function Dashboard() {
         </div>
       </header>
 
-      {/* Ticker tape sits between the sticky header and main content */}
-      <div className="col-start-2 sticky top-14 z-10">
-        <TickerTape
-          selectedId={selectedId}
-          onSelect={setSelectedId}
-          intervalMs={interval}
-        />
+      {/* Ticker tape sits between the sticky header and main content. The
+          outer container hugs the full content column so the bottom border
+          spans the screen; the inner shell mirrors the dashboard
+          `max-w-[1600px] mx-auto` so the scrolling track lines up with the
+          KPI cards and tables at fullscreen widths. */}
+      <div className="col-start-2 min-w-0 sticky top-14 z-10 border-b border-border bg-card/40 backdrop-blur">
+        <div className="max-w-[1600px] mx-auto px-0">
+          <TickerTape
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            intervalMs={interval}
+          />
+        </div>
       </div>
 
       {/* Main */}
-      <main className="col-start-2 overflow-y-auto" style={{ overscrollBehavior: "contain" }}>
+      <main className="col-start-2 min-w-0 overflow-y-auto" style={{ overscrollBehavior: "contain" }}>
         <div className="px-4 md:px-6 py-5 space-y-5 max-w-[1600px] mx-auto">
           {/* Live/demo data status note */}
           <div
@@ -281,11 +304,6 @@ export default function Dashboard() {
                   testId="kpi-price"
                 />
                 <KpiCard
-                  label="7D Return"
-                  value={<Delta value={selected.return7d} showArrow={false} />}
-                  testId="kpi-7d"
-                />
-                <KpiCard
                   label="30D Return"
                   value={<Delta value={selected.return30d} showArrow={false} />}
                   testId="kpi-30d"
@@ -296,14 +314,38 @@ export default function Dashboard() {
                   testId="kpi-ytd"
                 />
                 <KpiCard
-                  label="52W High"
-                  value={fmtPrice(selected.high52w, selected.currency)}
-                  sub={
-                    <span>
-                      <Delta value={selected.distFrom52wHigh} digits={1} showArrow={false} /> from high
-                    </span>
+                  label="Market Cap"
+                  value={
+                    selected.marketCap != null
+                      ? `${selected.currency === "JPY" ? "¥" : "$"}${fmtCompact(selected.marketCap)}`
+                      : "—"
                   }
-                  testId="kpi-52w"
+                  sub={
+                    selected.marketCap == null
+                      ? "unavailable"
+                      : selected.currency === "USD"
+                      ? "USD"
+                      : selected.currency
+                  }
+                  tone={selected.marketCap == null ? "muted" : "default"}
+                  testId="kpi-mcap"
+                />
+                <KpiCard
+                  label="P/E (TTM)"
+                  value={
+                    selected.peRatio != null
+                      ? fmtNum(selected.peRatio, 2)
+                      : "N/A"
+                  }
+                  sub={
+                    selected.peRatio != null
+                      ? `via ${selected.peSource ?? "provider"}`
+                      : selected.instrument.assetClass === "crypto"
+                      ? "not applicable"
+                      : "provider unavailable"
+                  }
+                  tone={selected.peRatio == null ? "muted" : "default"}
+                  testId="kpi-pe"
                 />
               </div>
 
@@ -318,6 +360,9 @@ export default function Dashboard() {
 
               {/* Indicators */}
               <IndicatorPanel snap={selected} />
+
+              {/* Risk & relative — advanced indicators */}
+              <AdvancedIndicators snap={selected} />
 
               {/* Treasury panel for Metaplanet (or any instrument with treasury data) */}
               {(selected.instrument.symbol === "3350.T" || selected.treasury) && (
@@ -349,6 +394,83 @@ export default function Dashboard() {
         onCreated={(id) => setSelectedId(id)}
       />
     </div>
+  );
+}
+
+/**
+ * Narrow vertical rail shown when the desktop sidebar is collapsed.
+ * Renders just the watchlist icons + a row of dots so users can still
+ * click an instrument or expand back to the full sidebar.
+ */
+function CollapsedRail({
+  instruments,
+  selectedId,
+  onSelect,
+  onExpand,
+  onAdd,
+}: {
+  instruments: Instrument[];
+  selectedId: number | null;
+  onSelect: (id: number) => void;
+  onExpand: () => void;
+  onAdd: () => void;
+}) {
+  return (
+    <aside
+      className="flex flex-col h-full bg-sidebar border-r border-sidebar-border w-[56px] shrink-0"
+      data-testid="sidebar-collapsed"
+    >
+      <div className="h-14 flex items-center justify-center border-b border-sidebar-border">
+        <button
+          onClick={onExpand}
+          className="h-8 w-8 inline-flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover-elevate"
+          aria-label="Expand sidebar"
+          data-testid="button-sidebar-expand"
+        >
+          <PanelLeftOpen className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="flex flex-col items-center gap-1 py-2">
+        {instruments.map((inst) => {
+          const Icon =
+            inst.assetClass === "crypto"
+              ? Bitcoin
+              : inst.assetClass === "equity"
+              ? LineIcon
+              : BarChart3;
+          const tone =
+            inst.assetClass === "crypto"
+              ? "text-warn"
+              : inst.assetClass === "equity"
+              ? "text-primary"
+              : "text-muted-foreground";
+          return (
+            <button
+              key={inst.id}
+              onClick={() => onSelect(inst.id)}
+              title={`${inst.displayName} · ${inst.symbol}`}
+              data-testid={`rail-instrument-${inst.id}`}
+              className={`h-9 w-9 inline-flex items-center justify-center rounded border ${
+                selectedId === inst.id
+                  ? "bg-sidebar-accent border-sidebar-accent-border"
+                  : "border-transparent hover-elevate"
+              }`}
+            >
+              <Icon className={`h-4 w-4 ${tone}`} />
+            </button>
+          );
+        })}
+        <button
+          onClick={onAdd}
+          title="Add instrument"
+          aria-label="Add instrument"
+          data-testid="button-rail-add"
+          className="h-9 w-9 inline-flex items-center justify-center rounded text-muted-foreground hover-elevate"
+        >
+          <Plus className="h-4 w-4" />
+        </button>
+      </div>
+    </aside>
   );
 }
 

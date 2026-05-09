@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Bitcoin, Pencil, Save, X } from "lucide-react";
-import { fmtCompact, fmtNum, fmtPrice } from "@/lib/format";
+import { fmtCompact, fmtNum, fmtPct, fmtPrice } from "@/lib/format";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -154,6 +154,48 @@ export function TreasuryPanel({ snap }: { snap: InstrumentSnapshot }) {
                   : "share count required"
               }
               testId="treasury-btc-nav-per-share"
+            />
+            <Field
+              label="BTC / Share"
+              value={
+                treasury?.btcPerShare != null
+                  ? `${fmtNum(treasury.btcPerShare, 8)} BTC`
+                  : "—"
+              }
+              sub={
+                treasury?.btcPerShare != null
+                  ? "holdings ÷ shares"
+                  : "holdings + shares required"
+              }
+              testId="treasury-btc-per-share"
+            />
+            <Field
+              label="BTC Yield"
+              value={
+                treasury?.btcYieldPct != null ? (
+                  <span
+                    className={
+                      treasury.btcYieldPct > 0
+                        ? "text-pos"
+                        : treasury.btcYieldPct < 0
+                        ? "text-neg"
+                        : ""
+                    }
+                  >
+                    {fmtPct(treasury.btcYieldPct, 2)}
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">N/A</span>
+                )
+              }
+              sub={
+                treasury?.btcYieldPct != null && treasury.yieldSinceMs
+                  ? `since ${new Date(treasury.yieldSinceMs).toLocaleDateString()} · ${treasury.historyPoints} snapshots`
+                  : (treasury?.historyPoints ?? 0) < 2
+                  ? "needs history (save ≥ 2 edits)"
+                  : "Δ BTC/share over time"
+              }
+              testId="treasury-btc-yield"
             />
             <Field
               label="mNAV"
