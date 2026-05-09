@@ -9,6 +9,11 @@ import { TreasuryPanel } from "@/components/TreasuryPanel";
 import { PriceChart } from "@/components/PriceChart";
 import { AddInstrumentDialog } from "@/components/AddInstrumentDialog";
 import { ComparisonTable, StatusBadge } from "@/components/ComparisonTable";
+import { TickerTape } from "@/components/TickerTape";
+import {
+  AutoRefreshControl,
+  type RefreshInterval,
+} from "@/components/AutoRefreshControl";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
@@ -18,6 +23,7 @@ import {
   Plus,
   Menu,
   Bitcoin,
+  Info,
   LineChart as LineIcon,
   BarChart3,
 } from "lucide-react";
@@ -42,6 +48,9 @@ export default function Dashboard() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  // Default to 30s polling. State is in-memory only — no localStorage in the
+  // sandboxed iframe.
+  const [interval, setInterval] = useState<RefreshInterval>(30_000);
   const { toast } = useToast();
 
   const { data: instruments = [] } = useQuery<Instrument[]>({
@@ -51,7 +60,7 @@ export default function Dashboard() {
     InstrumentSnapshot[]
   >({
     queryKey: ["/api/snapshots"],
-    refetchInterval: 60_000,
+    refetchInterval: interval,
   });
 
   // Default to first instrument
@@ -71,11 +80,14 @@ export default function Dashboard() {
     return Math.max(...snaps.map((s) => s.asOf));
   }, [snaps]);
 
+  // Manual refresh bypasses the backend cache (`refresh=1`). Auto-refresh
+  // hits the cached endpoint to avoid hammering Yahoo/CoinGecko.
   const refresh = async () => {
     setRefreshing(true);
     try {
       await apiRequest("GET", "/api/snapshots?refresh=1");
       await queryClient.invalidateQueries({ queryKey: ["/api/snapshots"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/ticker"] });
       toast({ title: "Refreshed" });
     } catch (e) {
       toast({ title: "Refresh failed", variant: "destructive" });
@@ -83,6 +95,11 @@ export default function Dashboard() {
       setRefreshing(false);
     }
   };
+
+  // Status mix for the explanatory copy line under the ticker.
+  const liveCount = snaps.filter((s) => s.status === "live").length;
+  const demoCount = snaps.filter((s) => s.status === "demo").length;
+  const errorCount = snaps.filter((s) => s.status === "error").length;
 
   return (
     <div className="h-[100dvh] grid grid-cols-[auto_1fr] grid-rows-[auto_1fr] overflow-hidden bg-background text-foreground">
@@ -97,7 +114,7 @@ export default function Dashboard() {
       </div>
 
       {/* Header */}
-      <header className="col-start-2 h-14 border-b border-border bg-background/80 backdrop-blur sticky top-0 z-10 flex items-center justify-between px-4 md:px-6">
+      <header className="col-start-2 h-14 border-b border-border bg-background/80 backdrop-blur sticky top-0 z-20 flex items-center justify-between px-4 md:px-6">
         <div className="flex items-center gap-3 min-w-0">
           {/* Mobile sidebar */}
           <Sheet>
@@ -138,9 +155,14 @@ export default function Dashboard() {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <span className="hidden sm:inline text-[11px] text-muted-foreground" data-testid="text-last-updated">
+          <span className="hidden lg:inline text-[11px] text-muted-foreground" data-testid="text-last-updated">
             {lastUpdated ? `Updated ${fmtAgo(lastUpdated)}` : "—"}
           </span>
+          <AutoRefreshControl
+            interval={interval}
+            onChange={setInterval}
+            lastUpdated={lastUpdated}
+          />
           <Button
             variant="ghost"
             size="sm"
@@ -148,6 +170,7 @@ export default function Dashboard() {
             onClick={refresh}
             disabled={refreshing}
             data-testid="button-refresh"
+            title="Refresh now (bypasses cache)"
           >
             <RefreshCcw className={`h-3.5 w-3.5 mr-1 ${refreshing ? "animate-spin" : ""}`} />
             Refresh
@@ -174,9 +197,50 @@ export default function Dashboard() {
         </div>
       </header>
 
+      {/* Ticker tape sits between the sticky header and main content */}
+      <div className="col-start-2 sticky top-14 z-10">
+        <TickerTape
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          intervalMs={interval}
+        />
+      </div>
+
       {/* Main */}
       <main className="col-start-2 overflow-y-auto" style={{ overscrollBehavior: "contain" }}>
         <div className="px-4 md:px-6 py-5 space-y-5 max-w-[1600px] mx-auto">
+          {/* Live/demo data status note */}
+          <div
+            className="flex items-start gap-2 rounded-md border border-border/70 bg-card/40 px-3 py-2 text-[11px] text-muted-foreground"
+            data-testid="data-status-note"
+          >
+            <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary/80" />
+            <p className="leading-relaxed">
+              <span className="text-foreground">Near-real-time data.</span>{" "}
+              Prices come from Yahoo Finance and CoinGecko on a polling cycle
+              — not a tick-by-tick websocket feed. Each instrument is tagged{" "}
+              <span className="text-pos">Live</span> when the provider responds,{" "}
+              <span className="text-warn">Demo</span> when rate-limited or
+              unavailable (a deterministic series is shown), or{" "}
+              <span className="text-neg">Error</span> on hard failures.
+              {snaps.length > 0 && (
+                <>
+                  {" "}Currently:{" "}
+                  <span className="text-foreground tabular-nums" data-testid="text-status-mix">
+                    {liveCount} live
+                    {demoCount > 0 && ` · ${demoCount} demo`}
+                    {errorCount > 0 && ` · ${errorCount} error`}
+                  </span>
+                  .
+                </>
+              )}
+              {interval !== false && (
+                <span className="ml-1">
+                  Updates every {interval / 1000}s.
+                </span>
+              )}
+            </p>
+          </div>
           {/* Mobile selected header */}
           {selected && (
             <div className="md:hidden flex items-center gap-3">

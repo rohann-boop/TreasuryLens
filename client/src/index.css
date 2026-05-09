@@ -206,6 +206,27 @@
       linear-gradient(to bottom, hsl(var(--border) / 0.4) 1px, transparent 1px);
     background-size: 24px 24px;
   }
+
+  /* Ticker tape: marquee-style horizontal scroll. Two identical tracks sit
+     side-by-side and translate together so the loop is seamless. */
+  @keyframes ticker-scroll {
+    from { transform: translate3d(0, 0, 0); }
+    to   { transform: translate3d(-50%, 0, 0); }
+  }
+  .ticker-track {
+    animation: ticker-scroll var(--ticker-duration, 60s) linear infinite;
+    will-change: transform;
+  }
+  .ticker-track:hover,
+  .ticker-track[data-paused="true"] {
+    animation-play-state: paused;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ticker-track {
+      animation: none;
+      transform: none;
+    }
+  }
 }
 
 @layer utilities {

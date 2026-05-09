@@ -139,6 +139,32 @@ export async function registerRoutes(
     res.json(snaps.filter(Boolean));
   });
 
+  // Lightweight ticker: minimal snapshot fields for the ticker tape.
+  // Reuses the same snapshot cache so it never triggers extra provider calls
+  // when the cache is warm. Returns only the fields the strip renders.
+  app.get("/api/ticker", async (_req, res) => {
+    const list = await storage.listInstruments();
+    const snaps = await Promise.all(
+      list.map((i) => getSnapshot(i.id, false).catch(() => null)),
+    );
+    const items = snaps
+      .filter((s): s is InstrumentSnapshot => !!s)
+      .map((s) => ({
+        id: s.instrument.id,
+        symbol: s.instrument.symbol,
+        displayName: s.instrument.displayName,
+        assetClass: s.instrument.assetClass,
+        price: s.price,
+        currency: s.currency,
+        changePct1d: s.changePct1d,
+        change1d: s.change1d,
+        status: s.status,
+        source: s.source,
+        asOf: s.asOf,
+      }));
+    res.json({ items, asOf: Date.now() });
+  });
+
   // Treasury upsert
   app.post("/api/instruments/:id/treasury", async (req, res) => {
     const id = Number(req.params.id);

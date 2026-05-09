@@ -95,6 +95,28 @@ export interface InstrumentSnapshot {
   message?: string;
 }
 
+// Compact ticker payload returned by /api/ticker — minimal fields for the
+// scrolling ticker strip. Reuses the snapshot cache; never triggers extra
+// provider calls when warm.
+export interface TickerItem {
+  id: number;
+  symbol: string;
+  displayName: string;
+  assetClass: string;
+  price: number | null;
+  currency: string;
+  changePct1d: number | null;
+  change1d: number | null;
+  status: "live" | "demo" | "error";
+  source: string;
+  asOf: number;
+}
+
+export interface TickerResponse {
+  items: TickerItem[];
+  asOf: number;
+}
+
 export interface TreasurySnapshot {
   btcHoldings: number | null;
   sharesOutstanding: number | null;
