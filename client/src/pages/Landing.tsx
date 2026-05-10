@@ -261,7 +261,7 @@ function Hero() {
           data-testid="text-hero-headline"
         >
           Anyone with a paycheck can get an institutional-grade plan in 10 minutes,
-          invest from day one, and never wonder what to do next.
+          invest from day one, and never wonder what to do next
         </h1>
         <p
           className="mt-6 max-w-2xl text-lg leading-relaxed text-muted-foreground md:text-xl"
