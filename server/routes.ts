@@ -6,6 +6,7 @@ import { buildSnapshot } from "./marketData";
 import type { Bar } from "./indicators";
 import { computeSignal, parseSignalConfig, DEFAULT_CONFIG } from "./signals";
 import { computeBuffettIndex } from "./buffett";
+import { getEquityFundamentals } from "./secEdgar";
 import {
   insertInstrumentSchema,
   insertTreasurySchema,
@@ -274,13 +275,22 @@ export async function registerRoutes(
   });
 
   // Buffett Index — business-quality / valuation framework, separate from
-  // short-term Signal Lab. Reuses cached snapshot; no extra provider calls.
+  // short-term Signal Lab. Reuses cached snapshot; SEC EDGAR fundamentals are
+  // fetched (and cached server-side) for U.S. equities.
   app.get("/api/instruments/:id/buffett", async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ message: "bad id" });
     const snap = await getSnapshot(id, false);
     if (!snap) return res.status(404).json({ message: "not found" });
-    res.json(computeBuffettIndex(snap));
+    let fundamentals = null;
+    if (snap.instrument.assetClass === "equity") {
+      try {
+        fundamentals = await getEquityFundamentals(snap.instrument.symbol);
+      } catch {
+        fundamentals = null;
+      }
+    }
+    res.json(computeBuffettIndex(snap, fundamentals));
   });
 
   // Treasury upsert

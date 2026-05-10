@@ -256,6 +256,65 @@ export interface BuffettIndex {
   watchouts: string[];
   missingData: string[];
   notes: string[];
+  fundamentals?: EquityFundamentals | null;
+}
+
+// =============================================================================
+// SEC EDGAR equity fundamentals — derived from companyfacts XBRL filings.
+// All money fields are in the company's reporting currency (typically USD)
+// and represent the most recent reported value unless otherwise noted.
+// =============================================================================
+
+export interface FundamentalValue {
+  value: number;
+  unit: string;
+  end: string;            // period end date (YYYY-MM-DD)
+  fy: number | null;      // fiscal year
+  fp: string | null;      // fiscal period (FY/Q1/Q2/Q3/Q4)
+  form: string | null;    // 10-K / 10-Q / etc.
+  filed: string | null;   // filing date (YYYY-MM-DD)
+  accn: string | null;    // accession number
+  tag: string;            // US-GAAP tag chosen
+}
+
+export interface EquityFundamentals {
+  source: "sec_edgar";
+  ticker: string;
+  cik: string;
+  entityName: string | null;
+  asOf: number;
+  // raw most-recent values (annual / TTM where appropriate)
+  revenue: FundamentalValue | null;        // TTM (sum of last 4 quarters when available, else FY)
+  grossProfit: FundamentalValue | null;
+  operatingIncome: FundamentalValue | null;
+  netIncome: FundamentalValue | null;
+  assets: FundamentalValue | null;
+  liabilities: FundamentalValue | null;
+  equity: FundamentalValue | null;
+  totalDebt: FundamentalValue | null;
+  currentDebt: FundamentalValue | null;
+  longTermDebt: FundamentalValue | null;
+  cashAndEquivalents: FundamentalValue | null;
+  operatingCashFlow: FundamentalValue | null;
+  capex: FundamentalValue | null;          // signed: outflow is negative in our normalised representation
+  freeCashFlow: FundamentalValue | null;
+  dilutedShares: FundamentalValue | null;
+  eps: FundamentalValue | null;
+  // derived ratios (unitless or %)
+  grossMargin: number | null;
+  operatingMargin: number | null;
+  netMargin: number | null;
+  fcfMargin: number | null;
+  roe: number | null;
+  debtToEquity: number | null;
+  // growth (year-over-year, %)
+  revenueGrowth: number | null;
+  epsGrowth: number | null;
+  // share count trend over the last ~5 reported periods (slope of log shares)
+  shareCountTrend: "rising" | "flat" | "falling" | null;
+  shareCountChangePct: number | null;       // % change of shares from oldest to newest in the window
+  // metadata for the UI
+  latestFiling: { form: string; filed: string; periodEnd: string } | null;
 }
 
 export interface TreasurySnapshot {

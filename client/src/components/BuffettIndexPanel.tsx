@@ -1,8 +1,34 @@
 import { useQuery } from "@tanstack/react-query";
-import type { BuffettCategory, BuffettIndex, InstrumentSnapshot } from "@shared/schema";
+import type {
+  BuffettCategory,
+  BuffettIndex,
+  EquityFundamentals,
+  InstrumentSnapshot,
+} from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { BadgeCheck, Building2, CircleAlert, Scale, ShieldCheck } from "lucide-react";
+
+function fmtMoney(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "N/A";
+  const abs = Math.abs(v);
+  const sign = v < 0 ? "-" : "";
+  if (abs >= 1e12) return `${sign}$${(abs / 1e12).toFixed(2)}T`;
+  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(2)}K`;
+  return `${sign}$${abs.toFixed(2)}`;
+}
+
+function fmtPct(v: number | null | undefined, digits = 1): string {
+  if (v == null || !Number.isFinite(v)) return "N/A";
+  return `${v.toFixed(digits)}%`;
+}
+
+function fmtNum(v: number | null | undefined, digits = 2): string {
+  if (v == null || !Number.isFinite(v)) return "N/A";
+  return v.toFixed(digits);
+}
 
 function tone(score: number | null) {
   if (score == null) return "text-muted-foreground";
@@ -112,6 +138,10 @@ export function BuffettIndexPanel({ snap }: { snap: InstrumentSnapshot }) {
             </div>
           </div>
 
+          {data.fundamentals && data.applicable && data.framework === "equity" && (
+            <FundamentalsBlock f={data.fundamentals} />
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-0 border-t border-card-border">
             <ListBlock title="Strengths" icon="check" items={data.strengths} empty="No strong category yet." />
             <ListBlock title="Watchouts" icon="alert" items={data.watchouts} empty="No major quantified watchout." />
@@ -120,11 +150,159 @@ export function BuffettIndexPanel({ snap }: { snap: InstrumentSnapshot }) {
 
           <footer className="border-t border-card-border px-4 py-2.5 text-[10px] text-muted-foreground leading-relaxed">
             Buffett Index is a research framework for business quality and valuation, not a
-            timing model and not financial advice. Connect a fundamentals provider later for
-            ROIC, FCF, debt, and owner-earnings coverage.
+            timing model and not financial advice. Equity fundamentals from SEC EDGAR (free,
+            no key) when available; balance-sheet items reflect the most recent 10-K/10-Q.
           </footer>
         </>
       )}
+    </section>
+  );
+}
+
+function MetricCell({
+  label,
+  value,
+  testid,
+  hint,
+}: {
+  label: string;
+  value: string;
+  testid: string;
+  hint?: string;
+}) {
+  return (
+    <div className="px-3 py-2">
+      <div className="text-[9px] uppercase tracking-widest text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-0.5 text-[12px] tabular-nums font-medium" data-testid={testid}>
+        {value}
+      </div>
+      {hint && (
+        <div className="text-[9px] text-muted-foreground/70">{hint}</div>
+      )}
+    </div>
+  );
+}
+
+function FundamentalsBlock({ f }: { f: EquityFundamentals }) {
+  const filing = f.latestFiling;
+  return (
+    <section
+      className="border-t border-card-border bg-background/20"
+      data-testid="buffett-fundamentals"
+    >
+      <header className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-[10px] uppercase tracking-widest text-muted-foreground">
+        <span>SEC EDGAR fundamentals</span>
+        <span data-testid="buffett-fundamentals-source">
+          Source: SEC EDGAR · CIK {f.cik}
+          {filing
+            ? ` · ${filing.form} filed ${filing.filed} (period ${filing.periodEnd})`
+            : ""}
+        </span>
+      </header>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 divide-x divide-y divide-border/50 border-t border-border/50">
+        <MetricCell
+          label="Revenue (TTM)"
+          value={fmtMoney(f.revenue?.value)}
+          testid="fund-revenue"
+        />
+        <MetricCell
+          label="Net income"
+          value={fmtMoney(f.netIncome?.value)}
+          testid="fund-net-income"
+        />
+        <MetricCell
+          label="Free cash flow"
+          value={fmtMoney(f.freeCashFlow?.value)}
+          testid="fund-fcf"
+        />
+        <MetricCell
+          label="Operating CF"
+          value={fmtMoney(f.operatingCashFlow?.value)}
+          testid="fund-ocf"
+        />
+        <MetricCell
+          label="Capex"
+          value={fmtMoney(f.capex?.value)}
+          testid="fund-capex"
+        />
+        <MetricCell
+          label="Diluted EPS"
+          value={fmtNum(f.eps?.value)}
+          testid="fund-eps"
+        />
+        <MetricCell
+          label="Gross margin"
+          value={fmtPct(f.grossMargin)}
+          testid="fund-gross-margin"
+        />
+        <MetricCell
+          label="Operating margin"
+          value={fmtPct(f.operatingMargin)}
+          testid="fund-op-margin"
+        />
+        <MetricCell
+          label="Net margin"
+          value={fmtPct(f.netMargin)}
+          testid="fund-net-margin"
+        />
+        <MetricCell
+          label="ROE"
+          value={fmtPct(f.roe)}
+          testid="fund-roe"
+        />
+        <MetricCell
+          label="Debt / equity"
+          value={fmtNum(f.debtToEquity)}
+          testid="fund-de"
+        />
+        <MetricCell
+          label="Total debt"
+          value={fmtMoney(f.totalDebt?.value)}
+          testid="fund-total-debt"
+        />
+        <MetricCell
+          label="Assets"
+          value={fmtMoney(f.assets?.value)}
+          testid="fund-assets"
+        />
+        <MetricCell
+          label="Equity"
+          value={fmtMoney(f.equity?.value)}
+          testid="fund-equity"
+        />
+        <MetricCell
+          label="Cash"
+          value={fmtMoney(f.cashAndEquivalents?.value)}
+          testid="fund-cash"
+        />
+        <MetricCell
+          label="Revenue growth"
+          value={fmtPct(f.revenueGrowth)}
+          hint="YoY (annual)"
+          testid="fund-rev-growth"
+        />
+        <MetricCell
+          label="EPS growth"
+          value={fmtPct(f.epsGrowth)}
+          hint="YoY (annual)"
+          testid="fund-eps-growth"
+        />
+        <MetricCell
+          label="Share count"
+          value={
+            f.shareCountTrend
+              ? `${f.shareCountTrend} ${
+                  f.shareCountChangePct != null
+                    ? `(${fmtPct(f.shareCountChangePct, 1)})`
+                    : ""
+                }`.trim()
+              : "N/A"
+          }
+          testid="fund-share-trend"
+        />
+      </div>
     </section>
   );
 }
