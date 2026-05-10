@@ -234,6 +234,14 @@ function buildEquityCategories(
     balanceBullets.push(`Total debt ${fmtMoney(f.totalDebt.value)}.`);
   if (f.cashAndEquivalents != null)
     balanceBullets.push(`Cash & equivalents ${fmtMoney(f.cashAndEquivalents.value)}.`);
+  const debtStale = f.staleFacts?.find(
+    (s) => s.field === "totalDebt" || s.field === "longTermDebt" || s.field === "currentDebt",
+  );
+  if (f.totalDebt == null && debtStale) {
+    balanceBullets.push(
+      `Debt fields rejected: latest \`${debtStale.tag}\` is from ${debtStale.end} (${debtStale.ageDays}d before anchor ${f.anchorDate ?? "n/a"}).`,
+    );
+  }
   if (!balanceBullets.length) balanceBullets.push("Debt/equity data missing.");
 
   const capitalBullets: string[] = [];

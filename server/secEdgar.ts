@@ -8,13 +8,19 @@
 // Strategy:
 //   1. Resolve ticker -> CIK via a small built-in map for known tickers,
 //      falling back to https://www.sec.gov/files/company_tickers.json.
-//   2. Fetch companyfacts JSON for the CIK and pick the most recent values
-//      for a curated list of US-GAAP tags. Multiple candidate tags are tried
-//      so we degrade gracefully when a company uses a non-canonical tag.
-//   3. Compute TTM where it makes sense (income statement + cash flow) by
-//      summing the last four quarters. Balance-sheet items use the latest
-//      point-in-time value.
-//   4. Cache responses in-memory with a long TTL — SEC filings update daily
+//   2. Fetch companyfacts JSON for the CIK.
+//   3. Establish an "anchor date" — the latest period-end across the
+//      headline core facts (Assets / StockholdersEquity / Revenues). Anchor
+//      is what "now" means for this filer; balance-sheet values must fall
+//      within FRESHNESS_WINDOW_DAYS of the anchor or we reject them as
+//      stale and surface the rejection in `staleFacts`. This prevents the
+//      old failure mode where a deprecated tag's "latest" entry was years
+//      out of date (e.g. Tesla's `LongTermDebtNoncurrent` last filed 2014).
+//   4. Compute TTM where it makes sense (income statement + cash flow) by
+//      summing the last four quarters whose end date sits inside the
+//      freshness window. Balance-sheet items use the latest point-in-time
+//      value within the window.
+//   5. Cache responses in-memory with a long TTL — SEC filings update daily
 //      at most.
 
 import type { EquityFundamentals, FundamentalValue } from "@shared/schema";
@@ -29,6 +35,11 @@ const HEADERS: Record<string, string> = {
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 // Ticker map cache lasts longer; the public list is updated infrequently.
 const TICKER_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+// Maximum age (days) a fact's period end may have versus the company anchor
+// date before being treated as stale. Set to ~14 months so the most recent
+// 10-K (annual) plus normal filing slack still passes when no fresher 10-Q
+// is available, but a multi-year-old deprecated tag does not.
+const FRESHNESS_WINDOW_DAYS = 420;
 
 interface CompanyFactsResponse {
   cik: number;
@@ -161,23 +172,6 @@ function pickUnit(concept: ConceptFacts | undefined): {
   return { unit: k, entries: concept.units[k] };
 }
 
-function latestPointInTime(
-  entries: FactUnitEntry[],
-): FactUnitEntry | null {
-  // For instant-style facts (e.g. balance-sheet items), every entry covers a
-  // point in time (`end` date, no `start`). For duration facts there is a
-  // `start`. We just take the entry with the most recent `end` and the most
-  // recent filing as a tiebreaker.
-  if (!entries.length) return null;
-  const sorted = [...entries].sort((a, b) => {
-    if (a.end !== b.end) return a.end < b.end ? 1 : -1;
-    const fa = a.filed ?? "";
-    const fb = b.filed ?? "";
-    return fa < fb ? 1 : -1;
-  });
-  return sorted[0];
-}
-
 function durationDays(start: string | undefined, end: string): number {
   if (!start) return 0;
   const s = Date.parse(start);
@@ -195,20 +189,63 @@ function isQuarter(entry: FactUnitEntry): boolean {
   return d >= 80 && d <= 100;
 }
 
+function dateDiffDays(a: string, b: string): number {
+  const da = Date.parse(a);
+  const db = Date.parse(b);
+  if (!Number.isFinite(da) || !Number.isFinite(db)) return Number.POSITIVE_INFINITY;
+  return Math.abs(Math.round((da - db) / 86400000));
+}
+
+/**
+ * Pick the latest point-in-time entry whose `end` falls within
+ * `windowDays` of `anchorEnd`. Returns null when no entry meets the cutoff —
+ * caller is expected to record the staleness.
+ */
+function latestPointInTimeFresh(
+  entries: FactUnitEntry[],
+  anchorEnd: string | null,
+  windowDays: number,
+): { entry: FactUnitEntry | null; staleCandidate: FactUnitEntry | null } {
+  if (!entries.length) return { entry: null, staleCandidate: null };
+  // Most-recent end first; filing date breaks ties so amended filings win.
+  const sorted = [...entries].sort((a, b) => {
+    if (a.end !== b.end) return a.end < b.end ? 1 : -1;
+    const fa = a.filed ?? "";
+    const fb = b.filed ?? "";
+    return fa < fb ? 1 : -1;
+  });
+  if (!anchorEnd) return { entry: sorted[0], staleCandidate: null };
+  for (const e of sorted) {
+    if (dateDiffDays(e.end, anchorEnd) <= windowDays) {
+      return { entry: e, staleCandidate: null };
+    }
+  }
+  return { entry: null, staleCandidate: sorted[0] };
+}
+
 /**
  * Pick the latest "annualised" value for a duration-style fact: prefer the
  * sum of the last four quarters covering ~365 days ending on the most recent
- * quarter. Fall back to the most recent FY 10-K value if quarterly data is
- * incomplete.
+ * quarter inside the freshness window. Fall back to the most recent FY 10-K
+ * value if quarterly data is incomplete.
  */
-function latestTtm(
+function latestTtmFresh(
   entries: FactUnitEntry[],
-): { entry: FactUnitEntry; valueOverride?: number } | null {
-  if (!entries.length) return null;
-  const quarters = entries.filter(isQuarter);
+  anchorEnd: string | null,
+  windowDays: number,
+): {
+  entry: FactUnitEntry | null;
+  valueOverride?: number;
+  staleCandidate: FactUnitEntry | null;
+} {
+  if (!entries.length) return { entry: null, staleCandidate: null };
+
+  const inWindow = (e: FactUnitEntry) =>
+    !anchorEnd || dateDiffDays(e.end, anchorEnd) <= windowDays;
+
+  const quarters = entries.filter(isQuarter).filter(inWindow);
   if (quarters.length >= 4) {
     const sortedQ = [...quarters].sort((a, b) => (a.end < b.end ? 1 : -1));
-    // Try to take the four most recent non-overlapping quarters.
     const chosen: FactUnitEntry[] = [];
     const used = new Set<string>();
     for (const q of sortedQ) {
@@ -220,20 +257,17 @@ function latestTtm(
     }
     if (chosen.length === 4) {
       const sum = chosen.reduce((a, x) => a + x.val, 0);
-      // Use the most recent quarter's metadata as the "as of" anchor.
-      const anchor = chosen[0];
-      return { entry: anchor, valueOverride: sum };
+      return { entry: chosen[0], valueOverride: sum, staleCandidate: null };
     }
   }
-  // Fallback: latest annual (10-K, FY/CY) value.
-  const annuals = entries.filter(isAnnual);
+  const annuals = entries.filter(isAnnual).filter(inWindow);
   if (annuals.length) {
     const sorted = [...annuals].sort((a, b) => (a.end < b.end ? 1 : -1));
-    return { entry: sorted[0] };
+    return { entry: sorted[0], staleCandidate: null };
   }
-  // Fallback: latest entry of any kind.
-  const sorted = [...entries].sort((a, b) => (a.end < b.end ? 1 : -1));
-  return { entry: sorted[0] };
+  // Nothing fresh — record the freshest stale candidate so we can explain.
+  const sortedAll = [...entries].sort((a, b) => (a.end < b.end ? 1 : -1));
+  return { entry: null, staleCandidate: sortedAll[0] ?? null };
 }
 
 function toFundamentalValue(
@@ -257,28 +291,50 @@ function toFundamentalValue(
 
 type Mode = "ttm" | "instant";
 
+interface SelectionContext {
+  anchorEnd: string | null;
+  windowDays: number;
+  stale: Array<{ field: string; tag: string; end: string; ageDays: number }>;
+  missing: string[];
+}
+
 function findLatest(
   facts: NonNullable<CompanyFactsResponse["facts"]>,
+  field: string,
   candidates: string[],
   mode: Mode,
+  ctx: SelectionContext,
 ): FundamentalValue | null {
   const usGaap = facts["us-gaap"] ?? {};
   const dei = facts.dei ?? {};
+  let bestStale: { tag: string; entry: FactUnitEntry } | null = null;
+
   for (const tag of candidates) {
     const concept = usGaap[tag] ?? dei[tag];
     const picked = pickUnit(concept);
     if (!picked) continue;
     if (mode === "instant") {
-      // Instant facts have no `start`. Filter accordingly so we don't pick
-      // a stale duration fact when both exist (rare, but defensive).
       const instant = picked.entries.filter((e) => !e.start);
       const list = instant.length ? instant : picked.entries;
-      const e = latestPointInTime(list);
-      if (e) return toFundamentalValue(tag, picked.unit, e);
+      const r = latestPointInTimeFresh(list, ctx.anchorEnd, ctx.windowDays);
+      if (r.entry) return toFundamentalValue(tag, picked.unit, r.entry);
+      if (r.staleCandidate && !bestStale) bestStale = { tag, entry: r.staleCandidate };
     } else {
-      const r = latestTtm(picked.entries);
-      if (r) return toFundamentalValue(tag, picked.unit, r.entry, r.valueOverride);
+      const r = latestTtmFresh(picked.entries, ctx.anchorEnd, ctx.windowDays);
+      if (r.entry) return toFundamentalValue(tag, picked.unit, r.entry, r.valueOverride);
+      if (r.staleCandidate && !bestStale) bestStale = { tag, entry: r.staleCandidate };
     }
+  }
+
+  if (bestStale && ctx.anchorEnd) {
+    ctx.stale.push({
+      field,
+      tag: bestStale.tag,
+      end: bestStale.entry.end,
+      ageDays: dateDiffDays(bestStale.entry.end, ctx.anchorEnd),
+    });
+  } else {
+    ctx.missing.push(field);
   }
   return null;
 }
@@ -295,9 +351,7 @@ function findAnnualSeries(
     if (!picked) continue;
     const annuals = picked.entries.filter(isAnnual);
     if (annuals.length >= 2) {
-      // Most-recent first
       const sorted = [...annuals].sort((a, b) => (a.end < b.end ? 1 : -1));
-      // Deduplicate by fiscal-year end so multiple amendments don't double-count.
       const seen = new Set<string>();
       const out: { entry: FactUnitEntry; tag: string; unit: string }[] = [];
       for (const e of sorted) {
@@ -309,6 +363,36 @@ function findAnnualSeries(
     }
   }
   return [];
+}
+
+/**
+ * Anchor date = latest period-end across a set of headline tags we expect
+ * every active filer to publish currently. Used as the freshness reference
+ * for every other fact. We pick the *most recent* period-end that any of
+ * these tags reports — that's the company's "now".
+ */
+function computeAnchorDate(
+  facts: NonNullable<CompanyFactsResponse["facts"]>,
+): string | null {
+  const usGaap = facts["us-gaap"] ?? {};
+  const candidates: string[] = [
+    "Assets",
+    "StockholdersEquity",
+    "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+    "Liabilities",
+    "Revenues",
+    "RevenueFromContractWithCustomerExcludingAssessedTax",
+  ];
+  let best: string | null = null;
+  for (const tag of candidates) {
+    const concept = usGaap[tag];
+    const picked = pickUnit(concept);
+    if (!picked) continue;
+    for (const e of picked.entries) {
+      if (!best || e.end > best) best = e.end;
+    }
+  }
+  return best;
 }
 
 function ratio(num: number | null, den: number | null): number | null {
@@ -343,50 +427,71 @@ export async function getEquityFundamentals(
   }
 
   const f = facts.facts;
+  const anchorEnd = computeAnchorDate(f);
+  const ctx: SelectionContext = {
+    anchorEnd,
+    windowDays: FRESHNESS_WINDOW_DAYS,
+    stale: [],
+    missing: [],
+  };
 
   const revenue = findLatest(
-    f,
+    f, "revenue",
     ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet", "RevenueFromContractWithCustomerIncludingAssessedTax"],
-    "ttm",
+    "ttm", ctx,
   );
-  const grossProfit = findLatest(f, ["GrossProfit"], "ttm");
+  const grossProfit = findLatest(f, "grossProfit", ["GrossProfit"], "ttm", ctx);
   const operatingIncome = findLatest(
-    f,
+    f, "operatingIncome",
     ["OperatingIncomeLoss", "IncomeLossFromContinuingOperations"],
-    "ttm",
+    "ttm", ctx,
   );
   const netIncome = findLatest(
-    f,
+    f, "netIncome",
     ["NetIncomeLoss", "ProfitLoss"],
-    "ttm",
+    "ttm", ctx,
   );
-  const assets = findLatest(f, ["Assets"], "instant");
-  const liabilities = findLatest(f, ["Liabilities"], "instant");
+  const assets = findLatest(f, "assets", ["Assets"], "instant", ctx);
+  const liabilities = findLatest(f, "liabilities", ["Liabilities"], "instant", ctx);
   const equity = findLatest(
-    f,
+    f, "equity",
     ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
-    "instant",
+    "instant", ctx,
   );
   const cashAndEquivalents = findLatest(
-    f,
+    f, "cashAndEquivalents",
     [
       "CashAndCashEquivalentsAtCarryingValue",
       "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
     ],
-    "instant",
+    "instant", ctx,
   );
   const longTermDebt = findLatest(
-    f,
+    f, "longTermDebt",
     ["LongTermDebtNoncurrent", "LongTermDebt"],
-    "instant",
+    "instant", ctx,
   );
   const currentDebt = findLatest(
-    f,
+    f, "currentDebt",
     ["LongTermDebtCurrent", "DebtCurrent", "ShortTermBorrowings"],
-    "instant",
+    "instant", ctx,
   );
+  // Total debt: prefer a direct combined tag; otherwise sum the parts only
+  // when at least one is fresh. We must NOT synthesise a total from a stale
+  // long-term + stale current pair — that's how the 2018 figure leaked in.
   let totalDebt: FundamentalValue | null = null;
-  const directTotal = findLatest(f, ["DebtAndCapitalLeaseObligations", "LongTermDebtAndCapitalLeaseObligations"], "instant");
+  // Probe the direct tag without spamming `missing` for it.
+  const directProbe: SelectionContext = {
+    anchorEnd,
+    windowDays: FRESHNESS_WINDOW_DAYS,
+    stale: [],
+    missing: [],
+  };
+  const directTotal = findLatest(
+    f, "totalDebt",
+    ["DebtAndCapitalLeaseObligations", "LongTermDebtAndCapitalLeaseObligations"],
+    "instant", directProbe,
+  );
   if (directTotal) {
     totalDebt = directTotal;
   } else if (longTermDebt || currentDebt) {
@@ -396,20 +501,26 @@ export async function getEquityFundamentals(
       totalDebt = { ...anchor, value: v, tag: "LongTermDebt+CurrentDebt" };
     }
   }
+  if (!totalDebt) {
+    // Surface the failure so the UI / scoring can mark it missing.
+    if (directProbe.stale.length) ctx.stale.push(...directProbe.stale.map((s) => ({ ...s, field: "totalDebt" })));
+    else ctx.missing.push("totalDebt");
+  }
+
   const operatingCashFlow = findLatest(
-    f,
+    f, "operatingCashFlow",
     [
       "NetCashProvidedByUsedInOperatingActivities",
       "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations",
     ],
-    "ttm",
+    "ttm", ctx,
   );
   // Capex is reported as a positive outflow in PaymentsToAcquirePropertyPlantAndEquipment.
   // Normalise to negative-as-outflow so FCF = OCF + capex sums correctly.
   const capexRaw = findLatest(
-    f,
+    f, "capex",
     ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"],
-    "ttm",
+    "ttm", ctx,
   );
   const capex: FundamentalValue | null = capexRaw
     ? { ...capexRaw, value: -Math.abs(capexRaw.value) }
@@ -423,22 +534,26 @@ export async function getEquityFundamentals(
     };
   } else if (operatingCashFlow) {
     freeCashFlow = { ...operatingCashFlow, tag: "OCF (capex unavailable)" };
+  } else {
+    ctx.missing.push("freeCashFlow");
   }
   const dilutedShares = findLatest(
-    f,
+    f, "dilutedShares",
     [
       "WeightedAverageNumberOfDilutedSharesOutstanding",
       "WeightedAverageNumberOfSharesOutstandingDiluted",
     ],
-    "ttm",
+    "ttm", ctx,
   );
   const eps = findLatest(
-    f,
+    f, "eps",
     ["EarningsPerShareDiluted", "EarningsPerShareBasic"],
-    "ttm",
+    "ttm", ctx,
   );
 
-  // Annual series for growth / share-count trend
+  // Annual series for growth / share-count trend. Use the most recent
+  // entries regardless of freshness gate — by construction they're already
+  // dedup'd on fiscal-year end and we only pull the recent tail.
   const revenueSeries = findAnnualSeries(f, [
     "Revenues",
     "RevenueFromContractWithCustomerExcludingAssessedTax",
@@ -508,6 +623,21 @@ export async function getEquityFundamentals(
   filedCandidates.sort((a, b) => (a.filed < b.filed ? 1 : -1));
   const latestFiling = filedCandidates[0] ?? null;
 
+  // Deduplicate the bookkeeping arrays.
+  const seenStale = new Set<string>();
+  const dedupStale = ctx.stale.filter((s) => {
+    const k = `${s.field}|${s.tag}|${s.end}`;
+    if (seenStale.has(k)) return false;
+    seenStale.add(k);
+    return true;
+  });
+  const seenMissing = new Set<string>();
+  const dedupMissing = ctx.missing.filter((m) => {
+    if (seenMissing.has(m)) return false;
+    seenMissing.add(m);
+    return true;
+  });
+
   const fundamentals: EquityFundamentals = {
     source: "sec_edgar",
     ticker: t,
@@ -541,6 +671,10 @@ export async function getEquityFundamentals(
     shareCountTrend,
     shareCountChangePct,
     latestFiling,
+    anchorDate: anchorEnd,
+    freshnessWindowDays: FRESHNESS_WINDOW_DAYS,
+    staleFacts: dedupStale,
+    missingFields: dedupMissing,
   };
   fundamentalsCache.set(t, { at: now, data: fundamentals });
   return fundamentals;

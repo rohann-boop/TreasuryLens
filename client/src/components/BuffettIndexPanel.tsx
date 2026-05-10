@@ -303,6 +303,33 @@ function FundamentalsBlock({ f }: { f: EquityFundamentals }) {
           testid="fund-share-trend"
         />
       </div>
+      {(f.staleFacts?.length || f.missingFields?.length) ? (
+        <div
+          className="border-t border-border/50 px-4 py-2 text-[10px] leading-relaxed text-muted-foreground"
+          data-testid="buffett-fundamentals-quality"
+        >
+          {f.anchorDate && (
+            <span className="mr-2">
+              Anchor period {f.anchorDate}
+              {f.freshnessWindowDays
+                ? ` (±${f.freshnessWindowDays}d window).`
+                : "."}
+            </span>
+          )}
+          {f.staleFacts?.length ? (
+            <span data-testid="buffett-fundamentals-stale">
+              Rejected as stale: {f.staleFacts
+                .map((s) => `${s.field} (${s.tag} ${s.end}, ${s.ageDays}d old)`)
+                .join("; ")}.
+            </span>
+          ) : null}
+          {f.missingFields?.length ? (
+            <span className="ml-1" data-testid="buffett-fundamentals-missing">
+              Missing: {f.missingFields.join(", ")}.
+            </span>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }

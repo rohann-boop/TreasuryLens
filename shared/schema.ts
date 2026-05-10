@@ -315,6 +315,21 @@ export interface EquityFundamentals {
   shareCountChangePct: number | null;       // % change of shares from oldest to newest in the window
   // metadata for the UI
   latestFiling: { form: string; filed: string; periodEnd: string } | null;
+  // Anchor date used for freshness checks (latest balance-sheet / income
+  // statement period end, YYYY-MM-DD). Facts with `end` more than
+  // `freshnessWindowDays` before this anchor are rejected and surfaced in
+  // `staleFacts` instead of populating the field.
+  anchorDate: string | null;
+  freshnessWindowDays: number;
+  // Tags rejected for staleness, plus tags whose data is genuinely missing.
+  // Used by the UI/scoring layer to explain why a field is null.
+  staleFacts: Array<{
+    field: string;
+    tag: string;
+    end: string;
+    ageDays: number;
+  }>;
+  missingFields: string[];
 }
 
 export interface TreasurySnapshot {
