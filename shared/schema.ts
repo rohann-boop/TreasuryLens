@@ -463,6 +463,48 @@ export interface ThirteenFSummaryResponse {
   notes: string;
 }
 
+// =============================================================================
+// Politicians — STOCK Act Periodic Transaction Reports (PTRs) and Annual
+// Financial Disclosures from the U.S. House Clerk and Senate. PTR data is
+// published as PDFs on a 30-45 day delay and uses dollar value ranges, not
+// share counts. We surface a graceful source-linked view rather than a parsed
+// portfolio: the curated list of recent disclosures comes from a small static
+// config and the live API enriches it with fetch metadata when available.
+// =============================================================================
+
+export type PoliticianKey = "pelosi";
+
+export interface PoliticianDisclosureLink {
+  label: string;       // human-readable, e.g. "2025 PTR — March"
+  url: string;         // canonical public source
+  source: string;      // "House Clerk" | "Senate" | etc.
+  filed?: string | null; // YYYY-MM-DD if known
+  notes?: string | null;
+}
+
+export interface PoliticianSummary {
+  key: PoliticianKey;
+  name: string;
+  role: string;        // e.g. "U.S. Representative"
+  party: string | null;
+  state: string | null;
+  status: "ok" | "no-data";
+  disclosurePortalUrl: string;   // root listing for this person
+  disclosureDelayNote: string;   // boilerplate compliance note
+  disclosures: PoliticianDisclosureLink[];
+  // Reserved for future deterministic parsing — we surface an empty array
+  // today and label this as STOCK Act range-based data, not 13F holdings.
+  recentTransactions: never[];
+  notes: string[];
+}
+
+export interface PoliticiansSummaryResponse {
+  politicians: PoliticianSummary[];
+  lastUpdated: number;
+  sources: { label: string; url: string }[];
+  notes: string;
+}
+
 export interface TreasurySnapshot {
   btcHoldings: number | null;
   sharesOutstanding: number | null;

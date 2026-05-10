@@ -9,6 +9,7 @@ import { computeBuffettIndex } from "./buffett";
 import { getEquityFundamentals } from "./secEdgar";
 import { getManagementGovernance } from "./secGovernance";
 import { getThirteenFSummary } from "./sec13f";
+import { getPoliticiansSummary } from "./politicians";
 import {
   insertInstrumentSchema,
   insertTreasurySchema,
@@ -342,6 +343,17 @@ export async function registerRoutes(
   app.get("/api/13f/summary", async (_req, res) => {
     try {
       const summary = await getThirteenFSummary();
+      res.json(summary);
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // STOCK Act politician disclosures — curated source-linked view of public
+  // House Clerk / Senate filings. No paid APIs; values are dollar ranges.
+  app.get("/api/politicians/summary", async (_req, res) => {
+    try {
+      const summary = await getPoliticiansSummary();
       res.json(summary);
     } catch (e) {
       res.status(500).json({ message: (e as Error).message });

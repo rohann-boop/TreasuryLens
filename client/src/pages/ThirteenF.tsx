@@ -7,6 +7,9 @@ import type {
   ThirteenFSummaryResponse,
   PositionChange,
   ManagerKey,
+  PoliticianKey,
+  PoliticianSummary,
+  PoliticiansSummaryResponse,
 } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +29,8 @@ import {
   Sun,
   Moon,
   RefreshCcw,
+  Landmark,
+  TrendingUp,
 } from "lucide-react";
 import { fmtAgo, fmtCompact, fmtPct } from "@/lib/format";
 import { WordMark } from "@/components/Logo";
@@ -564,7 +569,7 @@ function ChangeTable({
   );
 }
 
-function ManagerCard({ m }: { m: Manager13FSummary }) {
+function ManagerDetail({ m }: { m: Manager13FSummary }) {
   const portfolioChange =
     m.previousTotalValue && m.previousTotalValue > 0
       ? ((m.totalValue - m.previousTotalValue) / m.previousTotalValue) * 100
@@ -576,11 +581,11 @@ function ManagerCard({ m }: { m: Manager13FSummary }) {
         className="rounded-lg border border-border/70 bg-card/40 p-5 space-y-2"
         data-testid={`manager-card-${m.key}`}
       >
-        <div className="flex items-center gap-3">
-          <div>
-            <h2 className="text-base font-semibold">{m.manager}</h2>
-            <div className="text-[12px] text-muted-foreground">{m.firm}</div>
-          </div>
+        <div>
+          <h2 className="text-base font-semibold" data-testid="selected-person-title">
+            {m.manager}
+          </h2>
+          <div className="text-[12px] text-muted-foreground">{m.firm}</div>
         </div>
         <div className="rounded-md border border-warn/30 bg-warn/5 px-3 py-2 text-[12px]">
           {m.status === "no-filing"
@@ -598,7 +603,10 @@ function ManagerCard({ m }: { m: Manager13FSummary }) {
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-base font-semibold" data-testid={`manager-name-${m.key}`}>
+          <h2
+            className="text-base font-semibold"
+            data-testid="selected-person-title"
+          >
             {m.manager}
           </h2>
           <div className="text-[12px] text-muted-foreground">{m.firm}</div>
@@ -640,7 +648,7 @@ function ManagerCard({ m }: { m: Manager13FSummary }) {
       </div>
 
       <Tabs defaultValue="top" className="w-full">
-        <TabsList className="bg-background/40">
+        <TabsList className="bg-background/40 flex-wrap h-auto">
           <TabsTrigger value="top" data-testid={`tab-top-${m.key}`}>
             Top 10
           </TabsTrigger>
@@ -710,6 +718,100 @@ function ManagerCard({ m }: { m: Manager13FSummary }) {
   );
 }
 
+function PoliticianDetail({ p }: { p: PoliticianSummary }) {
+  return (
+    <section
+      className="rounded-lg border border-border/70 bg-card/40 p-5 space-y-4"
+      data-testid={`politician-card-${p.key}`}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2
+            className="text-base font-semibold"
+            data-testid="selected-person-title"
+          >
+            {p.name}
+          </h2>
+          <div className="text-[12px] text-muted-foreground">
+            {p.role}
+            {p.party ? ` · ${p.party}` : ""}
+            {p.state ? ` · ${p.state}` : ""}
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-[10px] uppercase tracking-widest text-muted-foreground">
+            Disclosure type
+          </div>
+          <div className="text-[12px] font-medium">STOCK Act</div>
+          <div className="text-[10px] text-muted-foreground">
+            Periodic Transaction Reports
+          </div>
+        </div>
+      </div>
+
+      <div
+        className="rounded-md border border-warn/30 bg-warn/5 px-3 py-2 text-[12px] leading-relaxed"
+        data-testid={`politician-delay-${p.key}`}
+      >
+        {p.disclosureDelayNote} Parsed transactions are{" "}
+        <em>not</em> shown here — official PDFs are linked below.
+      </div>
+
+      <div className="space-y-2">
+        <div className="text-[10px] uppercase tracking-widest text-muted-foreground">
+          Public disclosure sources
+        </div>
+        <ul className="space-y-1.5" data-testid={`politician-sources-${p.key}`}>
+          {p.disclosures.map((d, i) => (
+            <li
+              key={`${d.url}-${i}`}
+              className="rounded-md border border-border/70 bg-background/35 px-3 py-2 text-[12px]"
+              data-testid={`politician-source-${p.key}-${i}`}
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <a
+                  href={d.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-primary hover:underline font-medium"
+                >
+                  {d.label}
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+                <span className="text-[10px] text-muted-foreground">
+                  {d.source}
+                  {d.filed ? ` · filed ${d.filed}` : ""}
+                </span>
+              </div>
+              {d.notes && (
+                <div className="mt-1 text-[11px] text-muted-foreground">
+                  {d.notes}
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="rounded-md border border-border/70 bg-background/35 p-4 text-center text-[12px] text-muted-foreground">
+        <div className="font-medium text-foreground mb-1">
+          Transaction parsing coming next
+        </div>
+        Official disclosures are PDFs with dollar value ranges. Use the source
+        links above for the authoritative filings.
+      </div>
+
+      {p.notes.length > 0 && (
+        <ul className="text-[11px] text-muted-foreground space-y-1 list-disc list-inside">
+          {p.notes.map((n, i) => (
+            <li key={i}>{n}</li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 const MANAGER_ORDER: ManagerKey[] = [
   "berkshire",
   "pershing",
@@ -717,19 +819,73 @@ const MANAGER_ORDER: ManagerKey[] = [
   "scion",
 ];
 
+type SelectedKey =
+  | { kind: "manager"; key: ManagerKey }
+  | { kind: "politician"; key: PoliticianKey };
+
+function PersonButton({
+  label,
+  sublabel,
+  active,
+  onClick,
+  testId,
+}: {
+  label: string;
+  sublabel?: string;
+  active: boolean;
+  onClick: () => void;
+  testId: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      data-testid={testId}
+      data-active={active ? "true" : "false"}
+      className={`w-full text-left rounded-md border px-3 py-2 transition-colors ${
+        active
+          ? "border-primary/60 bg-primary/10 text-foreground"
+          : "border-border/60 bg-background/30 text-foreground/90 hover:bg-card/60"
+      }`}
+    >
+      <div className="text-[12px] font-medium truncate">{label}</div>
+      {sublabel && (
+        <div className="text-[10px] text-muted-foreground truncate">
+          {sublabel}
+        </div>
+      )}
+    </button>
+  );
+}
+
 export default function ThirteenFPage() {
   const { dark, setDark } = useTheme();
   const [refreshing, setRefreshing] = useState(false);
   const { toast } = useToast();
-  const { data, isLoading, isError, error } = useQuery<ThirteenFSummaryResponse>({
+  const [selected, setSelected] = useState<SelectedKey>({
+    kind: "manager",
+    key: "berkshire",
+  });
+
+  const thirteenF = useQuery<ThirteenFSummaryResponse>({
     queryKey: ["/api/13f/summary"],
+  });
+  const politicians = useQuery<PoliticiansSummaryResponse>({
+    queryKey: ["/api/politicians/summary"],
   });
 
   const refresh = async () => {
     setRefreshing(true);
     try {
-      await apiRequest("GET", "/api/13f/summary");
-      await queryClient.invalidateQueries({ queryKey: ["/api/13f/summary"] });
+      await Promise.all([
+        apiRequest("GET", "/api/13f/summary"),
+        apiRequest("GET", "/api/politicians/summary"),
+      ]);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/13f/summary"] }),
+        queryClient.invalidateQueries({
+          queryKey: ["/api/politicians/summary"],
+        }),
+      ]);
       toast({ title: "Refreshed" });
     } catch {
       toast({ title: "Refresh failed", variant: "destructive" });
@@ -739,12 +895,35 @@ export default function ThirteenFPage() {
   };
 
   const orderedManagers = useMemo(() => {
-    if (!data?.managers) return [];
-    const byKey = new Map(data.managers.map((m) => [m.key, m]));
+    if (!thirteenF.data?.managers) return [];
+    const byKey = new Map(thirteenF.data.managers.map((m) => [m.key, m]));
     return MANAGER_ORDER.map((k) => byKey.get(k)).filter(
       (m): m is Manager13FSummary => !!m,
     );
-  }, [data]);
+  }, [thirteenF.data]);
+
+  const orderedPoliticians = useMemo(() => {
+    return politicians.data?.politicians ?? [];
+  }, [politicians.data]);
+
+  const selectedManager = useMemo(() => {
+    if (selected.kind !== "manager") return null;
+    return orderedManagers.find((m) => m.key === selected.key) ?? null;
+  }, [selected, orderedManagers]);
+
+  const selectedPolitician = useMemo(() => {
+    if (selected.kind !== "politician") return null;
+    return orderedPoliticians.find((p) => p.key === selected.key) ?? null;
+  }, [selected, orderedPoliticians]);
+
+  const lastUpdated = useMemo(() => {
+    const a = thirteenF.data?.lastUpdated ?? 0;
+    const b = politicians.data?.lastUpdated ?? 0;
+    return Math.max(a, b) || null;
+  }, [thirteenF.data, politicians.data]);
+
+  const isLoading = thirteenF.isLoading || politicians.isLoading;
+  const isError = thirteenF.isError;
 
   return (
     <div className="min-h-[100dvh] flex flex-col bg-background text-foreground">
@@ -761,14 +940,20 @@ export default function ThirteenFPage() {
           <span className="text-muted-foreground">·</span>
           <WordMark />
           <span className="text-muted-foreground hidden md:inline">·</span>
-          <h1 className="hidden md:inline text-base font-semibold" data-testid="text-page-title">
-            13F Tracker
+          <h1
+            className="hidden md:inline text-base font-semibold"
+            data-testid="text-page-title"
+          >
+            SuperInvestors &amp; Politicians
           </h1>
         </div>
         <div className="flex items-center gap-2">
-          {data?.lastUpdated && (
-            <span className="hidden lg:inline text-[11px] text-muted-foreground" data-testid="text-last-updated">
-              Updated {fmtAgo(data.lastUpdated)}
+          {lastUpdated && (
+            <span
+              className="hidden lg:inline text-[11px] text-muted-foreground"
+              data-testid="text-last-updated"
+            >
+              Updated {fmtAgo(lastUpdated)}
             </span>
           )}
           <Button
@@ -779,7 +964,9 @@ export default function ThirteenFPage() {
             disabled={refreshing}
             data-testid="button-refresh"
           >
-            <RefreshCcw className={`h-3.5 w-3.5 mr-1 ${refreshing ? "animate-spin" : ""}`} />
+            <RefreshCcw
+              className={`h-3.5 w-3.5 mr-1 ${refreshing ? "animate-spin" : ""}`}
+            />
             Refresh
           </Button>
           <Button
@@ -790,15 +977,24 @@ export default function ThirteenFPage() {
             aria-label="Toggle theme"
             data-testid="button-theme"
           >
-            {dark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+            {dark ? (
+              <Sun className="h-3.5 w-3.5" />
+            ) : (
+              <Moon className="h-3.5 w-3.5" />
+            )}
           </Button>
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto" style={{ overscrollBehavior: "contain" }}>
+      <main
+        className="flex-1 overflow-y-auto"
+        style={{ overscrollBehavior: "contain" }}
+      >
         <div className="px-4 md:px-6 py-5 space-y-5 max-w-[1600px] mx-auto">
           <div className="md:hidden">
-            <h1 className="text-lg font-semibold">13F Tracker</h1>
+            <h1 className="text-lg font-semibold">
+              SuperInvestors &amp; Politicians
+            </h1>
           </div>
 
           <div
@@ -808,70 +1004,188 @@ export default function ThirteenFPage() {
             <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary/80" />
             <p className="leading-relaxed">
               <span className="text-foreground">
-                Latest available 13F-HR filings.
+                Select a person to view their disclosures.
               </span>{" "}
-              Form 13F-HR is filed with the SEC by institutional investment
-              managers with $100M+ in U.S. equity AUM, due 45 days after each
-              quarter-end. Holdings shown are <em>not</em> real-time — they are
-              the most recent reported positions and may have changed since the
-              quarter ended. Data parsed from public SEC EDGAR filings; CUSIP
-              shown rather than ticker since 13F filings identify issuers by
-              CUSIP. Short positions, foreign securities, and many derivatives
-              are not required to be reported.
+              SuperInvestor data comes from delayed SEC 13F-HR filings (due 45
+              days after each quarter-end, long U.S. equity positions only,
+              identified by CUSIP). Politician data comes from delayed STOCK
+              Act Periodic Transaction Reports filed with the U.S. House Clerk
+              and Senate, reported as dollar value ranges rather than share
+              counts. Neither source is real-time.
             </p>
           </div>
-
-          {isLoading && (
-            <div className="space-y-4">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <Skeleton key={i} className="h-64 rounded-lg" />
-              ))}
-            </div>
-          )}
 
           {isError && (
             <div
               className="rounded-md border border-neg/30 bg-neg/5 px-3 py-3 text-sm text-neg"
               data-testid="error-banner"
             >
-              Failed to load 13F summary: {(error as Error)?.message ?? "unknown"}
+              Failed to load 13F summary:{" "}
+              {(thirteenF.error as Error)?.message ?? "unknown"}
             </div>
           )}
 
-          {!isLoading && data && orderedManagers.length === 0 && (
-            <div
-              className="rounded-md border border-warn/30 bg-warn/5 px-3 py-3 text-sm"
-              data-testid="empty-banner"
+          <div className="grid grid-cols-1 md:grid-cols-[260px_minmax(0,1fr)] gap-4">
+            <aside
+              className="md:sticky md:top-[72px] md:self-start space-y-4"
+              data-testid="people-selector"
             >
-              No managers available.
-            </div>
-          )}
-
-          {orderedManagers.map((m) => (
-            <ManagerCard key={m.key} m={m} />
-          ))}
-
-          {data?.sources?.length ? (
-            <footer className="text-[10px] text-muted-foreground py-3 leading-relaxed">
-              Sources:{" "}
-              {data.sources.map((s, i) => (
-                <span key={s.url}>
-                  {i > 0 && " · "}
-                  <a
-                    href={s.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline hover:text-foreground"
+              <div className="space-y-2">
+                <div
+                  className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-muted-foreground px-1"
+                  data-testid="group-header-superinvestors"
+                >
+                  <TrendingUp className="h-3 w-3" />
+                  <span>SuperInvestors</span>
+                </div>
+                {isLoading && !orderedManagers.length ? (
+                  <div className="space-y-2">
+                    {Array.from({ length: 4 }).map((_, i) => (
+                      <Skeleton key={i} className="h-12 rounded-md" />
+                    ))}
+                  </div>
+                ) : (
+                  <div
+                    className="flex flex-row md:flex-col gap-2 overflow-x-auto md:overflow-visible pb-1 md:pb-0"
+                    data-testid="group-list-superinvestors"
                   >
-                    {s.label}
-                  </a>
-                </span>
-              ))}
-              . {data.notes}
+                    {orderedManagers.map((m) => (
+                      <div key={m.key} className="shrink-0 md:w-auto w-[200px]">
+                        <PersonButton
+                          label={m.manager}
+                          sublabel={m.firm}
+                          active={
+                            selected.kind === "manager" &&
+                            selected.key === m.key
+                          }
+                          onClick={() =>
+                            setSelected({ kind: "manager", key: m.key })
+                          }
+                          testId={`select-manager-${m.key}`}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <div
+                  className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-muted-foreground px-1"
+                  data-testid="group-header-politicians"
+                >
+                  <Landmark className="h-3 w-3" />
+                  <span>Politicians</span>
+                </div>
+                {isLoading && !orderedPoliticians.length ? (
+                  <Skeleton className="h-12 rounded-md" />
+                ) : (
+                  <div
+                    className="flex flex-row md:flex-col gap-2 overflow-x-auto md:overflow-visible pb-1 md:pb-0"
+                    data-testid="group-list-politicians"
+                  >
+                    {orderedPoliticians.map((p) => {
+                      const sub = [p.role, p.party, p.state]
+                        .filter(Boolean)
+                        .join(" · ");
+                      return (
+                        <div
+                          key={p.key}
+                          className="shrink-0 md:w-auto w-[200px]"
+                        >
+                          <PersonButton
+                            label={p.name}
+                            sublabel={sub}
+                            active={
+                              selected.kind === "politician" &&
+                              selected.key === p.key
+                            }
+                            onClick={() =>
+                              setSelected({ kind: "politician", key: p.key })
+                            }
+                            testId={`select-politician-${p.key}`}
+                          />
+                        </div>
+                      );
+                    })}
+                    {!orderedPoliticians.length && !isLoading && (
+                      <div className="text-[11px] text-muted-foreground px-1">
+                        No politicians configured.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </aside>
+
+            <div className="min-w-0" data-testid="person-detail">
+              {isLoading && !selectedManager && !selectedPolitician && (
+                <Skeleton className="h-64 rounded-lg" />
+              )}
+              {!isLoading &&
+                !selectedManager &&
+                !selectedPolitician &&
+                !isError && (
+                  <div
+                    className="rounded-md border border-warn/30 bg-warn/5 px-3 py-3 text-sm"
+                    data-testid="empty-banner"
+                  >
+                    No person selected.
+                  </div>
+                )}
+              {selectedManager && <ManagerDetail m={selectedManager} />}
+              {selectedPolitician && (
+                <PoliticianDetail p={selectedPolitician} />
+              )}
+            </div>
+          </div>
+
+          {(thirteenF.data?.sources?.length ||
+            politicians.data?.sources?.length) && (
+            <footer className="text-[10px] text-muted-foreground py-3 leading-relaxed space-y-1">
+              {thirteenF.data?.sources?.length ? (
+                <div>
+                  <span className="text-foreground/80">SuperInvestors:</span>{" "}
+                  {thirteenF.data.sources.map((s, i) => (
+                    <span key={s.url}>
+                      {i > 0 && " · "}
+                      <a
+                        href={s.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline hover:text-foreground"
+                      >
+                        {s.label}
+                      </a>
+                    </span>
+                  ))}
+                  . {thirteenF.data.notes}
+                </div>
+              ) : null}
+              {politicians.data?.sources?.length ? (
+                <div>
+                  <span className="text-foreground/80">Politicians:</span>{" "}
+                  {politicians.data.sources.map((s, i) => (
+                    <span key={s.url}>
+                      {i > 0 && " · "}
+                      <a
+                        href={s.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline hover:text-foreground"
+                      >
+                        {s.label}
+                      </a>
+                    </span>
+                  ))}
+                  . {politicians.data.notes}
+                </div>
+              ) : null}
             </footer>
-          ) : null}
+          )}
         </div>
       </main>
     </div>
   );
 }
+
