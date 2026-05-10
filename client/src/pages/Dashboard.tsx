@@ -12,6 +12,7 @@ import { AddInstrumentDialog } from "@/components/AddInstrumentDialog";
 import { ComparisonTable, StatusBadge } from "@/components/ComparisonTable";
 import { TickerTape } from "@/components/TickerTape";
 import { SignalLab } from "@/components/SignalLab";
+import { BuffettIndexPanel } from "@/components/BuffettIndexPanel";
 import {
   AutoRefreshControl,
   type RefreshInterval,
@@ -368,6 +369,9 @@ export default function Dashboard() {
 
               {/* Research-only model signal panel */}
               <SignalLab snap={selected} />
+
+              {/* Long-term business quality / valuation framework */}
+              <BuffettIndexPanel snap={selected} />
 
               {/* Treasury panel for Metaplanet (or any instrument with treasury data) */}
               {(selected.instrument.symbol === "MTPLF" || selected.treasury) && (

@@ -220,6 +220,44 @@ export interface ModelSignal {
   notes: string[];
 }
 
+// =============================================================================
+// Buffett Index — long-term business-quality and valuation framework. This is
+// intentionally separate from Signal Lab, which is a timing/risk model.
+// =============================================================================
+
+export type BuffettFramework = "equity" | "bitcoin_treasury" | "not_applicable";
+
+export interface BuffettCategory {
+  key:
+    | "moat"
+    | "returns"
+    | "owner_earnings"
+    | "balance_sheet"
+    | "capital_allocation"
+    | "valuation"
+    | "treasury_nav"
+    | "btc_per_share";
+  name: string;
+  score: number | null;
+  weight: number;
+  available: boolean;
+  bullets: string[];
+}
+
+export interface BuffettIndex {
+  asOf: number;
+  framework: BuffettFramework;
+  applicable: boolean;
+  overallScore: number | null;
+  label: string;
+  dataCoverage: number;
+  categories: BuffettCategory[];
+  strengths: string[];
+  watchouts: string[];
+  missingData: string[];
+  notes: string[];
+}
+
 export interface TreasurySnapshot {
   btcHoldings: number | null;
   sharesOutstanding: number | null;

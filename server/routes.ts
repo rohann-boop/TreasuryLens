@@ -5,6 +5,7 @@ import { storage } from "./storage";
 import { buildSnapshot } from "./marketData";
 import type { Bar } from "./indicators";
 import { computeSignal, parseSignalConfig, DEFAULT_CONFIG } from "./signals";
+import { computeBuffettIndex } from "./buffett";
 import {
   insertInstrumentSchema,
   insertTreasurySchema,
@@ -270,6 +271,16 @@ export async function registerRoutes(
     const cfg = parseSignalConfig(req.query as Record<string, unknown>);
     const signal = computeSignal(snap, cfg);
     res.json(signal);
+  });
+
+  // Buffett Index — business-quality / valuation framework, separate from
+  // short-term Signal Lab. Reuses cached snapshot; no extra provider calls.
+  app.get("/api/instruments/:id/buffett", async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "bad id" });
+    const snap = await getSnapshot(id, false);
+    if (!snap) return res.status(404).json({ message: "not found" });
+    res.json(computeBuffettIndex(snap));
   });
 
   // Treasury upsert
