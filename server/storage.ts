@@ -177,12 +177,12 @@ const DEFAULT_INSTRUMENTS: InsertInstrument[] = [
     pinned: true,
   },
   {
-    symbol: "3350.T",
+    symbol: "MTPLF",
     displayName: "Metaplanet",
     assetClass: "equity",
-    quoteCurrency: "JPY",
-    dataSource: "yahoo",
-    notes: "Tokyo-listed Bitcoin treasury company.",
+    quoteCurrency: "USD",
+    dataSource: "massive",
+    notes: "US OTC listing for Japan-based Bitcoin treasury company.",
     sortOrder: 1,
     pinned: true,
   },
@@ -191,7 +191,7 @@ const DEFAULT_INSTRUMENTS: InsertInstrument[] = [
     displayName: "Tesla",
     assetClass: "equity",
     quoteCurrency: "USD",
-    dataSource: "yahoo",
+    dataSource: "massive",
     notes: "NASDAQ-listed equity tracked alongside crypto-treasury names.",
     sortOrder: 2,
     pinned: true,
@@ -199,15 +199,44 @@ const DEFAULT_INSTRUMENTS: InsertInstrument[] = [
 ];
 
 async function ensureSeed() {
+  // One-time migration: prior builds seeded the Tokyo listing (3350.T). The
+  // user now wants the US OTC listing. Updating in place preserves the same
+  // instrument id and any manually entered Metaplanet treasury metrics.
+  const legacyMeta = await storage.getInstrumentBySymbol("3350.T");
+  const usMeta = await storage.getInstrumentBySymbol("MTPLF");
+  if (legacyMeta && !usMeta) {
+    sqlite
+      .prepare(
+        `UPDATE instruments
+         SET symbol = ?, quote_currency = ?, data_source = ?, notes = ?
+         WHERE id = ?`,
+      )
+      .run(
+        "MTPLF",
+        "USD",
+        "massive",
+        "US OTC listing for Japan-based Bitcoin treasury company.",
+        legacyMeta.id,
+      );
+  }
+
   for (const def of DEFAULT_INSTRUMENTS) {
     const existing = await storage.getInstrumentBySymbol(def.symbol);
     if (!existing) {
       await storage.createInstrument(def);
+    } else if (def.symbol === "MTPLF" || def.symbol === "TSLA") {
+      sqlite
+        .prepare(
+          `UPDATE instruments
+           SET data_source = ?, quote_currency = ?, notes = ?
+           WHERE id = ?`,
+        )
+        .run(def.dataSource, def.quoteCurrency, def.notes ?? null, existing.id);
     }
   }
   // Seed empty Metaplanet treasury record so the panel renders — only if
   // no row exists yet (preserves user edits on subsequent boots).
-  const meta = await storage.getInstrumentBySymbol("3350.T");
+  const meta = await storage.getInstrumentBySymbol("MTPLF");
   if (meta) {
     const t = await storage.getTreasury(meta.id);
     if (!t) {

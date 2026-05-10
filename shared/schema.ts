@@ -9,7 +9,7 @@ export const instruments = sqliteTable("instruments", {
   displayName: text("display_name").notNull(),
   assetClass: text("asset_class").notNull(), // 'crypto' | 'equity' | 'index'
   quoteCurrency: text("quote_currency").notNull().default("USD"),
-  dataSource: text("data_source").notNull().default("yahoo"), // 'yahoo' | 'coingecko'
+  dataSource: text("data_source").notNull().default("yahoo"), // 'yahoo' | 'coingecko' | 'massive'
   notes: text("notes"),
   sortOrder: integer("sort_order").notNull().default(0),
   pinned: integer("pinned", { mode: "boolean" }).notNull().default(false),
@@ -22,7 +22,7 @@ export const insertInstrumentSchema = createInsertSchema(instruments)
     displayName: z.string().min(1).max(80),
     assetClass: z.enum(["crypto", "equity", "index"]),
     quoteCurrency: z.string().min(1).max(8).default("USD"),
-    dataSource: z.enum(["yahoo", "coingecko"]).default("yahoo"),
+    dataSource: z.enum(["yahoo", "coingecko", "massive"]).default("yahoo"),
     notes: z.string().max(500).optional().nullable(),
     sortOrder: z.number().int().default(0).optional(),
     pinned: z.boolean().default(false).optional(),

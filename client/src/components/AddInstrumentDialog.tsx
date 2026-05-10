@@ -32,7 +32,7 @@ const initial = {
   displayName: "",
   assetClass: "equity" as "crypto" | "equity" | "index",
   quoteCurrency: "USD",
-  dataSource: "yahoo" as "yahoo" | "coingecko",
+  dataSource: "massive" as "yahoo" | "coingecko" | "massive",
   notes: "",
 };
 
@@ -79,9 +79,9 @@ export function AddInstrumentDialog({ open, onOpenChange, onCreated }: Props) {
         <DialogHeader>
           <DialogTitle>Add Instrument</DialogTitle>
           <DialogDescription>
-            Track any Yahoo-compatible symbol. For crypto try{" "}
-            <span className="mono">BTC-USD</span>; for Tokyo equities use{" "}
-            <span className="mono">.T</span>.
+            Track US equities through Massive when configured, with Yahoo/Stooq
+            fallback. For crypto try <span className="mono">BTC-USD</span>; for
+            Metaplanet US OTC use <span className="mono">MTPLF</span>.
           </DialogDescription>
         </DialogHeader>
 
@@ -95,7 +95,7 @@ export function AddInstrumentDialog({ open, onOpenChange, onCreated }: Props) {
                 onChange={(e) =>
                   setForm((f) => ({ ...f, symbol: e.target.value.toUpperCase() }))
                 }
-                placeholder="e.g. MSTR, ETH-USD, 3350.T"
+                placeholder="e.g. MSTR, MTPLF, ETH-USD"
                 className="mono mt-1"
                 data-testid="input-symbol"
                 autoFocus
@@ -163,6 +163,7 @@ export function AddInstrumentDialog({ open, onOpenChange, onCreated }: Props) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="massive">Massive / Stock Market API</SelectItem>
                 <SelectItem value="yahoo">Yahoo Finance</SelectItem>
                 <SelectItem value="coingecko">CoinGecko (BTC only)</SelectItem>
               </SelectContent>

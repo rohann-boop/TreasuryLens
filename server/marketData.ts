@@ -1,5 +1,5 @@
-// Market data fetching from public, no-auth endpoints.
-// Primary: Yahoo Finance chart API. Fallback: CoinGecko (BTC only).
+// Market data fetching. Equity path can use Massive when MASSIVE_API_KEY is
+// configured; fallbacks are Yahoo/Stooq. Crypto fallback: CoinGecko.
 // Always returns a structured snapshot with `status` indicating live/demo/error.
 
 import type { Bar } from "./indicators";
@@ -25,6 +25,61 @@ const YAHOO_HEADERS = {
   Accept: "application/json,text/plain,*/*",
   "Accept-Language": "en-US,en;q=0.9",
 };
+
+const MASSIVE_API_KEY = process.env.MASSIVE_API_KEY || "";
+
+interface MassiveAggResponse {
+  results?: Array<{
+    t: number;
+    o: number;
+    h: number;
+    l: number;
+    c: number;
+    v?: number;
+  }>;
+  status?: string;
+  error?: string;
+}
+
+async function fetchMassiveChart(symbol: string): Promise<Bar[] | null> {
+  if (!MASSIVE_API_KEY) return null;
+  try {
+    const to = new Date().toISOString().slice(0, 10);
+    const from = new Date(Date.now() - 730 * 86400000)
+      .toISOString()
+      .slice(0, 10);
+    // Massive's stock API is Polygon-compatible for aggregate bars.
+    const url = `https://api.massive.com/v2/aggs/ticker/${encodeURIComponent(
+      symbol,
+    )}/range/1/day/${from}/${to}?adjusted=true&sort=asc&limit=50000&apiKey=${encodeURIComponent(
+      MASSIVE_API_KEY,
+    )}`;
+    const r = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!r.ok) return null;
+    const j = (await r.json()) as MassiveAggResponse;
+    const rows = j.results ?? [];
+    if (!rows.length) return null;
+    return rows
+      .filter(
+        (x) =>
+          Number.isFinite(x.t) &&
+          Number.isFinite(x.o) &&
+          Number.isFinite(x.h) &&
+          Number.isFinite(x.l) &&
+          Number.isFinite(x.c),
+      )
+      .map((x) => ({
+        t: x.t,
+        o: x.o,
+        h: x.h,
+        l: x.l,
+        c: x.c,
+        v: x.v ?? 0,
+      }));
+  } catch {
+    return null;
+  }
+}
 
 interface YahooChart {
   chart: {
@@ -161,6 +216,8 @@ function yahooToStooqSymbol(yahooSymbol: string): string | null {
   if (london) return `${london[1].toLowerCase()}.uk`;
   // Default: assume US equity → lower-case + .us
   if (/^[A-Z]{1,5}$/.test(yahooSymbol)) return `${yahooSymbol.toLowerCase()}.us`;
+  // OTC tickers can be 5 characters with an F/Y suffix (e.g. MTPLF).
+  if (/^[A-Z]{5}$/.test(yahooSymbol)) return `${yahooSymbol.toLowerCase()}.us`;
   return null;
 }
 
@@ -331,14 +388,30 @@ export async function buildSnapshot(
       } catch {}
     }
   } else {
-    bars = await fetchYahooChart(instrument.symbol);
-    source = "yahoo";
+    if (
+      instrument.dataSource === "massive" ||
+      (instrument.assetClass === "equity" && MASSIVE_API_KEY)
+    ) {
+      bars = await fetchMassiveChart(instrument.symbol);
+      if (bars && bars.length) {
+        source = "massive";
+      } else if (instrument.dataSource === "massive" && !MASSIVE_API_KEY) {
+        message =
+          "Massive API key not configured on the server; using Yahoo/Stooq fallback.";
+      }
+    }
+    if (!bars || !bars.length) {
+      bars = await fetchYahooChart(instrument.symbol);
+      source = "yahoo";
+    }
   }
 
-  // Yahoo quote for marketCap + volume + P/E (where available)
+  // Yahoo quote for marketCap + volume + P/E (where available). Massive's
+  // stock pricing endpoint is used for price bars; fundamentals can still
+  // opportunistically come from Yahoo's no-key quote endpoint.
   let peRatio: number | null = null;
   let peSource: string | null = null;
-  if (instrument.dataSource === "yahoo" || source === "yahoo") {
+  if (instrument.assetClass !== "crypto" || instrument.dataSource === "yahoo" || source === "yahoo") {
     const q = await fetchYahooQuote(instrument.symbol);
     if (q) {
       if (q.marketCap != null) marketCap = q.marketCap;

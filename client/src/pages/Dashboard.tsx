@@ -241,8 +241,9 @@ export default function Dashboard() {
             <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary/80" />
             <p className="leading-relaxed">
               <span className="text-foreground">Near-real-time data.</span>{" "}
-              Prices come from Yahoo Finance and CoinGecko on a polling cycle
-              — not a tick-by-tick websocket feed. Each instrument is tagged{" "}
+              Prices come from Massive, Yahoo Finance, Stooq, and CoinGecko on
+              a polling cycle — not a tick-by-tick websocket feed. Each
+              instrument is tagged{" "}
               <span className="text-pos">Live</span> when the provider responds,{" "}
               <span className="text-warn">Demo</span> when rate-limited or
               unavailable (a deterministic series is shown), or{" "}
@@ -369,7 +370,7 @@ export default function Dashboard() {
               <SignalLab snap={selected} />
 
               {/* Treasury panel for Metaplanet (or any instrument with treasury data) */}
-              {(selected.instrument.symbol === "3350.T" || selected.treasury) && (
+              {(selected.instrument.symbol === "MTPLF" || selected.treasury) && (
                 <TreasuryPanel snap={selected} />
               )}
             </>
@@ -383,8 +384,9 @@ export default function Dashboard() {
           />
 
           <footer className="text-[10px] text-muted-foreground py-3 leading-relaxed">
-            TreasuryLens · Data via Yahoo Finance and CoinGecko, no API keys
-            required. Indicators (SMA, RSI, volatility, returns) computed
+            TreasuryLens · Equity pricing can use Massive when
+            MASSIVE_API_KEY is configured, with Yahoo/Stooq fallback; crypto
+            data uses CoinGecko/Yahoo. Indicators (SMA, RSI, volatility, returns) computed
             deterministically from daily OHLCV. Treasury figures are manual
             inputs — verify against company filings before use. Not financial
             advice.
