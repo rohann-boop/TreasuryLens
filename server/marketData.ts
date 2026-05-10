@@ -3,6 +3,8 @@
 // Always returns a structured snapshot with `status` indicating live/demo/error.
 
 import type { Bar } from "./indicators";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import {
   annualizedVolatility,
   high52w,
@@ -25,6 +27,35 @@ const YAHOO_HEADERS = {
   Accept: "application/json,text/plain,*/*",
   "Accept-Language": "en-US,en;q=0.9",
 };
+
+const execFileAsync = promisify(execFile);
+
+async function fetchJsonViaCurl<T>(url: string): Promise<T | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      "curl",
+      [
+        "-L",
+        "-sS",
+        "--max-time",
+        "20",
+        "-A",
+        // Yahoo currently rate-limits Node's fetch and some long browser UAs
+        // from this sandbox, while a plain browser-like UA succeeds.
+        "Mozilla/5.0",
+        "-H",
+        "Accept: application/json,text/plain,*/*",
+        "-H",
+        "Accept-Language: en-US,en;q=0.9",
+        url,
+      ],
+      { maxBuffer: 20 * 1024 * 1024 },
+    );
+    return JSON.parse(stdout) as T;
+  } catch {
+    return null;
+  }
+}
 
 const MASSIVE_API_KEY = process.env.MASSIVE_API_KEY || "";
 
@@ -140,8 +171,10 @@ async function fetchYahooChartFromHost(
       symbol,
     )}?range=2y&interval=1d`;
     const r = await fetch(url, { headers: YAHOO_HEADERS });
-    if (!r.ok) return null;
-    const j = (await r.json()) as YahooChart;
+    const j = r.ok
+      ? ((await r.json()) as YahooChart)
+      : await fetchJsonViaCurl<YahooChart>(url);
+    if (!j) return null;
     const result = j.chart.result?.[0];
     if (!result) return null;
     const ts = result.timestamp ?? [];
@@ -186,8 +219,10 @@ export async function fetchYahooQuote(symbol: string) {
     try {
       const url = `https://${host}/v7/finance/quote?symbols=${encodeURIComponent(symbol)}`;
       const r = await fetch(url, { headers: YAHOO_HEADERS });
-      if (!r.ok) continue;
-      const j = (await r.json()) as YahooQuote;
+      const j = r.ok
+        ? ((await r.json()) as YahooQuote)
+        : await fetchJsonViaCurl<YahooQuote>(url);
+      if (!j) continue;
       const item = j.quoteResponse?.result?.[0];
       if (item) return item;
     } catch {}
