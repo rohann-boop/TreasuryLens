@@ -3,6 +3,7 @@ import type {
   BuffettIndex,
   EquityFundamentals,
   InstrumentSnapshot,
+  ManagementGovernance,
 } from "@shared/schema";
 
 const clamp = (n: number, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, n));
@@ -302,6 +303,7 @@ function buildEquityCategories(
 export function computeBuffettIndex(
   s: InstrumentSnapshot,
   fundamentals?: EquityFundamentals | null,
+  governance?: ManagementGovernance | null,
 ): BuffettIndex {
   const notes = [
     "Buffett Index evaluates long-term business quality and price discipline, not short-term trade timing.",
@@ -321,6 +323,7 @@ export function computeBuffettIndex(
       missingData: [],
       notes,
       fundamentals: null,
+      managementGovernance: null,
     };
   }
 
@@ -377,10 +380,25 @@ export function computeBuffettIndex(
       // Even for treasury equities we keep SEC fundamentals (if any) so the
       // UI can show source metadata; scoring intentionally ignores them.
       fundamentals: fundamentals ?? null,
+      managementGovernance: governance ?? null,
     };
   }
 
   const cats = buildEquityCategories(s, fundamentals ?? null);
+  if (governance && (governance.confidence === "high" || governance.confidence === "medium")) {
+    const ca = cats.find((c) => c.key === "capital_allocation");
+    if (ca) {
+      const ceo = governance.leaders.find((l) => /chief executive|^ceo$/i.test(l.role));
+      const cfo = governance.leaders.find((l) => /chief financial|^cfo$/i.test(l.role));
+      const tail: string[] = [];
+      if (ceo) tail.push(`CEO ${ceo.name}.`);
+      if (cfo) tail.push(`CFO ${cfo.name}.`);
+      if (governance.recentChanges.length) {
+        tail.push(`${governance.recentChanges.length} recent 8-K Item 5.02 change(s).`);
+      }
+      if (tail.length) ca.bullets = [...ca.bullets, tail.join(" ")];
+    }
+  }
   const w = weighted(cats);
   return {
     asOf: s.asOf,
@@ -395,5 +413,6 @@ export function computeBuffettIndex(
     missingData: cats.filter((c) => !c.available).map((c) => c.name),
     notes,
     fundamentals: fundamentals ?? null,
+    managementGovernance: governance ?? null,
   };
 }

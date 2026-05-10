@@ -7,6 +7,7 @@ import type { Bar } from "./indicators";
 import { computeSignal, parseSignalConfig, DEFAULT_CONFIG } from "./signals";
 import { computeBuffettIndex } from "./buffett";
 import { getEquityFundamentals } from "./secEdgar";
+import { getManagementGovernance } from "./secGovernance";
 import {
   insertInstrumentSchema,
   insertTreasurySchema,
@@ -283,14 +284,20 @@ export async function registerRoutes(
     const snap = await getSnapshot(id, false);
     if (!snap) return res.status(404).json({ message: "not found" });
     let fundamentals = null;
+    let governance = null;
     if (snap.instrument.assetClass === "equity") {
       try {
         fundamentals = await getEquityFundamentals(snap.instrument.symbol);
       } catch {
         fundamentals = null;
       }
+      try {
+        governance = await getManagementGovernance(snap.instrument.symbol);
+      } catch {
+        governance = null;
+      }
     }
-    res.json(computeBuffettIndex(snap, fundamentals));
+    res.json(computeBuffettIndex(snap, fundamentals, governance));
   });
 
   // Treasury upsert

@@ -257,6 +257,59 @@ export interface BuffettIndex {
   missingData: string[];
   notes: string[];
   fundamentals?: EquityFundamentals | null;
+  managementGovernance?: ManagementGovernance | null;
+}
+
+// =============================================================================
+// Management & Governance — best-effort extraction from SEC filings
+// (10-K / DEF 14A / 8-K Item 5.02). Heuristic by design; fields are nullable
+// and a confidence label tells the UI/scoring how much weight to give.
+// =============================================================================
+
+export type GovernanceConfidence = "high" | "medium" | "low" | "unknown";
+
+export interface GovernanceFilingRef {
+  form: string;            // "10-K" | "DEF 14A" | "8-K" | etc.
+  filed: string;           // YYYY-MM-DD
+  accessionNumber: string; // formatted accession number
+  primaryDoc: string | null;
+  url: string;             // canonical SEC URL
+  reportDate?: string | null;
+  items?: string | null;   // 8-K item codes if present (e.g. "5.02")
+}
+
+export interface GovernanceLeader {
+  name: string;
+  role: string;       // CEO / CFO / Chair / Director / etc.
+  source: "10-K" | "DEF 14A" | "8-K" | "heuristic";
+}
+
+export interface GovernanceChange {
+  date: string;          // YYYY-MM-DD (filing date)
+  description: string;   // short summary
+  filing: GovernanceFilingRef;
+}
+
+export interface ManagementGovernance {
+  ticker: string;
+  cik: string | null;
+  asOf: number;
+  applicable: boolean;
+  // Extracted leaders. May be empty when extraction fails.
+  leaders: GovernanceLeader[];
+  // Free-form governance notes (e.g. "Combined Chair/CEO" or board size).
+  notes: string[];
+  // Recent management changes detected in 8-K Item 5.02 filings.
+  recentChanges: GovernanceChange[];
+  // Filings used as sources for the data above (most recent first).
+  sources: GovernanceFilingRef[];
+  // Fields that could not be extracted ("ceo", "cfo", "chair", ...).
+  missingFields: string[];
+  // Score (0-100) and confidence — conservative when extraction is weak.
+  score: number | null;
+  confidence: GovernanceConfidence;
+  // One-line summary for the panel header.
+  summary: string;
 }
 
 // =============================================================================
