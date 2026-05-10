@@ -930,7 +930,7 @@ export default function ThirteenFPage() {
       <header className="h-14 border-b border-border bg-background/80 backdrop-blur sticky top-0 z-20 flex items-center justify-between px-4 md:px-6">
         <div className="flex items-center gap-3 min-w-0">
           <Link
-            href="/"
+            href="/dashboard"
             className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
             data-testid="link-back-dashboard"
           >
