@@ -4,6 +4,7 @@ import type { Server } from "node:http";
 import { storage } from "./storage";
 import { buildSnapshot } from "./marketData";
 import type { Bar } from "./indicators";
+import { computeSignal, parseSignalConfig, DEFAULT_CONFIG } from "./signals";
 import {
   insertInstrumentSchema,
   insertTreasurySchema,
@@ -153,6 +154,19 @@ async function getSnapshot(
 
   const snap = await buildSnapshot(inst, btcBars);
   await attachTreasury(inst, snap, ctx.btcSnap?.price ?? null);
+  // Attach a default-config (5% / 20% / 30D / Balanced) model signal so the
+  // comparison table, ticker, and sidebar can show a compact badge without
+  // an extra round-trip per instrument.
+  try {
+    const sig = computeSignal(snap, DEFAULT_CONFIG);
+    snap.defaultSignal = {
+      label: sig.signal,
+      score: sig.compositeScore,
+      confidence: sig.confidence,
+    };
+  } catch {
+    snap.defaultSignal = null;
+  }
   cache.set(key, { at: Date.now(), data: snap });
   return snap;
 }
@@ -245,6 +259,17 @@ export async function registerRoutes(
         asOf: s.asOf,
       }));
     res.json({ items, asOf: Date.now() });
+  });
+
+  // Model signal — deterministic. Reuses cached snapshot.
+  app.get("/api/instruments/:id/signal", async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "bad id" });
+    const snap = await getSnapshot(id, false);
+    if (!snap) return res.status(404).json({ message: "not found" });
+    const cfg = parseSignalConfig(req.query as Record<string, unknown>);
+    const signal = computeSignal(snap, cfg);
+    res.json(signal);
   });
 
   // Treasury upsert

@@ -11,6 +11,7 @@ import { PriceChart } from "@/components/PriceChart";
 import { AddInstrumentDialog } from "@/components/AddInstrumentDialog";
 import { ComparisonTable, StatusBadge } from "@/components/ComparisonTable";
 import { TickerTape } from "@/components/TickerTape";
+import { SignalLab } from "@/components/SignalLab";
 import {
   AutoRefreshControl,
   type RefreshInterval,
@@ -363,6 +364,9 @@ export default function Dashboard() {
 
               {/* Risk & relative — advanced indicators */}
               <AdvancedIndicators snap={selected} />
+
+              {/* Research-only model signal panel */}
+              <SignalLab snap={selected} />
 
               {/* Treasury panel for Metaplanet (or any instrument with treasury data) */}
               {(selected.instrument.symbol === "3350.T" || selected.treasury) && (

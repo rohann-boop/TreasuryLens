@@ -129,6 +129,10 @@ export interface InstrumentSnapshot {
   history: { t: number; o: number; h: number; l: number; c: number; v: number }[];
   // Treasury info if applicable
   treasury?: TreasurySnapshot | null;
+  // Default-config (5%/20%/30D/Balanced) model signal — surfaced in
+  // comparison/sidebar badges. The full SignalLab fetches per-config
+  // computations from /api/instruments/:id/signal.
+  defaultSignal?: { label: SignalLabel; score: number; confidence: ConfidenceLabel } | null;
   message?: string;
 }
 
@@ -152,6 +156,68 @@ export interface TickerItem {
 export interface TickerResponse {
   items: TickerItem[];
   asOf: number;
+}
+
+// =============================================================================
+// Model signals — deterministic research-only buy/sell heuristics computed
+// server-side from the snapshot's existing technicals (no LLM, no external
+// calls). Surfaced under /api/instruments/:id/signal and consumed by the
+// SignalLab UI panel. NOT financial advice — labelled "model signal" in copy.
+// =============================================================================
+
+export type ModelProfile = "conservative" | "balanced" | "aggressive";
+export type SignalLabel =
+  | "Strong Buy"
+  | "Buy"
+  | "Watch"
+  | "Hold"
+  | "Trim"
+  | "Sell"
+  | "Invalid Setup";
+export type ConfidenceLabel = "Low" | "Medium" | "High";
+
+export interface SignalConfig {
+  downsidePct: number; // e.g. 5 (max acceptable loss)
+  upsidePct: number;   // e.g. 20 (target gain)
+  horizonDays: 7 | 30 | 90;
+  profile: ModelProfile;
+  confidenceThreshold: number; // 0-100; gate for actionable Buy/Strong Buy
+}
+
+export interface SubModelOutput {
+  key: "trend" | "momentum" | "risk" | "valuation";
+  name: string;
+  score: number; // 0-100
+  weight: number; // 0-1 in composite
+  bullets: string[]; // explanation lines
+  available: boolean; // false if data insufficient — score then 50 (neutral)
+}
+
+export interface ModelSignal {
+  config: SignalConfig;
+  asOf: number;
+  // Price levels
+  currentPrice: number | null;
+  stopPrice: number | null;       // current * (1 - downside%)
+  targetPrice: number | null;     // current * (1 + upside%)
+  maxChasePrice: number | null;   // upper bound of suggested entry zone
+  entryZoneLow: number | null;
+  entryZoneHigh: number | null;
+  exitZoneLow: number | null;
+  exitZoneHigh: number | null;
+  // Risk math
+  rewardRiskRatio: number | null; // upside% / downside%
+  // Composite
+  compositeScore: number; // 0-100
+  confidence: ConfidenceLabel;
+  signal: SignalLabel;
+  // Sub-models
+  models: SubModelOutput[];
+  // Logic transparency
+  entryConditions: { label: string; pass: boolean }[];
+  exitConditions: { label: string; trigger: boolean }[];
+  invalidReasons: string[];
+  notes: string[];
 }
 
 export interface TreasurySnapshot {
