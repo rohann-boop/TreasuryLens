@@ -385,6 +385,84 @@ export interface EquityFundamentals {
   missingFields: string[];
 }
 
+// =============================================================================
+// 13F-HR institutional holdings — parsed from SEC EDGAR filings for a fixed
+// set of "superinvestor" managers (Berkshire, Pershing Square, Bridgewater,
+// Scion). Surfaced under /api/13f/summary and rendered on a dedicated page.
+// =============================================================================
+
+export type ManagerKey = "berkshire" | "pershing" | "bridgewater" | "scion";
+
+export interface ThirteenFHolding {
+  cusip: string;
+  issuer: string;
+  titleOfClass: string;
+  value: number; // dollars
+  shares: number;
+  shareType: string; // "SH" | "PRN" | etc.
+  putCall: string | null; // null for long, "Put" / "Call" otherwise
+  investmentDiscretion: string | null;
+  votingSole: number | null;
+  votingShared: number | null;
+  votingNone: number | null;
+  weight: number; // % of portfolio value
+}
+
+export interface ThirteenFFiling {
+  accession: string;
+  filingDate: string; // YYYY-MM-DD
+  reportDate: string; // YYYY-MM-DD (quarter end)
+  form: string;       // "13F-HR" | "13F-HR/A"
+  primaryDocUrl: string;
+  filingIndexUrl: string;
+  infoTableUrl: string | null;
+  holdingsCount: number;
+  totalValue: number;
+}
+
+export interface PositionChange {
+  cusip: string;
+  issuer: string;
+  titleOfClass: string;
+  putCall: string | null;
+  shareType: string;
+  newShares: number;
+  previousShares: number;
+  shareChange: number;
+  shareChangePct: number | null; // null when previousShares = 0
+  newValue: number;
+  previousValue: number;
+  valueChange: number;
+  weight: number; // current portfolio weight (0 for sold)
+}
+
+export interface Manager13FSummary {
+  key: ManagerKey;
+  manager: string;
+  firm: string;
+  cik: string;
+  status: "ok" | "error" | "no-filing";
+  error: string | null;
+  latestFiling: ThirteenFFiling | null;
+  previousFiling: ThirteenFFiling | null;
+  totalValue: number;
+  previousTotalValue: number | null;
+  holdingsCount: number;
+  topHoldings: ThirteenFHolding[];
+  allHoldings: ThirteenFHolding[];
+  newPositions: PositionChange[];
+  increasedPositions: PositionChange[];
+  reducedPositions: PositionChange[];
+  soldPositions: PositionChange[];
+}
+
+export interface ThirteenFSummaryResponse {
+  managers: Manager13FSummary[];
+  lastUpdated: number;
+  sources: { label: string; url: string }[];
+  notes: string;
+}
+
 export interface TreasurySnapshot {
   btcHoldings: number | null;
   sharesOutstanding: number | null;

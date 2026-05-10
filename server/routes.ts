@@ -8,6 +8,7 @@ import { computeSignal, parseSignalConfig, DEFAULT_CONFIG } from "./signals";
 import { computeBuffettIndex } from "./buffett";
 import { getEquityFundamentals } from "./secEdgar";
 import { getManagementGovernance } from "./secGovernance";
+import { getThirteenFSummary } from "./sec13f";
 import {
   insertInstrumentSchema,
   insertTreasurySchema,
@@ -334,6 +335,17 @@ export async function registerRoutes(
     if (!Number.isFinite(id)) return res.status(400).json({ message: "bad id" });
     const hist = await storage.listTreasuryHistory(id);
     res.json(hist);
+  });
+
+  // 13F-HR superinvestor tracker — latest filings for a fixed set of managers.
+  // Cached server-side for several hours to avoid repeated SEC hits.
+  app.get("/api/13f/summary", async (_req, res) => {
+    try {
+      const summary = await getThirteenFSummary();
+      res.json(summary);
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
   });
 
   return httpServer;

@@ -6,11 +6,14 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/Dashboard";
+import ThirteenF from "@/pages/ThirteenF";
 
 function AppRouter() {
   return (
     <Switch>
       <Route path="/" component={Dashboard} />
+      <Route path="/13f" component={ThirteenF} />
+      <Route path="/superinvestors" component={ThirteenF} />
       <Route component={NotFound} />
     </Switch>
   );
