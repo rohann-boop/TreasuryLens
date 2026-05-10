@@ -8,6 +8,7 @@ import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/Dashboard";
 import ThirteenF from "@/pages/ThirteenF";
 import Landing from "@/pages/Landing";
+import StockPicks from "@/pages/StockPicks";
 
 function AppRouter() {
   return (
@@ -17,6 +18,8 @@ function AppRouter() {
       <Route path="/app" component={Dashboard} />
       <Route path="/13f" component={ThirteenF} />
       <Route path="/superinvestors" component={ThirteenF} />
+      <Route path="/stock-picks" component={StockPicks} />
+      <Route path="/themes" component={StockPicks} />
       <Route component={NotFound} />
     </Switch>
   );

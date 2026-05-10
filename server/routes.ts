@@ -10,6 +10,7 @@ import { getEquityFundamentals } from "./secEdgar";
 import { getManagementGovernance } from "./secGovernance";
 import { getThirteenFSummary } from "./sec13f";
 import { getPoliticiansSummary } from "./politicians";
+import { getStockPicks } from "./stockPicks";
 import {
   insertInstrumentSchema,
   insertTreasurySchema,
@@ -355,6 +356,16 @@ export async function registerRoutes(
     try {
       const summary = await getPoliticiansSummary();
       res.json(summary);
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // Stock picks / themes — curated research watchlists. Static data, no
+  // external API calls; safe to cache at the module level.
+  app.get("/api/stock-picks", async (_req, res) => {
+    try {
+      res.json(getStockPicks());
     } catch (e) {
       res.status(500).json({ message: (e as Error).message });
     }

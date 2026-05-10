@@ -33,6 +33,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Users,
+  Lightbulb,
 } from "lucide-react";
 import { fmtAgo, fmtCompact, fmtNum, fmtPrice } from "@/lib/format";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -187,6 +188,15 @@ export default function Dashboard() {
           >
             <Users className="h-3.5 w-3.5" />
             <span>13F</span>
+          </Link>
+          <Link
+            href="/stock-picks"
+            className="hidden sm:inline-flex items-center gap-1 h-8 px-2 rounded text-[12px] text-muted-foreground hover:text-foreground hover-elevate"
+            data-testid="link-stock-picks"
+            title="Stock Picks — themed research watchlists"
+          >
+            <Lightbulb className="h-3.5 w-3.5" />
+            <span>Picks</span>
           </Link>
           <AutoRefreshControl
             interval={interval}

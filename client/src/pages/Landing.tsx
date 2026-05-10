@@ -1228,6 +1228,13 @@ function Footer() {
           >
             Superinvestors
           </Link>
+          <Link
+            href="/stock-picks"
+            data-testid="link-footer-stock-picks"
+            className="hover:text-foreground"
+          >
+            Stock picks
+          </Link>
           <a href="#disclosures" className="hover:text-foreground">
             Disclosures
           </a>

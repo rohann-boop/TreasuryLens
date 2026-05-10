@@ -505,6 +505,61 @@ export interface PoliticiansSummaryResponse {
   notes: string;
 }
 
+// =============================================================================
+// Stock Picks / Themes — curated research watchlists grouped by theme and
+// market-cap bucket. Static/curated data; NOT personalized investment advice.
+// Scenario potentials are hypothetical and explicitly labelled as such.
+// =============================================================================
+
+export type StockPickTheme = "ai-hardware" | "ai-software" | "ai-energy";
+
+export type MarketCapBucket = "micro" | "small" | "mid" | "large" | "mega";
+
+export type ScenarioPotential =
+  | "2x potential"
+  | "3x potential"
+  | "5x potential"
+  | "compounder"
+  | "defensive"
+  | "speculative";
+
+export type RiskLevel = "low" | "moderate" | "elevated" | "high" | "very high";
+
+export type DataConfidence = "curated" | "approximate" | "low";
+
+export interface StockPick {
+  ticker: string;
+  companyName: string;
+  themes: StockPickTheme[];
+  marketCapBucket: MarketCapBucket;
+  marketCapLabel: string; // human label, e.g. "~$3.1T (curated)"
+  scenarioPotential: ScenarioPotential;
+  convictionScore: number; // 0-100, opinion only
+  riskLevel: RiskLevel;
+  downsideGuardrail: string; // short phrase
+  upsideCase: string; // short phrase / scenario sentence
+  whatMustBeTrue: string[]; // bullet list of preconditions
+  thesis: string[]; // bullet list of why this is on the watchlist
+  risks: string[]; // bullet list of risks
+  removalTriggers: string[]; // what would take it off the list
+  dataConfidence: DataConfidence;
+  sourceNote: string; // e.g. "Curated by TreasuryLens — figures approximate"
+}
+
+export interface StockPickThemeInfo {
+  key: StockPickTheme;
+  name: string;
+  blurb: string;
+}
+
+export interface StockPicksResponse {
+  themes: StockPickThemeInfo[];
+  picks: StockPick[];
+  lastUpdated: number;
+  disclaimer: string;
+  notes: string;
+}
+
 export interface TreasurySnapshot {
   btcHoldings: number | null;
   sharesOutstanding: number | null;
