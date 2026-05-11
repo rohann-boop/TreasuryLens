@@ -527,6 +527,24 @@ export type RiskLevel = "low" | "moderate" | "elevated" | "high" | "very high";
 
 export type DataConfidence = "curated" | "approximate" | "low";
 
+// Historical price performance for a stock pick — nearest-trading-day
+// lookbacks at 1m/6m/12m. Each window is independent so the UI can render
+// what's available even when the series is short (newly-listed names).
+export interface StockPickPerformance {
+  price1mAgo: number | null;
+  price1mDate: string | null; // YYYY-MM-DD of the actual bar used
+  change1mPct: number | null; // %
+  price6mAgo: number | null;
+  price6mDate: string | null;
+  change6mPct: number | null;
+  price12mAgo: number | null;
+  price12mDate: string | null;
+  change12mPct: number | null;
+  source: string; // e.g. "massive" | "yahoo" | "unavailable"
+  confidence: DataConfidence;
+  warnings: string[];
+}
+
 // Key metrics block attached to each StockPick. All numeric fields are
 // nullable — for non-US issuers SEC EDGAR returns nothing, for negative
 // earnings P/E is undefined, and live pricing may be unavailable. The UI
@@ -546,6 +564,8 @@ export interface StockPickKeyMetrics {
   metricAsOf: number | null; // ms since epoch
   metricConfidence: DataConfidence;
   metricWarnings: string[]; // human-readable warnings (e.g. "Needs fundamentals provider")
+  // Historical price performance (1m/6m/12m). Null when no history available.
+  performance?: StockPickPerformance | null;
 }
 
 export interface StockPick {

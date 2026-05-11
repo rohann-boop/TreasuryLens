@@ -134,6 +134,60 @@ export async function resolveCik(ticker: string): Promise<string | null> {
   return map.get(t) ?? null;
 }
 
+/**
+ * Point-in-time common-stock shares outstanding for a U.S. issuer. Prefers
+ * the dei `EntityCommonStockSharesOutstanding` cover-page fact (which is the
+ * issuer's own recent count) and falls back to us-gaap CommonStockShares-
+ * Outstanding. Returns absolute share count; null on miss or non-US issuer.
+ *
+ * Used by stock-picks to compute market cap when a quote provider is
+ * unavailable (price × shares is acceptably accurate for a watchlist UI).
+ */
+export async function getSharesOutstanding(
+  ticker: string,
+): Promise<{ value: number; end: string; tag: string } | null> {
+  const cik = await resolveCik(ticker);
+  if (!cik) return null;
+  const facts = await fetchCompanyFacts(cik);
+  const root = facts?.facts;
+  if (!root) return null;
+  // Look back ~18 months for a reasonably-fresh figure. Multi-class issuers
+  // (META, GOOGL) don't report dei.EntityCommonStockSharesOutstanding, so we
+  // fall back to weighted-average share counts taken from a single quarterly
+  // entry — same magnitude as the issuer-reported number for these names.
+  const maxAgeMs = 540 * 86400000;
+  const now = Date.now();
+  const isFresh = (endIso: string) => {
+    const t = Date.parse(`${endIso}T00:00:00Z`);
+    return Number.isFinite(t) && now - t <= maxAgeMs;
+  };
+  const candidates: Array<{ scope: "dei" | "us-gaap"; tag: string }> = [
+    { scope: "dei", tag: "EntityCommonStockSharesOutstanding" },
+    { scope: "us-gaap", tag: "CommonStockSharesOutstanding" },
+    { scope: "us-gaap", tag: "CommonStockSharesIssued" },
+    // Last-resort fallbacks for multi-class filers without a single common
+    // shares fact. Use the latest single-period entry (NOT a TTM sum).
+    { scope: "us-gaap", tag: "WeightedAverageNumberOfDilutedSharesOutstanding" },
+    { scope: "us-gaap", tag: "WeightedAverageNumberOfSharesOutstandingBasic" },
+  ];
+  for (const c of candidates) {
+    const concept = c.scope === "dei" ? root.dei?.[c.tag] : root["us-gaap"]?.[c.tag];
+    if (!concept || !concept.units) continue;
+    const unitKey =
+      Object.keys(concept.units).find((u) => u.toLowerCase() === "shares") ??
+      Object.keys(concept.units)[0];
+    const entries = concept.units[unitKey];
+    if (!entries || !entries.length) continue;
+    const sorted = [...entries]
+      .filter((e) => Number.isFinite(e.val) && e.val > 0 && isFresh(e.end))
+      .sort((a, b) => (a.end < b.end ? 1 : -1));
+    const top = sorted[0];
+    if (!top) continue;
+    return { value: top.val, end: top.end, tag: c.tag };
+  }
+  return null;
+}
+
 async function fetchCompanyFacts(
   cik: string,
 ): Promise<CompanyFactsResponse | null> {

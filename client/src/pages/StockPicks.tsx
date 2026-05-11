@@ -62,6 +62,9 @@ type SortKey =
   | "price"
   | "marketCap"
   | "pe"
+  | "perf1m"
+  | "perf6m"
+  | "perf12m"
   | "scenario"
   | "conviction"
   | "risk";
@@ -104,6 +107,19 @@ function fmtPrice(p: number | null | undefined, currency?: string | null): strin
 function fmtPct(p: number | null | undefined, digits = 1): string {
   if (p == null || !Number.isFinite(p)) return "—";
   return `${p.toFixed(digits)}%`;
+}
+
+function fmtSignedPct(p: number | null | undefined, digits = 1): string {
+  if (p == null || !Number.isFinite(p)) return "—";
+  const sign = p > 0 ? "+" : "";
+  return `${sign}${p.toFixed(digits)}%`;
+}
+
+function pctTone(p: number | null | undefined): string {
+  if (p == null || !Number.isFinite(p)) return "text-muted-foreground";
+  if (p > 0) return "text-pos";
+  if (p < 0) return "text-neg";
+  return "text-muted-foreground";
 }
 
 function fmtRatio(p: number | null | undefined, digits = 2): string {
@@ -371,6 +387,91 @@ function ViewToggle({
   );
 }
 
+function PerformancePanel({ pick }: { pick: StockPick }) {
+  const perf = pick.keyMetrics?.performance ?? null;
+  const cells: Array<{
+    key: string;
+    label: string;
+    change: number | null | undefined;
+    priceAgo: number | null | undefined;
+    date: string | null | undefined;
+    testId: string;
+  }> = [
+    {
+      key: "1m",
+      label: "1 month",
+      change: perf?.change1mPct,
+      priceAgo: perf?.price1mAgo,
+      date: perf?.price1mDate,
+      testId: "detail-perf-1m",
+    },
+    {
+      key: "6m",
+      label: "6 months",
+      change: perf?.change6mPct,
+      priceAgo: perf?.price6mAgo,
+      date: perf?.price6mDate,
+      testId: "detail-perf-6m",
+    },
+    {
+      key: "12m",
+      label: "12 months",
+      change: perf?.change12mPct,
+      priceAgo: perf?.price12mAgo,
+      date: perf?.price12mDate,
+      testId: "detail-perf-12m",
+    },
+  ];
+  const allMissing = cells.every((c) => c.change == null);
+  return (
+    <div
+      className="rounded-md border border-border/60 bg-background/35 p-3"
+      data-testid="detail-performance"
+    >
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[10px] uppercase tracking-widest text-muted-foreground">
+          Historical performance
+        </div>
+        <span className="text-[10px] text-muted-foreground">
+          {perf?.source && perf.source !== "unavailable"
+            ? perf.source
+            : "no history"}
+        </span>
+      </div>
+      {allMissing ? (
+        <div
+          className="text-[11px] text-muted-foreground"
+          data-testid="detail-perf-empty"
+        >
+          Needs provider — historical bars unavailable for this ticker.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-[11px]">
+          {cells.map((c) => (
+            <div key={c.key} data-testid={c.testId}>
+              <div className="text-muted-foreground">{c.label}</div>
+              <div
+                className={`tabular-nums font-medium ${pctTone(c.change)}`}
+                data-testid={`${c.testId}-change`}
+              >
+                {fmtSignedPct(c.change)}
+              </div>
+              <div
+                className="text-[10px] text-muted-foreground tabular-nums"
+                data-testid={`${c.testId}-detail`}
+              >
+                {c.priceAgo != null && c.date
+                  ? `${fmtPrice(c.priceAgo, pick.keyMetrics?.priceCurrency)} on ${c.date}`
+                  : "—"}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MetricsPanel({ pick }: { pick: StockPick }) {
   const m = pick.keyMetrics;
   return (
@@ -489,6 +590,8 @@ function PickDetail({ pick }: { pick: StockPick }) {
       </div>
 
       <MetricsPanel pick={pick} />
+
+      <PerformancePanel pick={pick} />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="rounded-md border border-border/60 bg-background/35 p-3">
@@ -632,6 +735,24 @@ function PicksTable({
             b.keyMetrics?.peRatio,
             sortDir,
           );
+        case "perf1m":
+          return compareNullableNum(
+            a.keyMetrics?.performance?.change1mPct,
+            b.keyMetrics?.performance?.change1mPct,
+            sortDir,
+          );
+        case "perf6m":
+          return compareNullableNum(
+            a.keyMetrics?.performance?.change6mPct,
+            b.keyMetrics?.performance?.change6mPct,
+            sortDir,
+          );
+        case "perf12m":
+          return compareNullableNum(
+            a.keyMetrics?.performance?.change12mPct,
+            b.keyMetrics?.performance?.change12mPct,
+            sortDir,
+          );
         case "scenario":
           return compareStr(a.scenarioPotential, b.scenarioPotential, sortDir);
         case "conviction":
@@ -715,6 +836,39 @@ function PicksTable({
                 testId="picks-sort-pe"
               />
             </th>
+            <th className="px-3 py-2 text-right">
+              <SortHeader
+                label="1m %"
+                k="perf1m"
+                active={sortKey}
+                dir={sortDir}
+                onSort={onSort}
+                align="right"
+                testId="picks-sort-perf1m"
+              />
+            </th>
+            <th className="px-3 py-2 text-right">
+              <SortHeader
+                label="6m %"
+                k="perf6m"
+                active={sortKey}
+                dir={sortDir}
+                onSort={onSort}
+                align="right"
+                testId="picks-sort-perf6m"
+              />
+            </th>
+            <th className="px-3 py-2 text-right">
+              <SortHeader
+                label="12m %"
+                k="perf12m"
+                active={sortKey}
+                dir={sortDir}
+                onSort={onSort}
+                align="right"
+                testId="picks-sort-perf12m"
+              />
+            </th>
             <th className="px-3 py-2 text-left">
               <SortHeader
                 label="Cap"
@@ -791,6 +945,24 @@ function PicksTable({
                   data-testid={`picks-cell-pe-${p.ticker}`}
                 >
                   {fmtRatio(p.keyMetrics?.peRatio)}
+                </td>
+                <td
+                  className={`px-3 py-2 text-right tabular-nums ${pctTone(p.keyMetrics?.performance?.change1mPct)}`}
+                  data-testid={`picks-cell-perf1m-${p.ticker}`}
+                >
+                  {fmtSignedPct(p.keyMetrics?.performance?.change1mPct)}
+                </td>
+                <td
+                  className={`px-3 py-2 text-right tabular-nums ${pctTone(p.keyMetrics?.performance?.change6mPct)}`}
+                  data-testid={`picks-cell-perf6m-${p.ticker}`}
+                >
+                  {fmtSignedPct(p.keyMetrics?.performance?.change6mPct)}
+                </td>
+                <td
+                  className={`px-3 py-2 text-right tabular-nums ${pctTone(p.keyMetrics?.performance?.change12mPct)}`}
+                  data-testid={`picks-cell-perf12m-${p.ticker}`}
+                >
+                  {fmtSignedPct(p.keyMetrics?.performance?.change12mPct)}
                 </td>
                 <td className="px-3 py-2 text-muted-foreground">
                   {BUCKET_LABEL[p.marketCapBucket]}

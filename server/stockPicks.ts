@@ -2,11 +2,18 @@ import type {
   StockPick,
   StockPickEtf,
   StockPickKeyMetrics,
+  StockPickPerformance,
   StockPickThemeInfo,
   StockPicksResponse,
 } from "@shared/schema";
-import { fetchYahooQuote } from "./marketData";
-import { getEquityFundamentals } from "./secEdgar";
+import type { Bar } from "./indicators";
+import {
+  fetchMassiveChart,
+  fetchMassiveTickerDetails,
+  fetchYahooChart,
+  fetchYahooQuote,
+} from "./marketData";
+import { getEquityFundamentals, getSharesOutstanding } from "./secEdgar";
 
 const THEMES: StockPickThemeInfo[] = [
   {
@@ -1801,6 +1808,117 @@ function formatMarketCap(n: number | null): string | null {
   return `$${n.toFixed(0)}`;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Historical performance helpers
+//
+// We use calendar-day lookback windows (30 / 182 / 365 days) and snap to the
+// nearest trading-day bar that's at most 7 days older than the target. If the
+// series is too short the field is null with a warning.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PERF_WINDOWS: Array<{
+  key: "1m" | "6m" | "12m";
+  days: number;
+  tolerance: number;
+}> = [
+  { key: "1m", days: 30, tolerance: 7 },
+  { key: "6m", days: 182, tolerance: 14 },
+  { key: "12m", days: 365, tolerance: 21 },
+];
+
+function isoDate(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+function findBarAt(bars: Bar[], targetMs: number, toleranceDays: number): Bar | null {
+  // Bars assumed ascending by t. Find the bar with t <= targetMs that is
+  // closest to targetMs, within tolerance.
+  const toleranceMs = toleranceDays * 86400000;
+  let best: Bar | null = null;
+  for (const b of bars) {
+    if (b.t <= targetMs) {
+      best = b;
+    } else {
+      break;
+    }
+  }
+  if (!best) return null;
+  if (targetMs - best.t > toleranceMs) {
+    // Closest prior bar is too old — could happen for newly listed names
+    // or sparse history. Still return it if it's not absurdly stale (e.g.
+    // within 2x tolerance) so that 12m for a young ticker can show
+    // "approximate" rather than nothing.
+    if (targetMs - best.t > toleranceMs * 3) return null;
+  }
+  return best;
+}
+
+function computePerformance(
+  bars: Bar[],
+  latestPrice: number | null,
+  source: string,
+): StockPickPerformance {
+  const warnings: string[] = [];
+  const perf: StockPickPerformance = {
+    price1mAgo: null,
+    price1mDate: null,
+    change1mPct: null,
+    price6mAgo: null,
+    price6mDate: null,
+    change6mPct: null,
+    price12mAgo: null,
+    price12mDate: null,
+    change12mPct: null,
+    source,
+    confidence: "low",
+    warnings,
+  };
+  if (!bars.length || latestPrice == null || latestPrice <= 0) {
+    warnings.push("Performance unavailable — no historical bars.");
+    return perf;
+  }
+  const last = bars[bars.length - 1];
+  const now = last.t;
+  let filled = 0;
+  for (const w of PERF_WINDOWS) {
+    const target = now - w.days * 86400000;
+    const bar = findBarAt(bars, target, w.tolerance);
+    if (!bar || bar.c <= 0) {
+      warnings.push(`No bar available for ${w.key} lookback.`);
+      continue;
+    }
+    const change = ((latestPrice - bar.c) / bar.c) * 100;
+    if (w.key === "1m") {
+      perf.price1mAgo = bar.c;
+      perf.price1mDate = isoDate(bar.t);
+      perf.change1mPct = change;
+    } else if (w.key === "6m") {
+      perf.price6mAgo = bar.c;
+      perf.price6mDate = isoDate(bar.t);
+      perf.change6mPct = change;
+    } else if (w.key === "12m") {
+      perf.price12mAgo = bar.c;
+      perf.price12mDate = isoDate(bar.t);
+      perf.change12mPct = change;
+    }
+    filled += 1;
+  }
+  perf.confidence = filled === 3 ? "curated" : filled > 0 ? "approximate" : "low";
+  return perf;
+}
+
+async function fetchBars(ticker: string): Promise<{ bars: Bar[] | null; source: string }> {
+  // Prefer Massive (Polygon-compatible) when key is configured — matches the
+  // main indicators pipeline used elsewhere in TreasuryLens. Fall back to
+  // Yahoo's chart endpoint, which is the same path other instruments use
+  // when no Massive key is present.
+  const massive = await fetchMassiveChart(ticker);
+  if (massive && massive.length > 0) return { bars: massive, source: "massive" };
+  const yahoo = await fetchYahooChart(ticker);
+  if (yahoo && yahoo.length > 0) return { bars: yahoo, source: "yahoo" };
+  return { bars: null, source: "unavailable" };
+}
+
 async function enrichOne(pick: StockPick): Promise<StockPickKeyMetrics> {
   const warnings: string[] = [];
   let price: number | null = null;
@@ -1812,14 +1930,39 @@ async function enrichOne(pick: StockPick): Promise<StockPickKeyMetrics> {
   let operatingMargin: number | null = null;
   let fcfMargin: number | null = null;
   let debtToEquity: number | null = null;
-  let metricSources: string[] = [];
+  const metricSources: string[] = [];
 
-  // 1) Yahoo quote for price, marketCap, trailing P/E.
+  // 1) Historical bars from the shared market-data path (Massive → Yahoo).
+  //    The latest close is the most reliable price; performance fields are
+  //    derived from this series.
+  const { bars, source: barsSource } = await fetchBars(pick.ticker);
+  if (bars && bars.length > 0) {
+    const last = bars[bars.length - 1];
+    if (Number.isFinite(last.c) && last.c > 0) {
+      price = last.c;
+      metricSources.push(barsSource);
+    }
+  } else {
+    warnings.push("Historical price series unavailable for this ticker.");
+  }
+
+  const performance = computePerformance(bars ?? [], price, barsSource);
+  // Surface performance warnings up to the key metric warnings so the UI
+  // can show one consolidated list in the detail panel.
+  warnings.push(...performance.warnings);
+
+  // 2) Yahoo quote for marketCap, currency, trailing P/E. Yahoo is still the
+  //    best free source for P/E and float; Massive's free reference endpoint
+  //    does not expose P/E. We treat Yahoo as opportunistic — failures here
+  //    don't invalidate the price/perf we already have.
+  let yahooHit = false;
   try {
     const q = await fetchYahooQuote(pick.ticker);
     if (q) {
-      if (typeof q.regularMarketPrice === "number") {
+      yahooHit = true;
+      if (price == null && typeof q.regularMarketPrice === "number") {
         price = q.regularMarketPrice;
+        metricSources.push("yahoo");
       }
       if (typeof q.currency === "string") {
         priceCurrency = q.currency;
@@ -1839,20 +1982,41 @@ async function enrichOne(pick: StockPick): Promise<StockPickKeyMetrics> {
       ) {
         warnings.push("P/E unavailable (TTM earnings negative or zero).");
       }
-      if (price != null || marketCap != null) {
-        metricSources.push("yahoo");
-      }
-    } else {
-      warnings.push("Live pricing unavailable for this ticker.");
     }
   } catch {
-    warnings.push("Live pricing fetch failed.");
+    // swallow — fall through to Massive ticker details below.
   }
 
-  // 2) SEC EDGAR for fundamentals — only meaningful for U.S. issuers.
+  // 3) Massive ticker reference (Polygon-compatible) for marketCap when
+  //    Yahoo didn't provide it. Polygon's free reference endpoint includes
+  //    market_cap but not P/E.
+  if (marketCap == null) {
+    try {
+      const details = await fetchMassiveTickerDetails(pick.ticker);
+      if (details) {
+        if (details.marketCap != null) {
+          marketCap = details.marketCap;
+          if (!metricSources.includes("massive_ref")) metricSources.push("massive_ref");
+        }
+        if (!priceCurrency && details.currency) {
+          priceCurrency = details.currency.toUpperCase();
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  if (!yahooHit && peRatio == null && price == null) {
+    warnings.push("Live pricing unavailable for this ticker.");
+  }
+
+  // 4) SEC EDGAR for fundamentals — only meaningful for U.S. issuers.
   // Non-US issuers (TW, NL, IE, DE, GB) won't have SEC filings as domestic
   // filers; their cross-listed ADRs occasionally do but we don't rely on it.
   const isUS = !pick.issuerCountry || pick.issuerCountry === "US";
+  let secEps: number | null = null;
+  let secSharesOutstanding: number | null = null;
   if (isUS) {
     try {
       const f = await getEquityFundamentals(pick.ticker);
@@ -1862,6 +2026,9 @@ async function enrichOne(pick: StockPick): Promise<StockPickKeyMetrics> {
         operatingMargin = f.operatingMargin;
         fcfMargin = f.fcfMargin;
         debtToEquity = f.debtToEquity;
+        if (f.eps && Number.isFinite(f.eps.value) && f.eps.value > 0) {
+          secEps = f.eps.value;
+        }
         metricSources.push("sec_edgar");
         if (f.missingFields && f.missingFields.length > 0) {
           // Don't surface every detail — just a high-level note.
@@ -1881,16 +2048,54 @@ async function enrichOne(pick: StockPick): Promise<StockPickKeyMetrics> {
     );
   }
 
-  const metricSource =
-    metricSources.length > 0 ? metricSources.join("+") : "unavailable";
+  // 5) P/E fallback: if Yahoo didn't give it and we have a price + positive
+  //    EPS from SEC EDGAR, compute it ourselves. This recovers P/E in the
+  //    common case where Yahoo's quote API is blocked but EDGAR works.
+  if (peRatio == null && price != null && secEps != null) {
+    peRatio = price / secEps;
+    if (!metricSources.includes("sec_edgar")) metricSources.push("sec_edgar");
+  }
 
-  // Confidence rolls up source breadth.
+  // 6) Market-cap fallback: when no quote provider gave us a market cap,
+  //    derive it from the latest SEC point-in-time shares outstanding × price.
+  //    EntityCommonStockSharesOutstanding (cover-page fact) is the
+  //    issuer-asserted count and is the same number used by Polygon-style
+  //    market_cap fields. Acceptable accuracy for a watchlist UI; treat as
+  //    approximate because the share count is a snapshot, not real-time.
+  if (marketCap == null && price != null && isUS) {
+    try {
+      const sh = await getSharesOutstanding(pick.ticker);
+      if (sh) {
+        secSharesOutstanding = sh.value;
+        marketCap = price * sh.value;
+        if (!metricSources.includes("sec_edgar")) metricSources.push("sec_edgar");
+        warnings.push(
+          `Market cap derived from SEC shares outstanding (${sh.tag}) × price (approximate).`,
+        );
+      }
+    } catch {
+      // ignore
+    }
+  }
+  void secSharesOutstanding;
+
+  const metricSource =
+    metricSources.length > 0 ? Array.from(new Set(metricSources)).join("+") : "unavailable";
+
+  // Confidence rolls up source breadth. Live pricing + fundamentals = curated.
   let metricConfidence: "curated" | "approximate" | "low" = "low";
-  if (metricSources.includes("yahoo") && metricSources.includes("sec_edgar")) {
+  const hasLivePrice =
+    metricSources.includes("massive") || metricSources.includes("yahoo");
+  const hasFundamentals = metricSources.includes("sec_edgar");
+  if (hasLivePrice && hasFundamentals) {
     metricConfidence = "curated";
   } else if (metricSources.length > 0) {
     metricConfidence = "approximate";
   }
+
+  // Drop performance warnings that duplicate the top-level series warning —
+  // keeps the UI tidy without losing information.
+  const dedupedWarnings = Array.from(new Set(warnings));
 
   return {
     price,
@@ -1906,7 +2111,8 @@ async function enrichOne(pick: StockPick): Promise<StockPickKeyMetrics> {
     metricSource,
     metricAsOf: Date.now(),
     metricConfidence,
-    metricWarnings: warnings,
+    metricWarnings: dedupedWarnings,
+    performance,
   };
 }
 

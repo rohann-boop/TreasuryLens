@@ -112,6 +112,69 @@ async function fetchMassiveChart(symbol: string): Promise<Bar[] | null> {
   }
 }
 
+interface MassiveTickerDetailsResponse {
+  results?: {
+    ticker?: string;
+    name?: string;
+    market_cap?: number;
+    weighted_shares_outstanding?: number;
+    share_class_shares_outstanding?: number;
+    currency_name?: string;
+  };
+  status?: string;
+  error?: string;
+}
+
+/**
+ * Polygon-compatible ticker reference endpoint (Massive). Returns market cap
+ * and outstanding share count. P/E is not provided by Polygon's free-tier
+ * reference endpoint, so it must be computed elsewhere (or come from Yahoo).
+ */
+export async function fetchMassiveTickerDetails(
+  symbol: string,
+): Promise<{
+  marketCap: number | null;
+  sharesOutstanding: number | null;
+  name: string | null;
+  currency: string | null;
+} | null> {
+  if (!MASSIVE_API_KEY) return null;
+  try {
+    const url = `https://api.massive.com/v3/reference/tickers/${encodeURIComponent(
+      symbol,
+    )}?apiKey=${encodeURIComponent(MASSIVE_API_KEY)}`;
+    const r = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!r.ok) return null;
+    const j = (await r.json()) as MassiveTickerDetailsResponse;
+    const res = j.results;
+    if (!res) return null;
+    const marketCap =
+      typeof res.market_cap === "number" && res.market_cap > 0
+        ? res.market_cap
+        : null;
+    const shares =
+      typeof res.weighted_shares_outstanding === "number" &&
+      res.weighted_shares_outstanding > 0
+        ? res.weighted_shares_outstanding
+        : typeof res.share_class_shares_outstanding === "number" &&
+          res.share_class_shares_outstanding > 0
+        ? res.share_class_shares_outstanding
+        : null;
+    return {
+      marketCap,
+      sharesOutstanding: shares,
+      name: res.name ?? null,
+      currency: res.currency_name ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Re-export Massive chart fetch so other modules (stockPicks) can use the
+// same provider path as the main indicators pipeline.
+export { fetchMassiveChart };
+
 interface YahooChart {
   chart: {
     result?: Array<{
