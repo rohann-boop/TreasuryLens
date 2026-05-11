@@ -165,6 +165,47 @@ function pickByTheme(picks: StockPick[], themeKey: string): StockPick[] {
   return picks.filter((p) => p.themes.includes(themeKey as StockPick["themes"][number]));
 }
 
+// Sub-theme keyword detection. Maps user phrasing to the curated subTheme tag
+// on each pick. First match wins; checked in insertion order so that more
+// specific terms come before broader ones.
+const SUBTHEME_KEYWORDS: Array<[string[], string]> = [
+  // AI Hardware
+  [["semi equipment", "wfe", "lithography", "etch", "deposition"], "semi-equipment"],
+  [["memory", "dram", "nand", "hbm", "ssd", "hdd"], "memory"],
+  [["networking", "ethernet", "switch"], "networking"],
+  [["optical", "transceiver", "photonics", "interconnect"], "optical"],
+  [["datacenter hardware", "data center hardware", "server hardware", "storage hardware"], "datacenter-hardware"],
+  [["edge ai", "on-device ai", "on device ai", "edge inference"], "edge-ai"],
+  [["semiconductor", "semis", "chip"], "semiconductors"],
+  // AI Software
+  [["hyperscaler", "hyperscale", "cloud platform"], "hyperscalers"],
+  [["data platform", "data warehouse", "data lake", "streaming data"], "data-platforms"],
+  [["cybersecurity", "cyber security", "security software"], "cybersecurity"],
+  [["automation", "rpa"], "automation"],
+  [["developer tool", "devtool", "devops"], "developer-tools"],
+  [["enterprise app", "saas app"], "enterprise-apps"],
+  [["ai app", "genai", "gen ai"], "ai-apps"],
+  [["vertical software", "industry software"], "vertical-software"],
+  // AI Energy
+  [["uranium", "yellowcake"], "uranium"],
+  [["nuclear", "smr", "reactor"], "nuclear"],
+  [["utilities", "regulated utility"], "utilities"],
+  [["ipp", "independent power"], "ipps"],
+  [["grid equipment", "transformer", "switchgear", "electrical equipment"], "grid-equipment"],
+  [["datacenter power", "data center power", "cooling", "thermal"], "datacenter-power"],
+  [["engineering", "epc", "construction"], "engineering"],
+  [["energy storage", "battery storage"], "energy-storage"],
+];
+
+function detectSubTheme(q: string): string | null {
+  for (const [keys, sub] of SUBTHEME_KEYWORDS) {
+    for (const k of keys) {
+      if (q.includes(k)) return sub;
+    }
+  }
+  return null;
+}
+
 function findPick(picks: StockPick[], ticker: string): StockPick | null {
   const t = ticker.toUpperCase();
   return picks.find((p) => p.ticker.toUpperCase() === t) ?? null;
@@ -274,6 +315,12 @@ async function answerStockPicks(q: string, route: string): Promise<AssistantAnsw
   else if (any(q, "ai hardware", "hardware theme")) themeKey = "ai-hardware";
   else if (any(q, "ai software", "software theme")) themeKey = "ai-software";
 
+  // 2b) Sub-theme detection (e.g. "nuclear", "cybersecurity", "semi equipment")
+  const subTheme = detectSubTheme(q);
+  const subThemeLabel = subTheme ? subTheme.replace("-", " ") : null;
+  const applySubTheme = (arr: StockPick[]) =>
+    subTheme ? arr.filter((p) => p.subTheme === subTheme) : arr;
+
   // 3) "show etfs" — ETF alternatives, optionally filtered by theme
   if (any(q, "etf", "etfs", "fund", "index fund")) {
     const filtered: StockPickEtf[] = themeKey
@@ -326,13 +373,15 @@ async function answerStockPicks(q: string, route: string): Promise<AssistantAnsw
     const matches = picks.filter((p) =>
       wantMicro ? p.marketCapBucket === "micro" : (p.marketCapBucket === "small" || p.marketCapBucket === "micro"),
     );
-    const filtered = themeKey ? matches.filter((p) => p.themes.includes(themeKey as StockPick["themes"][number])) : matches;
+    let filtered = themeKey ? matches.filter((p) => p.themes.includes(themeKey as StockPick["themes"][number])) : matches;
+    filtered = applySubTheme(filtered);
     const bullets = filtered.map((p) =>
       `${p.ticker} — ${p.companyName} — ${bucketLabel(p.marketCapBucket)} — ${p.scenarioPotential}`
     );
+    const titleSuffix = subThemeLabel ? ` — ${subThemeLabel}` : "";
     return {
       intent: "stock-picks.smallcap",
-      title: wantMicro ? "Micro-cap names on the watchlist" : "Small/micro-cap names on the watchlist",
+      title: (wantMicro ? "Micro-cap names" : "Small/micro-cap names") + titleSuffix,
       sections: [{ bullets: bullets.length ? bullets : ["No matches in the current curated universe."] }],
       sources: [{ label: "Curated by TreasuryLens — verify figures." }],
       disclaimer: INVESTING_DISCLAIMER,
@@ -347,6 +396,7 @@ async function answerStockPicks(q: string, route: string): Promise<AssistantAnsw
     const tag = `${wantMulti[1]} potential` as StockPick["scenarioPotential"];
     let matches = picks.filter((p) => p.scenarioPotential === tag);
     if (themeKey) matches = matches.filter((p) => p.themes.includes(themeKey as StockPick["themes"][number]));
+    matches = applySubTheme(matches);
     const bullets = matches.map((p) =>
       `${p.ticker} — ${p.companyName} — ${p.themes.join(", ")} — conviction ${p.convictionScore}/100`
     );
@@ -433,15 +483,34 @@ async function answerStockPicks(q: string, route: string): Promise<AssistantAnsw
 
   // 9) Theme-only request
   if (themeKey) {
-    const matches = pickByTheme(picks, themeKey);
+    const matches = applySubTheme(pickByTheme(picks, themeKey));
     const bullets = matches.map((p) =>
       `${p.ticker} — ${p.companyName} — ${bucketLabel(p.marketCapBucket)} — ${p.scenarioPotential}`
     );
     return {
       intent: "stock-picks.theme",
-      title: `${themeKey.replace("-", " ")} watchlist`,
-      sections: [{ bullets }],
+      title: subThemeLabel
+        ? `${themeKey.replace("-", " ")} · ${subThemeLabel}`
+        : `${themeKey.replace("-", " ")} watchlist`,
+      sections: [{ bullets: bullets.length ? bullets : ["No matches in the curated universe."] }],
       sources: [{ label: "TreasuryLens curated theme" }],
+      disclaimer: INVESTING_DISCLAIMER,
+      followUps: followUps(route),
+      mode: "rules",
+    };
+  }
+
+  // 10) Sub-theme only (no broad theme keyword present) — e.g. "show nuclear picks"
+  if (subTheme) {
+    const matches = applySubTheme(picks);
+    const bullets = matches.map((p) =>
+      `${p.ticker} — ${p.companyName} — ${p.themes.join(", ")} — ${bucketLabel(p.marketCapBucket)}`
+    );
+    return {
+      intent: "stock-picks.subtheme",
+      title: `${subThemeLabel} watchlist`,
+      sections: [{ bullets: bullets.length ? bullets : ["No matches in the curated universe."] }],
+      sources: [{ label: "TreasuryLens curated sub-theme" }],
       disclaimer: INVESTING_DISCLAIMER,
       followUps: followUps(route),
       mode: "rules",

@@ -568,10 +568,41 @@ export interface StockPickKeyMetrics {
   performance?: StockPickPerformance | null;
 }
 
+// Sub-themes provide finer-grained categorisation under the broad theme.
+// Curated; optional. UI uses them for an extra filter when the list grows large.
+export type StockPickSubTheme =
+  // AI Hardware
+  | "semiconductors"
+  | "memory"
+  | "semi-equipment"
+  | "networking"
+  | "optical"
+  | "datacenter-hardware"
+  | "edge-ai"
+  // AI Software
+  | "hyperscalers"
+  | "data-platforms"
+  | "cybersecurity"
+  | "automation"
+  | "enterprise-apps"
+  | "developer-tools"
+  | "ai-apps"
+  | "vertical-software"
+  // AI Energy
+  | "nuclear"
+  | "utilities"
+  | "ipps"
+  | "grid-equipment"
+  | "datacenter-power"
+  | "engineering"
+  | "energy-storage"
+  | "uranium";
+
 export interface StockPick {
   ticker: string;
   companyName: string;
   themes: StockPickTheme[];
+  subTheme?: StockPickSubTheme | null;
   marketCapBucket: MarketCapBucket;
   marketCapLabel: string; // curated human label e.g. "Mega cap (curated)"
   scenarioPotential: ScenarioPotential;

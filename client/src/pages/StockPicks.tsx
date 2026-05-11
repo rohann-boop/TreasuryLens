@@ -5,6 +5,7 @@ import type {
   MarketCapBucket,
   StockPick,
   StockPickEtf,
+  StockPickSubTheme,
   StockPickTheme,
   StockPickThemeInfo,
   StockPicksResponse,
@@ -23,6 +24,8 @@ import {
   ShieldAlert,
   AlertTriangle,
   LayoutGrid,
+  Search,
+  X,
 } from "lucide-react";
 import { fmtAgo } from "@/lib/format";
 import { WordMark } from "@/components/Logo";
@@ -53,6 +56,35 @@ const BUCKET_LABEL: Record<MarketCapBucket, string> = {
 };
 
 const BUCKETS: MarketCapBucket[] = ["micro", "small", "mid", "large", "mega"];
+
+const SUBTHEME_LABEL: Record<StockPickSubTheme, string> = {
+  // AI Hardware
+  semiconductors: "Semiconductors",
+  memory: "Memory / Storage",
+  "semi-equipment": "Semi Equipment",
+  networking: "Networking",
+  optical: "Optical / Interconnect",
+  "datacenter-hardware": "Datacenter Hardware",
+  "edge-ai": "Edge / On-device AI",
+  // AI Software
+  hyperscalers: "Hyperscalers / Cloud",
+  "data-platforms": "Data Platforms",
+  cybersecurity: "Cybersecurity",
+  automation: "Automation",
+  "enterprise-apps": "Enterprise Apps",
+  "developer-tools": "Developer Tools",
+  "ai-apps": "AI Apps",
+  "vertical-software": "Vertical Software",
+  // AI Energy
+  nuclear: "Nuclear / SMR",
+  utilities: "Utilities",
+  ipps: "IPPs",
+  "grid-equipment": "Grid / Electrical",
+  "datacenter-power": "DC Power / Cooling",
+  engineering: "Engineering / EPC",
+  "energy-storage": "Energy Storage",
+  uranium: "Uranium",
+};
 
 type SortDir = "asc" | "desc";
 type SortKey =
@@ -323,6 +355,96 @@ function CapBucketFilter({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function SubThemeFilter({
+  available,
+  selected,
+  onChange,
+}: {
+  available: StockPickSubTheme[];
+  selected: StockPickSubTheme | "all";
+  onChange: (s: StockPickSubTheme | "all") => void;
+}) {
+  if (!available.length) return null;
+  return (
+    <div className="space-y-2">
+      <div
+        className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-muted-foreground px-1"
+        data-testid="group-header-subtheme"
+      >
+        <span>Sub-theme</span>
+      </div>
+      <div
+        className="flex flex-row md:flex-col gap-2 overflow-x-auto md:overflow-visible pb-1 md:pb-0"
+        data-testid="group-list-subtheme"
+      >
+        <button
+          onClick={() => onChange("all")}
+          data-active={selected === "all" ? "true" : "false"}
+          data-testid="filter-subtheme-all"
+          className={`shrink-0 md:shrink min-w-[120px] md:min-w-0 w-full text-left rounded-md border px-3 py-1.5 transition-colors text-[12px] ${
+            selected === "all"
+              ? "border-primary/60 bg-primary/10 text-foreground"
+              : "border-border/60 bg-background/30 text-foreground/90 hover:bg-card/60"
+          }`}
+        >
+          All sub-themes
+        </button>
+        {available.map((s) => (
+          <button
+            key={s}
+            onClick={() => onChange(s)}
+            data-active={selected === s ? "true" : "false"}
+            data-testid={`filter-subtheme-${s}`}
+            className={`shrink-0 md:shrink min-w-[120px] md:min-w-0 w-full text-left rounded-md border px-3 py-1.5 transition-colors text-[12px] ${
+              selected === s
+                ? "border-primary/60 bg-primary/10 text-foreground"
+                : "border-border/60 bg-background/30 text-foreground/90 hover:bg-card/60"
+            }`}
+          >
+            {SUBTHEME_LABEL[s] ?? s}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SearchBox({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <div className="relative">
+      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder ?? "Search ticker or company"}
+        data-testid="picks-search-input"
+        aria-label="Search picks"
+        className="w-full h-9 pl-8 pr-8 rounded-md border border-border/70 bg-background/60 text-[12px] focus:outline-none focus:ring-1 focus:ring-primary/60 focus:border-primary/60"
+      />
+      {value && (
+        <button
+          type="button"
+          onClick={() => onChange("")}
+          aria-label="Clear search"
+          data-testid="picks-search-clear"
+          className="absolute right-2 top-1/2 -translate-y-1/2 h-5 w-5 inline-flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-card/60"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      )}
     </div>
   );
 }
@@ -1560,6 +1682,8 @@ export default function StockPicksPage() {
     "ai-hardware",
   );
   const [capBucket, setCapBucket] = useState<MarketCapBucket | "all">("all");
+  const [subTheme, setSubTheme] = useState<StockPickSubTheme | "all">("all");
+  const [searchQuery, setSearchQuery] = useState<string>("");
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
   const [selectedEtfTicker, setSelectedEtfTicker] = useState<string | null>(
     null,
@@ -1574,13 +1698,40 @@ export default function StockPicksPage() {
   const allPicks = query.data?.picks ?? [];
   const allEtfs = query.data?.etfs ?? [];
 
+  // Reset subtheme when switching theme; the available set changes per theme.
+  useEffect(() => {
+    setSubTheme("all");
+  }, [selectedTheme]);
+
+  // Total picks within the current theme — used as the "of Y" denominator
+  // in the count display so users can see what filters removed.
+  const themePicks = useMemo(() => {
+    return allPicks.filter((p) => p.themes.includes(selectedTheme));
+  }, [allPicks, selectedTheme]);
+
+  const availableSubThemes = useMemo<StockPickSubTheme[]>(() => {
+    const set = new Set<StockPickSubTheme>();
+    for (const p of themePicks) {
+      if (p.subTheme) set.add(p.subTheme);
+    }
+    return Array.from(set).sort((a, b) =>
+      (SUBTHEME_LABEL[a] ?? a).localeCompare(SUBTHEME_LABEL[b] ?? b),
+    );
+  }, [themePicks]);
+
+  const normalisedQuery = searchQuery.trim().toLowerCase();
+
   const filtered = useMemo(() => {
-    return allPicks.filter((p) => {
-      if (!p.themes.includes(selectedTheme)) return false;
+    return themePicks.filter((p) => {
       if (capBucket !== "all" && p.marketCapBucket !== capBucket) return false;
+      if (subTheme !== "all" && p.subTheme !== subTheme) return false;
+      if (normalisedQuery) {
+        const hay = `${p.ticker} ${p.companyName}`.toLowerCase();
+        if (!hay.includes(normalisedQuery)) return false;
+      }
       return true;
     });
-  }, [allPicks, selectedTheme, capBucket]);
+  }, [themePicks, capBucket, subTheme, normalisedQuery]);
 
   const filteredEtfs = useMemo(() => {
     return allEtfs.filter((e) => e.themes.includes(selectedTheme));
@@ -1736,7 +1887,14 @@ export default function StockPicksPage() {
                 />
               )}
               {view === "stocks" && (
-                <CapBucketFilter selected={capBucket} onChange={setCapBucket} />
+                <>
+                  <CapBucketFilter selected={capBucket} onChange={setCapBucket} />
+                  <SubThemeFilter
+                    available={availableSubThemes}
+                    selected={subTheme}
+                    onChange={setSubTheme}
+                  />
+                </>
               )}
             </aside>
 
@@ -1760,12 +1918,19 @@ export default function StockPicksPage() {
                     <h2 className="text-base font-semibold">
                       {themes.find((t) => t.key === selectedTheme)?.name}
                     </h2>
-                    <span className="text-[11px] text-muted-foreground">
-                      · {filtered.length} stock{filtered.length === 1 ? "" : "s"}
+                    <span
+                      className="text-[11px] text-muted-foreground"
+                      data-testid="text-pick-count"
+                    >
+                      · Showing {filtered.length} of {themePicks.length} stock
+                      {themePicks.length === 1 ? "" : "s"}
                       {capBucket !== "all" && view === "stocks"
                         ? ` · ${BUCKET_LABEL[capBucket]} cap`
-                        : ""}{" "}
-                      · {filteredEtfs.length} ETF
+                        : ""}
+                      {subTheme !== "all" && view === "stocks"
+                        ? ` · ${SUBTHEME_LABEL[subTheme] ?? subTheme}`
+                        : ""}
+                      {" "}· {filteredEtfs.length} ETF
                       {filteredEtfs.length === 1 ? "" : "s"}
                     </span>
                     <div className="ml-auto">
@@ -1785,6 +1950,33 @@ export default function StockPicksPage() {
 
               {view === "stocks" ? (
                 <>
+                  <div
+                    className="flex flex-col sm:flex-row sm:items-center gap-2"
+                    data-testid="picks-search-row"
+                  >
+                    <div className="flex-1 max-w-md">
+                      <SearchBox
+                        value={searchQuery}
+                        onChange={setSearchQuery}
+                      />
+                    </div>
+                    {(searchQuery ||
+                      capBucket !== "all" ||
+                      subTheme !== "all") && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearchQuery("");
+                          setCapBucket("all");
+                          setSubTheme("all");
+                        }}
+                        data-testid="picks-clear-filters"
+                        className="text-[11px] text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+                      >
+                        Clear filters
+                      </button>
+                    )}
+                  </div>
                   <PicksTable
                     picks={filtered}
                     selectedTicker={selectedTicker}
