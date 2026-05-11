@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { fmtAgo } from "@/lib/format";
 import { WordMark } from "@/components/Logo";
+import { MobileNav } from "@/components/MobileNav";
 
 function useTheme() {
   const [dark, setDark] = useState(true);
@@ -704,7 +705,7 @@ export default function StockPicksPage() {
         className="flex-1 overflow-y-auto"
         style={{ overscrollBehavior: "contain" }}
       >
-        <div className="px-4 md:px-6 py-5 space-y-5 max-w-[1600px] mx-auto">
+        <div className="px-4 md:px-6 py-5 space-y-5 max-w-[1600px] mx-auto pb-20 md:pb-5">
           <div className="md:hidden">
             <h1 className="text-lg font-semibold">Stock Picks &amp; Themes</h1>
           </div>
@@ -807,6 +808,7 @@ export default function StockPicksPage() {
           )}
         </div>
       </main>
+      <MobileNav />
     </div>
   );
 }

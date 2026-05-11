@@ -40,6 +40,7 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { WordMark } from "@/components/Logo";
+import { MobileNav } from "@/components/MobileNav";
 
 function useTheme() {
   const [dark, setDark] = useState(true);
@@ -254,7 +255,7 @@ export default function Dashboard() {
 
       {/* Main */}
       <main className="col-start-2 min-w-0 overflow-y-auto" style={{ overscrollBehavior: "contain" }}>
-        <div className="px-4 md:px-6 py-5 space-y-5 max-w-[1600px] mx-auto">
+        <div className="px-4 md:px-6 py-5 space-y-5 max-w-[1600px] mx-auto pb-20 md:pb-5">
           {/* Live/demo data status note */}
           <div
             className="flex items-start gap-2 rounded-md border border-border/70 bg-card/40 px-3 py-2 text-[11px] text-muted-foreground"
@@ -424,6 +425,7 @@ export default function Dashboard() {
         onOpenChange={setAddOpen}
         onCreated={(id) => setSelectedId(id)}
       />
+      <MobileNav />
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { WordMark } from "@/components/Logo";
+import { MobileNav } from "@/components/MobileNav";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -26,6 +27,7 @@ import {
   Smartphone,
   Calculator,
   CircleDot,
+  Lightbulb,
 } from "lucide-react";
 import {
   Area,
@@ -287,6 +289,17 @@ function Hero() {
             <a href="#calculator" data-testid="cta-hero-set-goal">
               Set a goal
             </a>
+          </Button>
+          <Button
+            asChild
+            size="lg"
+            variant="outline"
+            className="w-full sm:w-auto"
+          >
+            <Link href="/stock-picks" data-testid="link-landing-stock-picks">
+              <Lightbulb className="mr-1 h-4 w-4" />
+              Explore Stock Picks
+            </Link>
           </Button>
           <Button
             asChild
@@ -1259,7 +1272,7 @@ export default function Landing() {
   }, []);
 
   return (
-    <div className="min-h-[100dvh] bg-background text-foreground">
+    <div className="min-h-[100dvh] bg-background text-foreground pb-16 md:pb-0">
       <NavBar />
       <main>
         <Hero />
@@ -1271,6 +1284,7 @@ export default function Landing() {
         <Disclosures />
       </main>
       <Footer />
+      <MobileNav />
     </div>
   );
 }
