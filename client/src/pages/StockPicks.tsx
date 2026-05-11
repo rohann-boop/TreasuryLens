@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import type {
   MarketCapBucket,
   StockPick,
+  StockPickEtf,
   StockPickTheme,
   StockPickThemeInfo,
   StockPicksResponse,
@@ -20,6 +21,8 @@ import {
   Sun,
   Moon,
   ShieldAlert,
+  AlertTriangle,
+  LayoutGrid,
 } from "lucide-react";
 import { fmtAgo } from "@/lib/format";
 import { WordMark } from "@/components/Logo";
@@ -56,13 +59,14 @@ type SortKey =
   | "ticker"
   | "company"
   | "bucket"
+  | "price"
+  | "marketCap"
+  | "pe"
   | "scenario"
   | "conviction"
-  | "risk"
-  | "confidence";
+  | "risk";
 
 const RISK_ORDER = ["low", "moderate", "elevated", "high", "very high"];
-const CONFIDENCE_ORDER = ["curated", "approximate", "low"];
 
 function compareStr(a: string, b: string, dir: SortDir): number {
   return dir === "asc" ? a.localeCompare(b) : b.localeCompare(a);
@@ -72,10 +76,39 @@ function compareNum(a: number, b: number, dir: SortDir): number {
   return dir === "asc" ? a - b : b - a;
 }
 
+function compareNullableNum(
+  a: number | null | undefined,
+  b: number | null | undefined,
+  dir: SortDir,
+): number {
+  const aNull = a == null;
+  const bNull = b == null;
+  if (aNull && bNull) return 0;
+  if (aNull) return 1; // nulls last
+  if (bNull) return -1;
+  return compareNum(a as number, b as number, dir);
+}
+
 function compareOrdered(a: string, b: string, order: string[], dir: SortDir): number {
   const ai = order.indexOf(a);
   const bi = order.indexOf(b);
   return dir === "asc" ? ai - bi : bi - ai;
+}
+
+function fmtPrice(p: number | null | undefined, currency?: string | null): string {
+  if (p == null || !Number.isFinite(p)) return "—";
+  const sym = currency === "USD" || !currency ? "$" : "";
+  return `${sym}${p.toFixed(p < 10 ? 2 : p < 100 ? 2 : 2)}`;
+}
+
+function fmtPct(p: number | null | undefined, digits = 1): string {
+  if (p == null || !Number.isFinite(p)) return "—";
+  return `${p.toFixed(digits)}%`;
+}
+
+function fmtRatio(p: number | null | undefined, digits = 2): string {
+  if (p == null || !Number.isFinite(p)) return "—";
+  return p.toFixed(digits);
 }
 
 function SortHeader({
@@ -278,6 +311,154 @@ function CapBucketFilter({
   );
 }
 
+type ViewTab = "stocks" | "etfs";
+
+function ViewToggle({
+  view,
+  onChange,
+  stockCount,
+  etfCount,
+}: {
+  view: ViewTab;
+  onChange: (v: ViewTab) => void;
+  stockCount: number;
+  etfCount: number;
+}) {
+  return (
+    <div
+      className="inline-flex rounded-md border border-border/70 overflow-hidden text-[12px]"
+      role="tablist"
+      data-testid="view-toggle"
+    >
+      <button
+        role="tab"
+        aria-selected={view === "stocks"}
+        data-active={view === "stocks" ? "true" : "false"}
+        data-testid="view-toggle-stocks"
+        onClick={() => onChange("stocks")}
+        className={`px-3 py-1.5 transition-colors ${
+          view === "stocks"
+            ? "bg-primary/15 text-foreground"
+            : "bg-background/30 text-muted-foreground hover:bg-card/60"
+        }`}
+      >
+        Stocks{" "}
+        <span className="text-[10px] text-muted-foreground tabular-nums">
+          ({stockCount})
+        </span>
+      </button>
+      <button
+        role="tab"
+        aria-selected={view === "etfs"}
+        data-active={view === "etfs" ? "true" : "false"}
+        data-testid="view-toggle-etfs"
+        onClick={() => onChange("etfs")}
+        className={`px-3 py-1.5 border-l border-border/70 transition-colors ${
+          view === "etfs"
+            ? "bg-primary/15 text-foreground"
+            : "bg-background/30 text-muted-foreground hover:bg-card/60"
+        }`}
+      >
+        <span className="inline-flex items-center gap-1">
+          <LayoutGrid className="h-3 w-3" />
+          ETFs / Indexes{" "}
+          <span className="text-[10px] text-muted-foreground tabular-nums">
+            ({etfCount})
+          </span>
+        </span>
+      </button>
+    </div>
+  );
+}
+
+function MetricsPanel({ pick }: { pick: StockPick }) {
+  const m = pick.keyMetrics;
+  return (
+    <div
+      className="rounded-md border border-border/60 bg-background/35 p-3"
+      data-testid="detail-key-metrics"
+    >
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[10px] uppercase tracking-widest text-muted-foreground">
+          Key metrics
+        </div>
+        {m?.metricSource && (
+          <span className="text-[10px] text-muted-foreground">
+            {m.metricSource === "unavailable" ? "no live data" : m.metricSource}
+          </span>
+        )}
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-[11px]">
+        <div>
+          <div className="text-muted-foreground">Price</div>
+          <div className="tabular-nums" data-testid="detail-metric-price">
+            {fmtPrice(m?.price, m?.priceCurrency)}
+          </div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Market cap</div>
+          <div className="tabular-nums" data-testid="detail-metric-mcap">
+            {m?.marketCapLabel ?? "—"}
+          </div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">P/E (TTM)</div>
+          <div className="tabular-nums" data-testid="detail-metric-pe">
+            {fmtRatio(m?.peRatio)}
+          </div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Rev growth (YoY)</div>
+          <div className="tabular-nums" data-testid="detail-metric-revgrowth">
+            {fmtPct(m?.revenueGrowth)}
+          </div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Gross margin</div>
+          <div className="tabular-nums" data-testid="detail-metric-gm">
+            {fmtPct(m?.grossMargin)}
+          </div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Op margin</div>
+          <div className="tabular-nums" data-testid="detail-metric-om">
+            {fmtPct(m?.operatingMargin)}
+          </div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">FCF margin</div>
+          <div className="tabular-nums" data-testid="detail-metric-fcfm">
+            {fmtPct(m?.fcfMargin)}
+          </div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Debt / Equity</div>
+          <div className="tabular-nums" data-testid="detail-metric-de">
+            {fmtRatio(m?.debtToEquity)}
+          </div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Confidence</div>
+          <div className="capitalize">{m?.metricConfidence ?? "—"}</div>
+        </div>
+      </div>
+      {m?.metricWarnings && m.metricWarnings.length > 0 && (
+        <div
+          className="mt-2 flex items-start gap-1.5 text-[10px] text-muted-foreground border-t border-border/40 pt-2"
+          data-testid="detail-metric-warnings"
+        >
+          <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0 text-warn" />
+          <ul className="space-y-0.5">
+            {m.metricWarnings.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PickDetail({ pick }: { pick: StockPick }) {
   return (
     <section
@@ -306,6 +487,8 @@ function PickDetail({ pick }: { pick: StockPick }) {
           <RiskBadge value={pick.riskLevel} />
         </div>
       </div>
+
+      <MetricsPanel pick={pick} />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="rounded-md border border-border/60 bg-background/35 p-3">
@@ -431,19 +614,30 @@ function PicksTable({
             BUCKETS,
             sortDir,
           );
+        case "price":
+          return compareNullableNum(
+            a.keyMetrics?.price,
+            b.keyMetrics?.price,
+            sortDir,
+          );
+        case "marketCap":
+          return compareNullableNum(
+            a.keyMetrics?.marketCap,
+            b.keyMetrics?.marketCap,
+            sortDir,
+          );
+        case "pe":
+          return compareNullableNum(
+            a.keyMetrics?.peRatio,
+            b.keyMetrics?.peRatio,
+            sortDir,
+          );
         case "scenario":
           return compareStr(a.scenarioPotential, b.scenarioPotential, sortDir);
         case "conviction":
           return compareNum(a.convictionScore, b.convictionScore, sortDir);
         case "risk":
           return compareOrdered(a.riskLevel, b.riskLevel, RISK_ORDER, sortDir);
-        case "confidence":
-          return compareOrdered(
-            a.dataConfidence,
-            b.dataConfidence,
-            CONFIDENCE_ORDER,
-            sortDir,
-          );
       }
     });
     return arr;
@@ -488,6 +682,39 @@ function PicksTable({
                 testId="picks-sort-company"
               />
             </th>
+            <th className="px-3 py-2 text-right">
+              <SortHeader
+                label="Price"
+                k="price"
+                active={sortKey}
+                dir={sortDir}
+                onSort={onSort}
+                align="right"
+                testId="picks-sort-price"
+              />
+            </th>
+            <th className="px-3 py-2 text-right">
+              <SortHeader
+                label="Mkt Cap"
+                k="marketCap"
+                active={sortKey}
+                dir={sortDir}
+                onSort={onSort}
+                align="right"
+                testId="picks-sort-mcap"
+              />
+            </th>
+            <th className="px-3 py-2 text-right">
+              <SortHeader
+                label="P/E"
+                k="pe"
+                active={sortKey}
+                dir={sortDir}
+                onSort={onSort}
+                align="right"
+                testId="picks-sort-pe"
+              />
+            </th>
             <th className="px-3 py-2 text-left">
               <SortHeader
                 label="Cap"
@@ -528,26 +755,6 @@ function PicksTable({
                 testId="picks-sort-risk"
               />
             </th>
-            <th className="px-3 py-2 text-left">
-              <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
-                Downside guardrail
-              </span>
-            </th>
-            <th className="px-3 py-2 text-left">
-              <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
-                Upside case
-              </span>
-            </th>
-            <th className="px-3 py-2 text-left">
-              <SortHeader
-                label="Data"
-                k="confidence"
-                active={sortKey}
-                dir={sortDir}
-                onSort={onSort}
-                testId="picks-sort-confidence"
-              />
-            </th>
           </tr>
         </thead>
         <tbody>
@@ -567,6 +774,24 @@ function PicksTable({
                 <td className="px-3 py-2 max-w-[220px] truncate">
                   {p.companyName}
                 </td>
+                <td
+                  className="px-3 py-2 text-right tabular-nums"
+                  data-testid={`picks-cell-price-${p.ticker}`}
+                >
+                  {fmtPrice(p.keyMetrics?.price, p.keyMetrics?.priceCurrency)}
+                </td>
+                <td
+                  className="px-3 py-2 text-right tabular-nums text-muted-foreground"
+                  data-testid={`picks-cell-mcap-${p.ticker}`}
+                >
+                  {p.keyMetrics?.marketCapLabel ?? "—"}
+                </td>
+                <td
+                  className="px-3 py-2 text-right tabular-nums text-muted-foreground"
+                  data-testid={`picks-cell-pe-${p.ticker}`}
+                >
+                  {fmtRatio(p.keyMetrics?.peRatio)}
+                </td>
                 <td className="px-3 py-2 text-muted-foreground">
                   {BUCKET_LABEL[p.marketCapBucket]}
                 </td>
@@ -579,18 +804,93 @@ function PicksTable({
                 <td className="px-3 py-2">
                   <RiskBadge value={p.riskLevel} />
                 </td>
-                <td className="px-3 py-2 max-w-[260px]">
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function EtfTable({
+  etfs,
+  selectedTicker,
+  onSelect,
+}: {
+  etfs: StockPickEtf[];
+  selectedTicker: string | null;
+  onSelect: (ticker: string) => void;
+}) {
+  if (!etfs.length) {
+    return (
+      <div
+        className="rounded-md border border-border/70 bg-background/35 p-6 text-center text-sm text-muted-foreground"
+        data-testid="etfs-empty"
+      >
+        No ETF / index alternatives curated for this theme yet.
+      </div>
+    );
+  }
+  return (
+    <div
+      className="overflow-auto rounded-md border border-border/70 bg-background/35"
+      data-testid="etfs-table"
+    >
+      <table className="w-full text-[12px]">
+        <thead className="border-b border-border/70 bg-card/60">
+          <tr>
+            <th className="px-3 py-2 text-left text-[10px] uppercase tracking-widest text-muted-foreground">
+              Ticker
+            </th>
+            <th className="px-3 py-2 text-left text-[10px] uppercase tracking-widest text-muted-foreground">
+              Name
+            </th>
+            <th className="px-3 py-2 text-left text-[10px] uppercase tracking-widest text-muted-foreground">
+              Type
+            </th>
+            <th className="px-3 py-2 text-right text-[10px] uppercase tracking-widest text-muted-foreground">
+              Expense
+            </th>
+            <th className="px-3 py-2 text-left text-[10px] uppercase tracking-widest text-muted-foreground">
+              Theme fit
+            </th>
+            <th className="px-3 py-2 text-left text-[10px] uppercase tracking-widest text-muted-foreground">
+              Risk
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {etfs.map((e) => {
+            const active = e.ticker === selectedTicker;
+            return (
+              <tr
+                key={e.ticker}
+                className={`border-b border-border/40 last:border-0 cursor-pointer transition-colors ${
+                  active ? "bg-primary/10" : "hover:bg-card/40"
+                }`}
+                onClick={() => onSelect(e.ticker)}
+                data-testid={`etfs-row-${e.ticker}`}
+                data-active={active ? "true" : "false"}
+              >
+                <td className="px-3 py-2 mono font-medium">{e.ticker}</td>
+                <td className="px-3 py-2 max-w-[280px] truncate">{e.name}</td>
+                <td className="px-3 py-2 text-muted-foreground">
+                  {e.exposureType}
+                </td>
+                <td
+                  className="px-3 py-2 text-right tabular-nums text-muted-foreground"
+                  data-testid={`etfs-cell-expense-${e.ticker}`}
+                >
+                  {e.expenseRatio == null ? "—" : `${e.expenseRatio.toFixed(2)}%`}
+                </td>
+                <td className="px-3 py-2 max-w-[320px]">
                   <div className="text-[11px] text-muted-foreground line-clamp-2">
-                    {p.downsideGuardrail}
+                    {e.themeFit}
                   </div>
                 </td>
-                <td className="px-3 py-2 max-w-[260px]">
-                  <div className="text-[11px] text-muted-foreground line-clamp-2">
-                    {p.upsideCase}
-                  </div>
-                </td>
-                <td className="px-3 py-2 text-[11px] text-muted-foreground capitalize">
-                  {p.dataConfidence}
+                <td className="px-3 py-2">
+                  <RiskBadge value={e.riskLevel} />
                 </td>
               </tr>
             );
@@ -601,6 +901,94 @@ function PicksTable({
   );
 }
 
+function EtfDetail({ etf }: { etf: StockPickEtf }) {
+  return (
+    <section
+      className="rounded-lg border border-border/70 bg-card/40 p-5 space-y-4"
+      data-testid="selected-etf-detail"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h2 className="text-base font-semibold" data-testid="selected-etf-title">
+              {etf.name}
+            </h2>
+            <span className="mono text-xs text-muted-foreground">
+              {etf.ticker}
+            </span>
+          </div>
+          <div className="text-[11px] text-muted-foreground mt-1">
+            {etf.exposureType}
+            {etf.expenseRatio != null
+              ? ` · ${etf.expenseRatio.toFixed(2)}% expense ratio`
+              : ""}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <RiskBadge value={etf.riskLevel} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="rounded-md border border-border/60 bg-background/35 p-3">
+          <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">
+            Why use it
+          </div>
+          <div className="text-[12px] leading-relaxed" data-testid="etf-why">
+            {etf.whyUseIt}
+          </div>
+        </div>
+        <div className="rounded-md border border-border/60 bg-background/35 p-3">
+          <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">
+            Tradeoffs
+          </div>
+          <div className="text-[12px] leading-relaxed" data-testid="etf-tradeoffs">
+            {etf.tradeoffs}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {etf.concentrationNote && (
+          <div className="rounded-md border border-border/60 bg-background/35 p-3">
+            <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">
+              Concentration
+            </div>
+            <div
+              className="text-[12px] leading-relaxed"
+              data-testid="etf-concentration"
+            >
+              {etf.concentrationNote}
+            </div>
+          </div>
+        )}
+        {etf.topHoldingsNote && (
+          <div className="rounded-md border border-border/60 bg-background/35 p-3">
+            <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">
+              Top holdings (approximate)
+            </div>
+            <div
+              className="text-[12px] leading-relaxed"
+              data-testid="etf-top-holdings"
+            >
+              {etf.topHoldingsNote}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-md border border-warn/30 bg-warn/5 px-3 py-2 text-[11px] text-muted-foreground flex items-start gap-2">
+        <ShieldAlert className="h-3.5 w-3.5 mt-0.5 shrink-0 text-warn" />
+        <p className="leading-relaxed" data-testid="etf-source-note">
+          {etf.sourceNote} Diversified exposure alternative — not a
+          recommendation. Verify expense ratios, holdings, and prospectus on the
+          issuer's site before acting.
+        </p>
+      </div>
+    </section>
+  );
+}
+
 export default function StockPicksPage() {
   const { dark, setDark } = useTheme();
   const [selectedTheme, setSelectedTheme] = useState<StockPickTheme>(
@@ -608,6 +996,10 @@ export default function StockPicksPage() {
   );
   const [capBucket, setCapBucket] = useState<MarketCapBucket | "all">("all");
   const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
+  const [selectedEtfTicker, setSelectedEtfTicker] = useState<string | null>(
+    null,
+  );
+  const [view, setView] = useState<ViewTab>("stocks");
 
   const query = useQuery<StockPicksResponse>({
     queryKey: ["/api/stock-picks"],
@@ -615,6 +1007,7 @@ export default function StockPicksPage() {
 
   const themes = query.data?.themes ?? [];
   const allPicks = query.data?.picks ?? [];
+  const allEtfs = query.data?.etfs ?? [];
 
   const filtered = useMemo(() => {
     return allPicks.filter((p) => {
@@ -623,6 +1016,10 @@ export default function StockPicksPage() {
       return true;
     });
   }, [allPicks, selectedTheme, capBucket]);
+
+  const filteredEtfs = useMemo(() => {
+    return allEtfs.filter((e) => e.themes.includes(selectedTheme));
+  }, [allEtfs, selectedTheme]);
 
   useEffect(() => {
     if (!filtered.length) {
@@ -634,10 +1031,28 @@ export default function StockPicksPage() {
     }
   }, [filtered, selectedTicker]);
 
+  useEffect(() => {
+    if (!filteredEtfs.length) {
+      setSelectedEtfTicker(null);
+      return;
+    }
+    if (
+      !selectedEtfTicker ||
+      !filteredEtfs.find((e) => e.ticker === selectedEtfTicker)
+    ) {
+      setSelectedEtfTicker(filteredEtfs[0].ticker);
+    }
+  }, [filteredEtfs, selectedEtfTicker]);
+
   const selectedPick = useMemo(() => {
     if (!selectedTicker) return null;
     return allPicks.find((p) => p.ticker === selectedTicker) ?? null;
   }, [allPicks, selectedTicker]);
+
+  const selectedEtf = useMemo(() => {
+    if (!selectedEtfTicker) return null;
+    return allEtfs.find((e) => e.ticker === selectedEtfTicker) ?? null;
+  }, [allEtfs, selectedEtfTicker]);
 
   const lastUpdated = query.data?.lastUpdated ?? null;
   const isLoading = query.isLoading;
@@ -720,9 +1135,10 @@ export default function StockPicksPage() {
                 Research watchlist, not personalized investment advice.
               </span>{" "}
               These are curated theme-based scenario models. Scenario potentials
-              (e.g. "2x" or "3x") are hypothetical, not predictions. Investments
-              can lose value. Consult a qualified financial professional before
-              acting on anything you see here.
+              (e.g. "2x" or "3x") are hypothetical, not predictions. ETFs are
+              listed as diversified exposure alternatives, not recommendations.
+              Investments can lose value. Consult a qualified financial
+              professional before acting on anything you see here.
             </p>
           </div>
 
@@ -754,7 +1170,9 @@ export default function StockPicksPage() {
                   onSelect={setSelectedTheme}
                 />
               )}
-              <CapBucketFilter selected={capBucket} onChange={setCapBucket} />
+              {view === "stocks" && (
+                <CapBucketFilter selected={capBucket} onChange={setCapBucket} />
+              )}
             </aside>
 
             <div className="min-w-0 space-y-4" data-testid="picks-pane">
@@ -767,7 +1185,7 @@ export default function StockPicksPage() {
                   className="rounded-lg border border-border/70 bg-card/40 p-4"
                   data-testid="theme-summary"
                 >
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
                     {(() => {
                       const Icon = THEME_ICON[selectedTheme] ?? BrainCircuit;
                       return (
@@ -778,9 +1196,21 @@ export default function StockPicksPage() {
                       {themes.find((t) => t.key === selectedTheme)?.name}
                     </h2>
                     <span className="text-[11px] text-muted-foreground">
-                      · {filtered.length} pick{filtered.length === 1 ? "" : "s"}
-                      {capBucket !== "all" && ` · ${BUCKET_LABEL[capBucket]} cap`}
+                      · {filtered.length} stock{filtered.length === 1 ? "" : "s"}
+                      {capBucket !== "all" && view === "stocks"
+                        ? ` · ${BUCKET_LABEL[capBucket]} cap`
+                        : ""}{" "}
+                      · {filteredEtfs.length} ETF
+                      {filteredEtfs.length === 1 ? "" : "s"}
                     </span>
+                    <div className="ml-auto">
+                      <ViewToggle
+                        view={view}
+                        onChange={setView}
+                        stockCount={filtered.length}
+                        etfCount={filteredEtfs.length}
+                      />
+                    </div>
                   </div>
                   <p className="text-[12px] text-muted-foreground leading-relaxed">
                     {themes.find((t) => t.key === selectedTheme)?.blurb}
@@ -788,13 +1218,36 @@ export default function StockPicksPage() {
                 </section>
               )}
 
-              <PicksTable
-                picks={filtered}
-                selectedTicker={selectedTicker}
-                onSelect={setSelectedTicker}
-              />
-
-              {selectedPick && <PickDetail pick={selectedPick} />}
+              {view === "stocks" ? (
+                <>
+                  <PicksTable
+                    picks={filtered}
+                    selectedTicker={selectedTicker}
+                    onSelect={setSelectedTicker}
+                  />
+                  {selectedPick && <PickDetail pick={selectedPick} />}
+                </>
+              ) : (
+                <section data-testid="etf-exposure-section" className="space-y-4">
+                  <div className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-[11px] text-muted-foreground flex items-start gap-2">
+                    <LayoutGrid className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary/80" />
+                    <p className="leading-relaxed">
+                      <span className="text-foreground">
+                        Diversified exposure alternatives.
+                      </span>{" "}
+                      For users who want theme exposure without picking
+                      individual stocks. Expense ratios and holdings are
+                      curated/approximate — verify on the issuer's site.
+                    </p>
+                  </div>
+                  <EtfTable
+                    etfs={filteredEtfs}
+                    selectedTicker={selectedEtfTicker}
+                    onSelect={setSelectedEtfTicker}
+                  />
+                  {selectedEtf && <EtfDetail etf={selectedEtf} />}
+                </section>
+              )}
             </div>
           </div>
 

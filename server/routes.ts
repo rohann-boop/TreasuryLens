@@ -365,7 +365,7 @@ export async function registerRoutes(
   // external API calls; safe to cache at the module level.
   app.get("/api/stock-picks", async (_req, res) => {
     try {
-      res.json(getStockPicks());
+      res.json(await getStockPicks());
     } catch (e) {
       res.status(500).json({ message: (e as Error).message });
     }

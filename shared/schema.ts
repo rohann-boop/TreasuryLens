@@ -527,12 +527,33 @@ export type RiskLevel = "low" | "moderate" | "elevated" | "high" | "very high";
 
 export type DataConfidence = "curated" | "approximate" | "low";
 
+// Key metrics block attached to each StockPick. All numeric fields are
+// nullable — for non-US issuers SEC EDGAR returns nothing, for negative
+// earnings P/E is undefined, and live pricing may be unavailable. The UI
+// renders "N/A" plus a warning rather than fabricating a value.
+export interface StockPickKeyMetrics {
+  price: number | null;
+  priceCurrency: string | null;
+  marketCap: number | null; // USD where available
+  marketCapLabel: string | null; // human label e.g. "$3.1T"
+  peRatio: number | null; // trailing; null when negative/unavailable
+  revenueGrowth: number | null; // % YoY
+  grossMargin: number | null; // %
+  operatingMargin: number | null; // %
+  fcfMargin: number | null; // %
+  debtToEquity: number | null; // ratio
+  metricSource: string; // e.g. "yahoo+sec_edgar" | "sec_edgar" | "curated" | "unavailable"
+  metricAsOf: number | null; // ms since epoch
+  metricConfidence: DataConfidence;
+  metricWarnings: string[]; // human-readable warnings (e.g. "Needs fundamentals provider")
+}
+
 export interface StockPick {
   ticker: string;
   companyName: string;
   themes: StockPickTheme[];
   marketCapBucket: MarketCapBucket;
-  marketCapLabel: string; // human label, e.g. "~$3.1T (curated)"
+  marketCapLabel: string; // curated human label e.g. "Mega cap (curated)"
   scenarioPotential: ScenarioPotential;
   convictionScore: number; // 0-100, opinion only
   riskLevel: RiskLevel;
@@ -544,6 +565,9 @@ export interface StockPick {
   removalTriggers: string[]; // what would take it off the list
   dataConfidence: DataConfidence;
   sourceNote: string; // e.g. "Curated by TreasuryLens — figures approximate"
+  // Optional country/issuer hint used when SEC EDGAR is not applicable.
+  issuerCountry?: string | null;
+  keyMetrics?: StockPickKeyMetrics | null;
 }
 
 export interface StockPickThemeInfo {
@@ -552,12 +576,39 @@ export interface StockPickThemeInfo {
   blurb: string;
 }
 
+// Diversified ETF / index / fund options for users who want theme exposure
+// without picking individual stocks. These are curated. Expense ratios and
+// holdings notes are approximate; verify on the fund issuer's site.
+export type ExposureType = "ETF" | "Index Fund" | "Mutual Fund" | "Index";
+
+export interface StockPickEtf {
+  ticker: string;
+  name: string;
+  themes: StockPickTheme[];
+  exposureType: ExposureType;
+  themeFit: string; // one-liner: how it maps to the theme
+  whyUseIt: string; // when this is a sensible exposure choice
+  tradeoffs: string; // what you give up vs picking single stocks
+  expenseRatio: number | null; // % e.g. 0.35
+  concentrationNote: string | null; // e.g. "Top 10 ~60% of fund"
+  topHoldingsNote: string | null; // e.g. "Concentrated in NVDA/AVGO/AMD"
+  riskLevel: RiskLevel;
+  dataConfidence: DataConfidence;
+  sourceNote: string;
+}
+
 export interface StockPicksResponse {
   themes: StockPickThemeInfo[];
   picks: StockPick[];
+  etfs: StockPickEtf[];
   lastUpdated: number;
   disclaimer: string;
   notes: string;
+  metricsStatus: {
+    livePricing: boolean; // true if pricing provider was queried successfully for at least one pick
+    fundamentals: boolean; // true if SEC EDGAR was queried
+    note: string;
+  };
 }
 
 export interface TreasurySnapshot {
