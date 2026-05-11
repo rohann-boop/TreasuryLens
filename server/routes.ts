@@ -11,6 +11,7 @@ import { getManagementGovernance } from "./secGovernance";
 import { getThirteenFSummary } from "./sec13f";
 import { getPoliticiansSummary } from "./politicians";
 import { getStockPicks } from "./stockPicks";
+import { answerAssistant } from "./assistantEngine";
 import {
   insertInstrumentSchema,
   insertTreasurySchema,
@@ -366,6 +367,34 @@ export async function registerRoutes(
   app.get("/api/stock-picks", async (_req, res) => {
     try {
       res.json(await getStockPicks());
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // Assistant — free, deterministic, rules-based in-app screen helper. No
+  // LLM/model API is called at runtime; answers are drawn from internal
+  // TreasuryLens data and the active screen route. The engine lives in
+  // server/assistantEngine.ts so a real model provider can be plugged in
+  // behind the AssistantProvider interface without changing this route.
+  app.post("/api/assistant/query", async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as {
+        route?: unknown;
+        question?: unknown;
+        context?: unknown;
+      };
+      const route = typeof body.route === "string" ? body.route : "/";
+      const question = typeof body.question === "string" ? body.question : "";
+      if (!question || question.length > 500) {
+        return res.status(400).json({ message: "Question is required (max 500 chars)." });
+      }
+      const context =
+        body.context && typeof body.context === "object"
+          ? (body.context as Record<string, unknown>)
+          : null;
+      const answer = await answerAssistant({ route, question, context });
+      res.json(answer);
     } catch (e) {
       res.status(500).json({ message: (e as Error).message });
     }

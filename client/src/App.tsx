@@ -9,6 +9,7 @@ import Dashboard from "@/pages/Dashboard";
 import ThirteenF from "@/pages/ThirteenF";
 import Landing from "@/pages/Landing";
 import StockPicks from "@/pages/StockPicks";
+import { AssistantWidget } from "@/components/AssistantWidget";
 
 function AppRouter() {
   return (
@@ -32,6 +33,7 @@ function App() {
         <Toaster />
         <Router hook={useHashLocation}>
           <AppRouter />
+          <AssistantWidget />
         </Router>
       </TooltipProvider>
     </QueryClientProvider>
