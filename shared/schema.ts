@@ -601,6 +601,23 @@ export interface StockPickThemeInfo {
 // holdings notes are approximate; verify on the fund issuer's site.
 export type ExposureType = "ETF" | "Index Fund" | "Mutual Fund" | "Index";
 
+// Key metrics block attached to each ETF. Mirrors StockPickKeyMetrics but
+// uses ETF-appropriate fields: AUM / net assets in place of market cap, no
+// P/E, and a curated expense ratio. Numeric fields are nullable for the same
+// reasons as the equity version — providers may be unavailable.
+export interface StockPickEtfMetrics {
+  price: number | null;
+  priceCurrency: string | null;
+  aum: number | null; // USD net assets where curated
+  aumLabel: string | null; // human label e.g. "$24.5B"
+  expenseRatio: number | null; // % e.g. 0.35
+  metricSource: string; // e.g. "massive+curated"
+  metricAsOf: number | null; // ms since epoch
+  metricConfidence: DataConfidence;
+  metricWarnings: string[];
+  performance?: StockPickPerformance | null;
+}
+
 export interface StockPickEtf {
   ticker: string;
   name: string;
@@ -610,11 +627,18 @@ export interface StockPickEtf {
   whyUseIt: string; // when this is a sensible exposure choice
   tradeoffs: string; // what you give up vs picking single stocks
   expenseRatio: number | null; // % e.g. 0.35
+  // Curated AUM (USD) at time of curation. Approximate — verify on issuer
+  // site. Null if not curated.
+  aum?: number | null;
   concentrationNote: string | null; // e.g. "Top 10 ~60% of fund"
   topHoldingsNote: string | null; // e.g. "Concentrated in NVDA/AVGO/AMD"
   riskLevel: RiskLevel;
+  // Leveraged/inverse warning if applicable. Curated and surfaced in the UI
+  // alongside the risk badge.
+  leveraged?: boolean;
   dataConfidence: DataConfidence;
   sourceNote: string;
+  keyMetrics?: StockPickEtfMetrics | null;
 }
 
 export interface StockPicksResponse {

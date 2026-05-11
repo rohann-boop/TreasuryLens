@@ -1,6 +1,7 @@
 import type {
   StockPick,
   StockPickEtf,
+  StockPickEtfMetrics,
   StockPickKeyMetrics,
   StockPickPerformance,
   StockPickThemeInfo,
@@ -1487,8 +1488,10 @@ const PICKS: StockPick[] = [
   },
 ];
 
+// Approximate AUM at time of curation (USD). Verify on issuer site.
+// Used as a fallback when a live source cannot be queried.
 const ETFS: StockPickEtf[] = [
-  // AI Hardware ETFs
+  // ───────── AI Hardware ETFs ─────────
   {
     ticker: "SMH",
     name: "VanEck Semiconductor ETF",
@@ -1501,6 +1504,7 @@ const ETFS: StockPickEtf[] = [
     tradeoffs:
       "Top-heavy concentration: a handful of names drive most of the return. Less diversified than broader tech.",
     expenseRatio: 0.35,
+    aum: 27_000_000_000,
     concentrationNote: "Top 10 ~70% of fund (approximate).",
     topHoldingsNote: "Concentrated in NVDA / TSM / AVGO / AMD / ASML.",
     riskLevel: "elevated",
@@ -1519,6 +1523,7 @@ const ETFS: StockPickEtf[] = [
     tradeoffs:
       "Still concentrated in 30 names; sensitivity to a single semi cycle remains high.",
     expenseRatio: 0.35,
+    aum: 14_500_000_000,
     concentrationNote: "Top 10 ~55% of fund (approximate).",
     topHoldingsNote: "NVDA / AVGO / AMD / QCOM / TXN among top holdings.",
     riskLevel: "elevated",
@@ -1536,8 +1541,28 @@ const ETFS: StockPickEtf[] = [
     tradeoffs:
       "Track-record is shorter than SOXX/SMH; otherwise broadly similar exposure profile.",
     expenseRatio: 0.19,
+    aum: 1_200_000_000,
     concentrationNote: "Top 10 ~55% of fund (approximate).",
     topHoldingsNote: "Heaviest weights in NVDA / AVGO / AMD.",
+    riskLevel: "elevated",
+    dataConfidence: "curated",
+    sourceNote: CURATED_SOURCE + " Verify on issuer site.",
+  },
+  {
+    ticker: "PSI",
+    name: "Invesco Semiconductors ETF",
+    themes: ["ai-hardware"],
+    exposureType: "ETF",
+    themeFit:
+      "Dynamic factor-weighted semis basket — quality/value tilt vs cap-weight SMH/SOXX.",
+    whyUseIt:
+      "Methodology rotates into stronger semis fundamentals; useful diversifier from cap-weighted SMH.",
+    tradeoffs:
+      "Smaller fund, higher expense; tracking error vs SOX index can be material.",
+    expenseRatio: 0.57,
+    aum: 700_000_000,
+    concentrationNote: "~30 holdings; factor weighting reduces top-name dominance.",
+    topHoldingsNote: "Rotates; commonly holds NVDA / AVGO / KLAC / LRCX / AMAT.",
     riskLevel: "elevated",
     dataConfidence: "curated",
     sourceNote: CURATED_SOURCE + " Verify on issuer site.",
@@ -1554,6 +1579,7 @@ const ETFS: StockPickEtf[] = [
     tradeoffs:
       "Mixed-bag exposure that does not track AI accelerator demand cleanly. Performance can lag pure semis.",
     expenseRatio: 0.69,
+    aum: 2_700_000_000,
     concentrationNote: "Concentrated in Japan/U.S. robotics names.",
     topHoldingsNote: "NVDA / ISRG / KEYS / Fanuc / Keyence often appear.",
     riskLevel: "elevated",
@@ -1572,14 +1598,75 @@ const ETFS: StockPickEtf[] = [
     tradeoffs:
       "Equal-weighting drags during mega-cap rallies; expense ratio is higher than broad semis.",
     expenseRatio: 0.95,
+    aum: 1_000_000_000,
     concentrationNote: "~80 holdings — broader than BOTZ.",
     topHoldingsNote: "Mix of industrial automation, sensors, robotics.",
     riskLevel: "elevated",
     dataConfidence: "curated",
     sourceNote: CURATED_SOURCE + " Verify on issuer site.",
   },
+  {
+    ticker: "QTUM",
+    name: "Defiance Quantum ETF",
+    themes: ["ai-hardware"],
+    exposureType: "ETF",
+    themeFit:
+      "Companies developing quantum computing, AI compute, and adjacent advanced silicon.",
+    whyUseIt:
+      "Long-tail exposure to next-generation compute alongside leading-edge semis and AI hardware.",
+    tradeoffs:
+      "Thematic basket — quantum names are speculative; index can drift from purist quantum exposure.",
+    expenseRatio: 0.4,
+    aum: 1_500_000_000,
+    concentrationNote: "~70 holdings; modest concentration in top 10.",
+    topHoldingsNote: "Mix of semi caps, IBM/HPE, IonQ/Rigetti-style names.",
+    riskLevel: "high",
+    dataConfidence: "curated",
+    sourceNote: CURATED_SOURCE + " Verify on issuer site.",
+  },
+  {
+    ticker: "IRBO",
+    name: "iShares Robotics and Artificial Intelligence Multisector ETF",
+    themes: ["ai-hardware", "ai-software"],
+    exposureType: "ETF",
+    themeFit:
+      "Equal-weighted global basket of robotics and AI companies — broader, more diversified AI exposure.",
+    whyUseIt:
+      "Low-fee diversifier vs concentrated thematic funds; cross-sector AI/robotics tilt.",
+    tradeoffs:
+      "Equal-weighting drags in mega-cap rallies; mixed AI/robotics holdings can dilute the theme.",
+    expenseRatio: 0.47,
+    aum: 600_000_000,
+    concentrationNote: "~110 holdings; equal-weighted.",
+    topHoldingsNote: "Broad mix — chipmakers, software, robotics, industrials.",
+    riskLevel: "elevated",
+    dataConfidence: "curated",
+    sourceNote: CURATED_SOURCE + " Verify on issuer site.",
+  },
+  {
+    ticker: "USD",
+    name: "ProShares Ultra Semiconductors",
+    themes: ["ai-hardware"],
+    exposureType: "ETF",
+    themeFit:
+      "2x daily leveraged semiconductor exposure — tactical only, not for buy-and-hold.",
+    whyUseIt:
+      "Short-horizon, high-conviction tactical bet on a near-term semi move. Daily reset compounds against you over time.",
+    tradeoffs:
+      "Leveraged daily-reset products decay in choppy markets; not appropriate for long holds.",
+    expenseRatio: 0.95,
+    aum: 800_000_000,
+    concentrationNote: "Tracks 2x daily move of Dow Jones U.S. Semiconductors Index.",
+    topHoldingsNote: "Swap exposure to a semi index; underlyings are the major semis.",
+    riskLevel: "very high",
+    leveraged: true,
+    dataConfidence: "curated",
+    sourceNote:
+      CURATED_SOURCE +
+      " LEVERAGED daily-reset product — for short-term tactical use only. Verify on issuer site.",
+  },
 
-  // AI Software ETFs
+  // ───────── AI / Tech / Software ETFs ─────────
   {
     ticker: "AIQ",
     name: "Global X Artificial Intelligence & Technology ETF",
@@ -1592,6 +1679,7 @@ const ETFS: StockPickEtf[] = [
     tradeoffs:
       "Holdings overlap heavily with broad tech indices; less differentiated than pure semis or pure software.",
     expenseRatio: 0.68,
+    aum: 3_300_000_000,
     concentrationNote: "~80 holdings; top 10 ~40% of fund.",
     topHoldingsNote: "Mega-cap tech and major semis dominate.",
     riskLevel: "moderate",
@@ -1610,6 +1698,7 @@ const ETFS: StockPickEtf[] = [
     tradeoffs:
       "Heavy weights in MSFT/CRM/ORCL — not differentiated from S&P tech sector beta.",
     expenseRatio: 0.41,
+    aum: 9_000_000_000,
     concentrationNote: "Top 10 ~55% of fund (approximate).",
     topHoldingsNote: "MSFT / ORCL / CRM / ADBE / SAP top weights.",
     riskLevel: "moderate",
@@ -1628,6 +1717,7 @@ const ETFS: StockPickEtf[] = [
     tradeoffs:
       "High volatility; drawdowns during multiple compression are severe. Not suitable for low-risk sleeves.",
     expenseRatio: 0.45,
+    aum: 360_000_000,
     concentrationNote: "Equal-weighted; ~70 holdings.",
     topHoldingsNote: "Smaller-cap SaaS, including DDOG, MDB, CRWD, SNOW.",
     riskLevel: "high",
@@ -1646,6 +1736,7 @@ const ETFS: StockPickEtf[] = [
     tradeoffs:
       "Overlap with WCLD/IGV; meaningful concentration in top names.",
     expenseRatio: 0.68,
+    aum: 350_000_000,
     concentrationNote: "~35 holdings.",
     topHoldingsNote: "Mix of mid-cap SaaS and infrastructure.",
     riskLevel: "elevated",
@@ -1664,14 +1755,173 @@ const ETFS: StockPickEtf[] = [
     tradeoffs:
       "Heavier mega-cap weight reduces differentiation vs broad tech.",
     expenseRatio: 0.6,
+    aum: 2_600_000_000,
     concentrationNote: "~65 holdings; mid-concentration in top 10.",
     topHoldingsNote: "Mix of MSFT/AMZN/GOOGL alongside SaaS leaders.",
     riskLevel: "moderate",
     dataConfidence: "curated",
     sourceNote: CURATED_SOURCE + " Verify on issuer site.",
   },
+  {
+    ticker: "IYW",
+    name: "iShares U.S. Technology ETF",
+    themes: ["ai-software", "ai-hardware"],
+    exposureType: "ETF",
+    themeFit:
+      "Broad U.S. tech sector — diversified AI exposure across hardware, software, and platforms.",
+    whyUseIt:
+      "Mainstream tech-sector access with mega-cap AI beneficiaries as top weights.",
+    tradeoffs:
+      "Looks more like a mega-cap tech tracker than a pure AI play; overlap with XLK/VGT.",
+    expenseRatio: 0.39,
+    aum: 22_000_000_000,
+    concentrationNote: "Top 10 ~65% of fund.",
+    topHoldingsNote: "AAPL / MSFT / NVDA / AVGO / ORCL top weights.",
+    riskLevel: "moderate",
+    dataConfidence: "curated",
+    sourceNote: CURATED_SOURCE + " Verify on issuer site.",
+  },
+  {
+    ticker: "XLK",
+    name: "Technology Select Sector SPDR Fund",
+    themes: ["ai-software", "ai-hardware"],
+    exposureType: "ETF",
+    themeFit:
+      "S&P 500 technology sector — heavy mega-cap AI beneficiary exposure.",
+    whyUseIt:
+      "Lowest-fee broad U.S. tech exposure; very liquid and tax-efficient.",
+    tradeoffs:
+      "Concentration in a handful of mega-caps; misses smaller AI-native names.",
+    expenseRatio: 0.09,
+    aum: 80_000_000_000,
+    concentrationNote: "Top 10 ~65% of fund.",
+    topHoldingsNote: "MSFT / NVDA / AAPL / AVGO / CRM top weights.",
+    riskLevel: "moderate",
+    dataConfidence: "curated",
+    sourceNote: CURATED_SOURCE + " Verify on issuer site.",
+  },
+  {
+    ticker: "VGT",
+    name: "Vanguard Information Technology ETF",
+    themes: ["ai-software", "ai-hardware"],
+    exposureType: "ETF",
+    themeFit:
+      "Broad U.S. info-tech basket — diversified AI-beneficiary mega-cap exposure.",
+    whyUseIt:
+      "Very low-cost broad tech-sector access; deeper into mid-cap than XLK.",
+    tradeoffs:
+      "Heavy mega-cap weighting; less differentiated AI exposure.",
+    expenseRatio: 0.1,
+    aum: 95_000_000_000,
+    concentrationNote: "Top 10 ~60% of fund.",
+    topHoldingsNote: "AAPL / MSFT / NVDA / AVGO / CRM top weights.",
+    riskLevel: "moderate",
+    dataConfidence: "curated",
+    sourceNote: CURATED_SOURCE + " Verify on issuer site.",
+  },
 
-  // AI Energy ETFs
+  // ───────── Cybersecurity ─────────
+  {
+    ticker: "CIBR",
+    name: "First Trust Nasdaq Cybersecurity ETF",
+    themes: ["ai-software"],
+    exposureType: "ETF",
+    themeFit:
+      "Cybersecurity basket — AI-driven detection and response is a major growth driver here.",
+    whyUseIt:
+      "Largest, most diversified pure-play cybersecurity ETF; captures CRWD / PANW / ZS exposure.",
+    tradeoffs:
+      "Not a clean AI proxy; performance driven by enterprise security spend cycles.",
+    expenseRatio: 0.59,
+    aum: 7_600_000_000,
+    concentrationNote: "~30 holdings; moderate top-10 concentration.",
+    topHoldingsNote: "CRWD / PANW / FTNT / ZS / CSCO often appear at top.",
+    riskLevel: "moderate",
+    dataConfidence: "curated",
+    sourceNote: CURATED_SOURCE + " Verify on issuer site.",
+  },
+  {
+    ticker: "HACK",
+    name: "Amplify Cybersecurity ETF",
+    themes: ["ai-software"],
+    exposureType: "ETF",
+    themeFit:
+      "Alternative cybersecurity basket — slightly different weighting and constituency vs CIBR.",
+    whyUseIt:
+      "Diversifier or substitute for CIBR; modestly different exposure profile.",
+    tradeoffs:
+      "Smaller AUM and liquidity than CIBR; performance broadly tracks the same theme.",
+    expenseRatio: 0.6,
+    aum: 1_700_000_000,
+    concentrationNote: "~50 holdings.",
+    topHoldingsNote: "Broad mix of pure-play and platform security names.",
+    riskLevel: "moderate",
+    dataConfidence: "curated",
+    sourceNote: CURATED_SOURCE + " Verify on issuer site.",
+  },
+  {
+    ticker: "IHAK",
+    name: "iShares Cybersecurity and Tech ETF",
+    themes: ["ai-software"],
+    exposureType: "ETF",
+    themeFit:
+      "Lower-fee cybersecurity basket from iShares with broader tech tilt.",
+    whyUseIt:
+      "Lowest-fee mainstream cybersecurity ETF; suitable as a long-term hold.",
+    tradeoffs:
+      "Smaller fund, less established track record than CIBR; broadly similar exposure.",
+    expenseRatio: 0.47,
+    aum: 900_000_000,
+    concentrationNote: "~35 holdings.",
+    topHoldingsNote: "CRWD / PANW / FTNT / CHKP among top holdings.",
+    riskLevel: "moderate",
+    dataConfidence: "curated",
+    sourceNote: CURATED_SOURCE + " Verify on issuer site.",
+  },
+
+  // ───────── Data Center / Digital Infrastructure ─────────
+  {
+    ticker: "DTCR",
+    name: "Global X Data Center & Digital Infrastructure ETF",
+    themes: ["ai-energy", "ai-hardware"],
+    exposureType: "ETF",
+    themeFit:
+      "Data center REITs and digital-infrastructure equities — the physical layer behind AI workloads.",
+    whyUseIt:
+      "Single-ticker exposure to data-center REITs (EQIX/DLR) and supporting infrastructure.",
+    tradeoffs:
+      "REIT-heavy mix is rate-sensitive; smaller fund with less liquidity.",
+    expenseRatio: 0.5,
+    aum: 70_000_000,
+    concentrationNote: "~25 holdings; concentrated in top names.",
+    topHoldingsNote: "Equinix, Digital Realty, tower & infrastructure names.",
+    riskLevel: "moderate",
+    dataConfidence: "curated",
+    sourceNote: CURATED_SOURCE + " Verify on issuer site.",
+  },
+  {
+    ticker: "VPN",
+    name: "Global X Data Center & Digital Infrastructure ETF (legacy ticker)",
+    themes: ["ai-energy"],
+    exposureType: "ETF",
+    themeFit:
+      "Data center and digital-infrastructure REIT/equity basket (note: similar mandate to DTCR).",
+    whyUseIt:
+      "Alternative single-ticker data-center / digital-infrastructure exposure.",
+    tradeoffs:
+      "Overlaps materially with DTCR; small AUM and limited liquidity.",
+    expenseRatio: 0.5,
+    aum: 35_000_000,
+    concentrationNote: "Small fund; concentrated in REITs and tower names.",
+    topHoldingsNote: "EQIX / DLR / AMT / SBAC plus international data-center exposure.",
+    riskLevel: "moderate",
+    dataConfidence: "approximate",
+    sourceNote:
+      CURATED_SOURCE +
+      " Ticker mapping changed historically — confirm fund on issuer site before acting.",
+  },
+
+  // ───────── AI Energy ETFs ─────────
   {
     ticker: "URA",
     name: "Global X Uranium ETF",
@@ -1684,6 +1934,7 @@ const ETFS: StockPickEtf[] = [
     tradeoffs:
       "Highly cyclical; small-cap miner risk; dominated by a few names.",
     expenseRatio: 0.69,
+    aum: 4_100_000_000,
     concentrationNote: "Top 10 ~75% of fund (approximate).",
     topHoldingsNote: "Cameco, Kazatomprom, NexGen, Sprott Physical Uranium.",
     riskLevel: "high",
@@ -1702,8 +1953,28 @@ const ETFS: StockPickEtf[] = [
     tradeoffs:
       "Greater concentration and volatility; not a substitute for diversified energy.",
     expenseRatio: 0.75,
+    aum: 1_900_000_000,
     concentrationNote: "Concentrated in pure-play miners + physical uranium.",
     topHoldingsNote: "Cameco, Kazatomprom, NexGen Energy dominate.",
+    riskLevel: "very high",
+    dataConfidence: "curated",
+    sourceNote: CURATED_SOURCE + " Verify on issuer site.",
+  },
+  {
+    ticker: "URNJ",
+    name: "Sprott Junior Uranium Miners ETF",
+    themes: ["ai-energy"],
+    exposureType: "ETF",
+    themeFit:
+      "Junior / smaller uranium miners — high-beta uranium-price proxy.",
+    whyUseIt:
+      "Most aggressive uranium-price exposure on offer in ETF wrappers.",
+    tradeoffs:
+      "Very high volatility, small-cap mining risks, fund is concentrated and illiquid relative to URA.",
+    expenseRatio: 0.8,
+    aum: 250_000_000,
+    concentrationNote: "Concentrated in junior miners.",
+    topHoldingsNote: "Smaller miners — Paladin, Denison, Energy Fuels, etc.",
     riskLevel: "very high",
     dataConfidence: "curated",
     sourceNote: CURATED_SOURCE + " Verify on issuer site.",
@@ -1720,6 +1991,7 @@ const ETFS: StockPickEtf[] = [
     tradeoffs:
       "Utility names dilute pure uranium-price beta; less upside in a uranium rally.",
     expenseRatio: 0.61,
+    aum: 1_300_000_000,
     concentrationNote: "Mix of utilities and miners (~30 holdings).",
     topHoldingsNote: "Constellation Energy, Cameco, BWX Technologies top weights.",
     riskLevel: "elevated",
@@ -1738,6 +2010,7 @@ const ETFS: StockPickEtf[] = [
     tradeoffs:
       "Cyclical exposure to capex spend; heavy weight in a handful of industrials.",
     expenseRatio: 0.58,
+    aum: 2_200_000_000,
     concentrationNote: "~95 holdings; top 10 ~55%.",
     topHoldingsNote: "ETN / ABB / Schneider / Quanta among top weights.",
     riskLevel: "moderate",
@@ -1756,7 +2029,27 @@ const ETFS: StockPickEtf[] = [
     tradeoffs:
       "Less direct AI-tailwind exposure; rate-sensitive; capped upside in growth scenarios.",
     expenseRatio: 0.09,
+    aum: 19_000_000_000,
     concentrationNote: "Top 10 ~60% of fund.",
+    topHoldingsNote: "NEE / SO / DUK / CEG / VST top weights.",
+    riskLevel: "low",
+    dataConfidence: "curated",
+    sourceNote: CURATED_SOURCE + " Verify on issuer site.",
+  },
+  {
+    ticker: "VPU",
+    name: "Vanguard Utilities ETF",
+    themes: ["ai-energy"],
+    exposureType: "ETF",
+    themeFit:
+      "Broad U.S. utilities basket — defensive datacenter load-growth exposure.",
+    whyUseIt:
+      "Lowest-fee broad utilities exposure; alternative to XLU with similar holdings.",
+    tradeoffs:
+      "Same trade-offs as XLU: rate-sensitive, capped upside in growth scenarios.",
+    expenseRatio: 0.1,
+    aum: 7_500_000_000,
+    concentrationNote: "~70 holdings; top 10 ~50%.",
     topHoldingsNote: "NEE / SO / DUK / CEG / VST top weights.",
     riskLevel: "low",
     dataConfidence: "curated",
@@ -1774,8 +2067,28 @@ const ETFS: StockPickEtf[] = [
     tradeoffs:
       "Diluted AI-energy exposure; performance driven by cyclical capex more broadly.",
     expenseRatio: 0.47,
+    aum: 7_500_000_000,
     concentrationNote: "~100 holdings; moderately concentrated.",
     topHoldingsNote: "Mix of industrials, materials, and electrical equipment.",
+    riskLevel: "moderate",
+    dataConfidence: "curated",
+    sourceNote: CURATED_SOURCE + " Verify on issuer site.",
+  },
+  {
+    ticker: "IFRA",
+    name: "iShares U.S. Infrastructure ETF",
+    themes: ["ai-energy"],
+    exposureType: "ETF",
+    themeFit:
+      "Equal-weighted domestic infrastructure basket — grid, materials, and industrials.",
+    whyUseIt:
+      "More equal-weighted than PAVE; better breadth into smaller infrastructure names.",
+    tradeoffs:
+      "Equal-weighting lags during mega-cap rallies; diluted direct AI-energy exposure.",
+    expenseRatio: 0.3,
+    aum: 2_700_000_000,
+    concentrationNote: "~150 holdings; equal-weighted.",
+    topHoldingsNote: "Mix of utilities, transports, industrials, and materials.",
     riskLevel: "moderate",
     dataConfidence: "curated",
     sourceNote: CURATED_SOURCE + " Verify on issuer site.",
@@ -2116,6 +2429,88 @@ async function enrichOne(pick: StockPick): Promise<StockPickKeyMetrics> {
   };
 }
 
+function formatAum(n: number | null | undefined): string | null {
+  if (n == null || !Number.isFinite(n) || n <= 0) return null;
+  if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(0)}M`;
+  return `$${n.toFixed(0)}`;
+}
+
+// ETF enrichment: best-effort price + performance via the same bars path the
+// equity picks use. AUM and expense ratio remain curated (live AUM is not
+// available on the providers we can hit anonymously). Confidence rolls up
+// the live-pricing hit and the presence of a curated AUM/expense.
+async function enrichEtf(etf: StockPickEtf): Promise<StockPickEtfMetrics> {
+  const warnings: string[] = [];
+  let price: number | null = null;
+  let priceCurrency: string | null = "USD"; // U.S.-listed ETF default
+  const metricSources: string[] = [];
+
+  const { bars, source: barsSource } = await fetchBars(etf.ticker);
+  if (bars && bars.length > 0) {
+    const last = bars[bars.length - 1];
+    if (Number.isFinite(last.c) && last.c > 0) {
+      price = last.c;
+      metricSources.push(barsSource);
+    }
+  } else {
+    warnings.push("Historical price series unavailable for this ETF.");
+  }
+
+  const performance = computePerformance(bars ?? [], price, barsSource);
+  warnings.push(...performance.warnings);
+
+  const aum = etf.aum ?? null;
+  if (aum == null) {
+    warnings.push("AUM not curated for this ETF — verify on issuer site.");
+  } else {
+    metricSources.push("curated_aum");
+  }
+
+  if (etf.expenseRatio == null) {
+    warnings.push("Expense ratio not curated — verify on issuer site.");
+  } else {
+    if (!metricSources.includes("curated")) metricSources.push("curated");
+  }
+
+  if (etf.leveraged) {
+    warnings.push(
+      "Leveraged daily-reset product — performance figures reflect compounded daily returns and decay in choppy markets.",
+    );
+  }
+
+  const metricSource =
+    metricSources.length > 0
+      ? Array.from(new Set(metricSources)).join("+")
+      : "unavailable";
+
+  let metricConfidence: "curated" | "approximate" | "low" = "low";
+  const hasLivePrice = metricSources.some(
+    (s) => s === "massive" || s === "yahoo",
+  );
+  if (hasLivePrice && (aum != null || etf.expenseRatio != null)) {
+    metricConfidence = "curated";
+  } else if (metricSources.length > 0) {
+    metricConfidence = "approximate";
+  }
+
+  const dedupedWarnings = Array.from(new Set(warnings));
+
+  return {
+    price,
+    priceCurrency,
+    aum,
+    aumLabel: formatAum(aum),
+    expenseRatio: etf.expenseRatio,
+    metricSource,
+    metricAsOf: Date.now(),
+    metricConfidence,
+    metricWarnings: dedupedWarnings,
+    performance,
+  };
+}
+
 async function buildResponse(): Promise<StockPicksResponse> {
   // Run enrichment with bounded concurrency. Even though both providers cache
   // internally, we keep it modest to avoid burst-rate-limit issues on cold
@@ -2140,10 +2535,23 @@ async function buildResponse(): Promise<StockPicksResponse> {
     enrichedPicks.push(...enrichedSlice);
   }
 
+  const enrichedEtfs: StockPickEtf[] = [];
+  for (let i = 0; i < ETFS.length; i += CONCURRENCY) {
+    const slice = ETFS.slice(i, i + CONCURRENCY);
+    const enrichedSlice = await Promise.all(
+      slice.map(async (e) => {
+        const metrics = await enrichEtf(e);
+        if (metrics.price != null) livePricingHit = true;
+        return { ...e, keyMetrics: metrics };
+      }),
+    );
+    enrichedEtfs.push(...enrichedSlice);
+  }
+
   return {
     themes: THEMES,
     picks: enrichedPicks,
-    etfs: ETFS,
+    etfs: enrichedEtfs,
     lastUpdated: Date.now(),
     disclaimer:
       "TreasuryLens stock picks are curated research watchlists and scenario models, not personalized investment advice. Scenario potentials are hypothetical, not predictions. ETFs are diversified exposure alternatives, not recommendations. Investments can lose value. Consult a qualified financial professional before making any investment decision.",
