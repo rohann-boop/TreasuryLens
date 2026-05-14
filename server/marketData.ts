@@ -18,6 +18,10 @@ import {
   trendOf,
   ytdReturn,
 } from "./indicators";
+import {
+  getEquityFundamentals,
+  getSharesOutstanding,
+} from "./secEdgar";
 import type { Instrument, InstrumentSnapshot } from "@shared/schema";
 
 const YAHOO_HEADERS = {
@@ -509,6 +513,7 @@ export async function buildSnapshot(
   // opportunistically come from Yahoo's no-key quote endpoint.
   let peRatio: number | null = null;
   let peSource: string | null = null;
+  let yahooEpsTtm: number | null = null;
   if (instrument.assetClass !== "crypto" || instrument.dataSource === "yahoo" || source === "yahoo") {
     const q = await fetchYahooQuote(instrument.symbol);
     if (q) {
@@ -517,6 +522,12 @@ export async function buildSnapshot(
       if (q.averageDailyVolume3Month != null)
         avgVolume = q.averageDailyVolume3Month;
       if (q.currency) currency = q.currency;
+      if (
+        typeof q.epsTrailingTwelveMonths === "number" &&
+        Number.isFinite(q.epsTrailingTwelveMonths)
+      ) {
+        yahooEpsTtm = q.epsTrailingTwelveMonths;
+      }
       if (typeof q.trailingPE === "number" && Number.isFinite(q.trailingPE)) {
         peRatio = q.trailingPE;
         peSource = "yahoo";
@@ -607,6 +618,65 @@ export async function buildSnapshot(
   const lo52 = low52w(bars);
   const distHi =
     hi52 != null && price ? ((price - hi52) / hi52) * 100 : null;
+
+  // Equity fundamentals enrichment. Yahoo's quote endpoint is the canonical
+  // source, but it is regularly blocked in sandboxed/CI environments — that
+  // leaves marketCap and peRatio null even when we have a healthy price from
+  // Massive/Stooq. Mirror the Stock Picks path: try Massive's Polygon-style
+  // ticker reference for market cap, then SEC EDGAR for shares outstanding ×
+  // price and price / TTM EPS. Crypto and indices are skipped (no equity
+  // fundamentals exist). Non-US issuers (e.g. MTPLF) cleanly fall through
+  // when EDGAR has no CIK for the ticker.
+  if (
+    instrument.assetClass === "equity" &&
+    Number.isFinite(price) &&
+    price > 0
+  ) {
+    if (marketCap == null) {
+      try {
+        const details = await fetchMassiveTickerDetails(instrument.symbol);
+        if (details?.marketCap != null) {
+          marketCap = details.marketCap;
+        } else if (
+          details?.sharesOutstanding != null &&
+          details.sharesOutstanding > 0
+        ) {
+          marketCap = price * details.sharesOutstanding;
+        }
+      } catch {
+        // ignore — fall through to EDGAR
+      }
+    }
+    if (marketCap == null) {
+      try {
+        const sh = await getSharesOutstanding(instrument.symbol);
+        if (sh && Number.isFinite(sh.value) && sh.value > 0) {
+          marketCap = price * sh.value;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    if (peRatio == null) {
+      // Prefer Yahoo's TTM EPS if it leaked through; otherwise pull EPS from
+      // SEC EDGAR fundamentals. Both are TTM and broadly comparable.
+      let epsTtm = yahooEpsTtm;
+      if (epsTtm == null || !Number.isFinite(epsTtm)) {
+        try {
+          const f = await getEquityFundamentals(instrument.symbol);
+          if (f?.eps && Number.isFinite(f.eps.value)) {
+            epsTtm = f.eps.value;
+          }
+        } catch {
+          // ignore
+        }
+      }
+      if (epsTtm != null && Number.isFinite(epsTtm) && epsTtm > 0) {
+        peRatio = price / epsTtm;
+        peSource = peSource ?? "sec_edgar";
+      }
+    }
+  }
 
   // Advanced indicators — deterministic, history-based.
   const mdd = maxDrawdown(closes);

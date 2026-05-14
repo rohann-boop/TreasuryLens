@@ -343,14 +343,18 @@ export default function Dashboard() {
                   value={
                     selected.marketCap != null
                       ? `${selected.currency === "JPY" ? "¥" : "$"}${fmtCompact(selected.marketCap)}`
+                      : selected.instrument.assetClass === "crypto"
+                      ? "N/A"
                       : "—"
                   }
                   sub={
-                    selected.marketCap == null
-                      ? "unavailable"
-                      : selected.currency === "USD"
-                      ? "USD"
-                      : selected.currency
+                    selected.marketCap != null
+                      ? selected.currency === "USD"
+                        ? "USD"
+                        : selected.currency
+                      : selected.instrument.assetClass === "crypto"
+                      ? "use BTC dominance"
+                      : "needs fundamentals provider"
                   }
                   tone={selected.marketCap == null ? "muted" : "default"}
                   testId="kpi-mcap"
@@ -367,7 +371,7 @@ export default function Dashboard() {
                       ? `via ${selected.peSource ?? "provider"}`
                       : selected.instrument.assetClass === "crypto"
                       ? "not applicable"
-                      : "provider unavailable"
+                      : "negative earnings or no data"
                   }
                   tone={selected.peRatio == null ? "muted" : "default"}
                   testId="kpi-pe"
