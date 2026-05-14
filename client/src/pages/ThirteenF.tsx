@@ -818,6 +818,7 @@ const MANAGER_ORDER: ManagerKey[] = [
   "pershing",
   "bridgewater",
   "scion",
+  "situational",
 ];
 
 type SelectedKey =

@@ -63,6 +63,12 @@ const MANAGERS: ManagerDef[] = [
     manager: "Michael Burry",
     firm: "Scion Asset Management, LLC",
   },
+  {
+    key: "situational",
+    cik: "0002045724",
+    manager: "Leopold Aschenbrenner",
+    firm: "Situational Awareness LP",
+  },
 ];
 
 function pad10(cik: string | number): string {

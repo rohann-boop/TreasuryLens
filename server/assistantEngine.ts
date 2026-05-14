@@ -559,6 +559,8 @@ async function answerSuperInvestors(q: string, route: string): Promise<Assistant
     if (any(q, "pershing", "ackman")) return managers.find((m) => m.key === "pershing") ?? null;
     if (any(q, "bridgewater", "dalio")) return managers.find((m) => m.key === "bridgewater") ?? null;
     if (any(q, "scion", "burry")) return managers.find((m) => m.key === "scion") ?? null;
+    if (any(q, "situational", "aschenbrenner", "leopold"))
+      return managers.find((m) => m.key === "situational") ?? null;
     return null;
   }
 

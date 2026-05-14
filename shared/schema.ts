@@ -391,7 +391,12 @@ export interface EquityFundamentals {
 // Scion). Surfaced under /api/13f/summary and rendered on a dedicated page.
 // =============================================================================
 
-export type ManagerKey = "berkshire" | "pershing" | "bridgewater" | "scion";
+export type ManagerKey =
+  | "berkshire"
+  | "pershing"
+  | "bridgewater"
+  | "scion"
+  | "situational";
 
 export interface ThirteenFHolding {
   cusip: string;
