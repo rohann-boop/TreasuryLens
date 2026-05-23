@@ -11,6 +11,7 @@ import { getManagementGovernance } from "./secGovernance";
 import { getThirteenFSummary } from "./sec13f";
 import { getPoliticiansSummary } from "./politicians";
 import { getStockPicks } from "./stockPicks";
+import { getStockPicksBacktest } from "./backtest";
 import { answerAssistant } from "./assistantEngine";
 import {
   insertInstrumentSchema,
@@ -367,6 +368,17 @@ export async function registerRoutes(
   app.get("/api/stock-picks", async (_req, res) => {
     try {
       res.json(await getStockPicks());
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // Scenario backtest — 1Y price-history reconstruction of how the current
+  // curated picks would have performed, aggregated by today's scenario
+  // classification. Cached server-side (30 min) to avoid heavy recompute.
+  app.get("/api/stock-picks/backtest", async (_req, res) => {
+    try {
+      res.json(await getStockPicksBacktest());
     } catch (e) {
       res.status(500).json({ message: (e as Error).message });
     }

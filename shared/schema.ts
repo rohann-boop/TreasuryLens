@@ -768,6 +768,89 @@ export interface StockPicksResponse {
   scenarioMethodology: ScenarioMethodology;
 }
 
+// =============================================================================
+// Scenario backtest — 1Y price-history reconstruction by current scenario
+// classification. NOT a point-in-time recommendation audit: we do not freeze
+// the universe, fundamentals, or scenario labels as of one year ago. We label
+// each pick with its current classification and measure how that bucket would
+// have performed on a price-only basis over the lookback window.
+// =============================================================================
+
+export interface BacktestStockResult {
+  ticker: string;
+  companyName: string;
+  themes: StockPickTheme[];
+  subTheme: StockPickSubTheme | null;
+  classification: ScenarioClassification;
+  entryPrice: number | null;
+  entryDate: string | null; // YYYY-MM-DD
+  latestPrice: number | null;
+  latestDate: string | null; // YYYY-MM-DD
+  returnPct: number | null; // (latest - entry) / entry * 100
+  maxDrawdownPct: number | null; // worst peak-to-trough from entry to latest, % (negative)
+  spyReturnPct: number | null; // SPY return over same calendar window, %
+  qqqReturnPct: number | null; // QQQ return over same calendar window, %
+  beatSpy: boolean | null;
+  beatQqq: boolean | null;
+  source: string; // "massive" | "yahoo" | "unavailable"
+  warning: string | null; // short note if data was thin
+}
+
+export interface BacktestBucketAgg {
+  classification: ScenarioClassification;
+  count: number;
+  avgReturnPct: number | null;
+  medianReturnPct: number | null;
+  hitRatePct: number | null; // % of names with positive return
+  avgMaxDrawdownPct: number | null;
+  beatSpyRatePct: number | null; // % of names that beat SPY
+  beatQqqRatePct: number | null; // % of names that beat QQQ
+}
+
+export interface BacktestSummary {
+  tested: number; // names with a return value
+  skipped: number; // names missing pricing
+  avgReturnPct: number | null;
+  medianReturnPct: number | null;
+  hitRatePct: number | null;
+  avgMaxDrawdownPct: number | null;
+  bestBucket: ScenarioClassification | null; // bucket with highest avgReturnPct
+  worstBucket: ScenarioClassification | null;
+  spyReturnPct: number | null;
+  qqqReturnPct: number | null;
+  beatSpyRatePct: number | null;
+  beatQqqRatePct: number | null;
+}
+
+export interface BacktestResponse {
+  asOf: number; // ms since epoch
+  lookbackDays: number; // 365
+  windowStartDate: string | null; // ISO date of the entry bar used for the universe
+  windowEndDate: string | null; // ISO date of the latest bar
+  benchmark: {
+    spy: {
+      entryPrice: number | null;
+      latestPrice: number | null;
+      returnPct: number | null;
+      entryDate: string | null;
+      latestDate: string | null;
+    };
+    qqq: {
+      entryPrice: number | null;
+      latestPrice: number | null;
+      returnPct: number | null;
+      entryDate: string | null;
+      latestDate: string | null;
+    };
+  };
+  summary: BacktestSummary;
+  buckets: BacktestBucketAgg[];
+  stocks: BacktestStockResult[];
+  limitations: string[];
+  methodology: string;
+  disclaimer: string;
+}
+
 export interface TreasurySnapshot {
   btcHoldings: number | null;
   sharesOutstanding: number | null;

@@ -9,9 +9,11 @@
 // (see bottom of file) without touching the React widget.
 
 import { getStockPicks } from "./stockPicks";
+import { getStockPicksBacktest } from "./backtest";
 import { getThirteenFSummary } from "./sec13f";
 import { getPoliticiansSummary } from "./politicians";
 import type {
+  BacktestResponse,
   StockPicksResponse,
   StockPick,
   StockPickEtf,
@@ -80,11 +82,15 @@ const DEFAULT_FOLLOW_UPS: Record<string, string[]> = {
     "Show top 12m performers",
     "Show AI Energy ETFs",
     "What does 3x potential mean?",
+    "Backtest the 3x picks",
+    "Did the picks beat QQQ?",
   ],
   "/themes": [
     "Show top 12m performers",
     "Show AI Energy ETFs",
     "What does 3x potential mean?",
+    "Backtest the 2x picks",
+    "Did the picks beat SPY?",
   ],
   "/superinvestors": [
     "What is a 13F?",
@@ -290,7 +296,163 @@ function matchGlossary(q: string): GlossaryEntry | null {
 // Route-specific intent handlers
 // ---------------------------------------------------------------------------
 
+const BACKTEST_LIMITATION_NOTE =
+  "Backtest is a price-only reconstruction using today's curated universe and today's scenario labels — not a point-in-time recommendation audit. It carries survivorship and look-ahead bias. Research/education only.";
+
+async function answerStockPicksBacktest(
+  q: string,
+  route: string,
+): Promise<AssistantAnswer | null> {
+  // Match any wording the user is likely to use about backtesting / 1Y
+  // recommendations / beating an index. Returns null if no backtest intent
+  // matches so the caller can fall through to the normal stock-picks flow.
+  const isBacktest =
+    any(
+      q,
+      "backtest",
+      "back test",
+      "back-test",
+      "1 year ago",
+      "one year ago",
+      "a year ago",
+      "12 months ago",
+      "twelve months ago",
+      "last year",
+      "year ago",
+      "how did",
+      "how well did",
+      "would have picked",
+      "would this have picked",
+      "would have recommended",
+    ) ||
+    any(q, "beat spy", "beat the spy", "beat qqq", "beat the qqq", "vs spy", "vs qqq", "outperform spy", "outperform qqq");
+
+  if (!isBacktest) return null;
+
+  const data: BacktestResponse = await getStockPicksBacktest();
+
+  // Detect which classification (if any) the user asked about.
+  const wantMulti = q.match(/(2x|3x|5x)/);
+  const wantCompounder = any(q, "compounder", "compounders");
+  const wantDefensive = any(q, "defensive");
+  const wantSpec = any(q, "speculative", "spec");
+  let bucketKey: string | null = null;
+  if (wantMulti) bucketKey = `${wantMulti[1]} potential`;
+  else if (wantCompounder) bucketKey = "compounder";
+  else if (wantDefensive) bucketKey = "defensive";
+  else if (wantSpec) bucketKey = "speculative";
+
+  const askBeatSpy = any(q, "spy", "s&p", "s and p", "sp 500", "s&p 500");
+  const askBeatQqq = any(q, "qqq", "nasdaq");
+
+  const headerLine =
+    `Window ${data.windowStartDate ?? "—"} → ${data.windowEndDate ?? "—"} (${data.lookbackDays} days). ` +
+    `SPY ${pct(data.summary.spyReturnPct)} · QQQ ${pct(data.summary.qqqReturnPct)}.`;
+
+  // 1) Specific bucket asked: show that bucket plus top names.
+  if (bucketKey) {
+    const bucket = data.buckets.find((b) => b.classification === bucketKey);
+    const rows = data.stocks
+      .filter((s) => s.classification === bucketKey && s.returnPct != null)
+      .sort((a, b) => (b.returnPct ?? 0) - (a.returnPct ?? 0));
+    const top = rows.slice(0, 8).map(
+      (r) =>
+        `${r.ticker} — ${r.companyName} — ${pct(r.returnPct)}${
+          r.maxDrawdownPct != null ? ` (DD ${pct(r.maxDrawdownPct)})` : ""
+        }${
+          r.beatSpy != null ? ` · ${r.beatSpy ? "beat" : "lagged"} SPY` : ""
+        }${
+          r.beatQqq != null ? ` · ${r.beatQqq ? "beat" : "lagged"} QQQ` : ""
+        }`,
+    );
+    const bucketLine = bucket
+      ? `${bucket.classification} — count ${bucket.count} · avg ${pct(bucket.avgReturnPct)} · median ${pct(bucket.medianReturnPct)} · hit rate ${pct(bucket.hitRatePct)} · avg DD ${pct(bucket.avgMaxDrawdownPct)} · beat SPY ${pct(bucket.beatSpyRatePct)} · beat QQQ ${pct(bucket.beatQqqRatePct)}`
+      : `No names currently classified ${bucketKey} in the backtest.`;
+    return {
+      intent: "stock-picks.backtest.bucket",
+      title: `Backtest — ${bucketKey} (1Y reconstruction)`,
+      sections: [
+        { body: headerLine },
+        { heading: "Bucket aggregate", body: bucketLine },
+        {
+          heading: "Top names in the bucket",
+          bullets: top.length ? top : ["No rows with returns available."],
+        },
+        {
+          heading: "Important — read this",
+          body: BACKTEST_LIMITATION_NOTE,
+        },
+      ],
+      sources: [{ label: "TreasuryLens 1Y backtest (price-only reconstruction)" }],
+      disclaimer: INVESTING_DISCLAIMER,
+      followUps: followUps(route),
+      mode: "rules",
+    };
+  }
+
+  // 2) Beat SPY / beat QQQ summary question.
+  if (askBeatSpy || askBeatQqq) {
+    const bench = askBeatQqq ? "QQQ" : "SPY";
+    const benchReturn = askBeatQqq
+      ? data.summary.qqqReturnPct
+      : data.summary.spyReturnPct;
+    const beatRate = askBeatQqq
+      ? data.summary.beatQqqRatePct
+      : data.summary.beatSpyRatePct;
+    const byBucket = data.buckets.map(
+      (b) =>
+        `${b.classification} — ${pct(askBeatQqq ? b.beatQqqRatePct : b.beatSpyRatePct)} beat${
+          b.avgReturnPct != null ? ` · avg ${pct(b.avgReturnPct)}` : ""
+        }`,
+    );
+    return {
+      intent: "stock-picks.backtest.benchmark",
+      title: `Backtest vs ${bench} (1Y reconstruction)`,
+      sections: [
+        { body: headerLine },
+        {
+          body: `${bench} returned ${pct(benchReturn)} over the window. Across ${data.summary.tested} tested names, ${pct(beatRate)} beat ${bench}. Universe avg ${pct(data.summary.avgReturnPct)}, hit rate ${pct(data.summary.hitRatePct)}.`,
+        },
+        { heading: `Beat ${bench} rate by bucket`, bullets: byBucket },
+        { heading: "Important — read this", body: BACKTEST_LIMITATION_NOTE },
+      ],
+      sources: [{ label: "TreasuryLens 1Y backtest (price-only reconstruction)" }],
+      disclaimer: INVESTING_DISCLAIMER,
+      followUps: followUps(route),
+      mode: "rules",
+    };
+  }
+
+  // 3) Generic backtest overview.
+  const bucketLines = data.buckets.map(
+    (b) =>
+      `${b.classification} — n=${b.count} · avg ${pct(b.avgReturnPct)} · median ${pct(b.medianReturnPct)} · hit ${pct(b.hitRatePct)} · DD ${pct(b.avgMaxDrawdownPct)}`,
+  );
+  return {
+    intent: "stock-picks.backtest.summary",
+    title: "Scenario backtest — 1Y reconstruction",
+    sections: [
+      { body: headerLine },
+      {
+        body: `${data.summary.tested} names tested${data.summary.skipped ? ` (${data.summary.skipped} skipped — insufficient history)` : ""}. Avg return ${pct(data.summary.avgReturnPct)}, median ${pct(data.summary.medianReturnPct)}, hit rate ${pct(data.summary.hitRatePct)}, avg max drawdown ${pct(data.summary.avgMaxDrawdownPct)}. Beat SPY ${pct(data.summary.beatSpyRatePct)} · Beat QQQ ${pct(data.summary.beatQqqRatePct)}. Best bucket: ${data.summary.bestBucket ?? "n/a"}, worst: ${data.summary.worstBucket ?? "n/a"}.`,
+      },
+      { heading: "By classification", bullets: bucketLines },
+      { heading: "Important — read this", body: BACKTEST_LIMITATION_NOTE },
+    ],
+    sources: [{ label: "TreasuryLens 1Y backtest (price-only reconstruction)" }],
+    disclaimer: INVESTING_DISCLAIMER,
+    followUps: followUps(route),
+    mode: "rules",
+  };
+}
+
 async function answerStockPicks(q: string, route: string): Promise<AssistantAnswer> {
+  // Backtest intents win before anything else on this route — questions like
+  // "how did 3x picks do" should go straight to the backtest engine rather
+  // than the standard scenario filter.
+  const backtest = await answerStockPicksBacktest(q, route);
+  if (backtest) return backtest;
+
   const data: StockPicksResponse = await getStockPicks();
   const picks = data.picks;
   const etfs = data.etfs;

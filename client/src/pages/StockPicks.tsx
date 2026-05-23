@@ -2,8 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import type {
+  BacktestBucketAgg,
+  BacktestResponse,
+  BacktestStockResult,
   MarketCapBucket,
   ScenarioCase,
+  ScenarioClassification,
   ScenarioModel,
   StockPick,
   StockPickEtf,
@@ -473,7 +477,7 @@ function SearchBox({
   );
 }
 
-type ViewTab = "stocks" | "etfs";
+type ViewTab = "stocks" | "etfs" | "backtest";
 
 function ViewToggle({
   view,
@@ -527,6 +531,22 @@ function ViewToggle({
           <span className="text-[10px] text-muted-foreground tabular-nums">
             ({etfCount})
           </span>
+        </span>
+      </button>
+      <button
+        role="tab"
+        aria-selected={view === "backtest"}
+        data-active={view === "backtest" ? "true" : "false"}
+        data-testid="view-toggle-backtest"
+        onClick={() => onChange("backtest")}
+        className={`px-3 py-1.5 border-l border-border/70 transition-colors ${
+          view === "backtest"
+            ? "bg-primary/15 text-foreground"
+            : "bg-background/30 text-muted-foreground hover:bg-card/60"
+        }`}
+      >
+        <span className="inline-flex items-center gap-1">
+          Backtest
         </span>
       </button>
     </div>
@@ -1967,6 +1987,580 @@ function EtfDetail({ etf }: { etf: StockPickEtf }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Backtest panel — surfaces the 1Y scenario-label reconstruction with a loud
+// limitations banner. Renders summary cards, bucket aggregates, and a sortable
+// stock table.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type BacktestSortKey =
+  | "ticker"
+  | "company"
+  | "class"
+  | "return"
+  | "drawdown"
+  | "beatSpy"
+  | "beatQqq";
+
+function classifyTone(c: ScenarioClassification): string {
+  switch (c) {
+    case "5x potential":
+      return "bg-primary/15 text-foreground border-primary/30";
+    case "3x potential":
+      return "bg-primary/10 text-foreground border-primary/30";
+    case "2x potential":
+      return "bg-primary/5 text-foreground border-primary/20";
+    case "compounder":
+      return "bg-pos/10 text-pos border-pos/30";
+    case "defensive":
+      return "bg-muted/50 text-muted-foreground border-border/50";
+    case "speculative":
+      return "bg-neg/10 text-neg border-neg/30";
+  }
+}
+
+function BacktestSummaryCards({
+  data,
+}: {
+  data: BacktestResponse;
+}) {
+  const s = data.summary;
+  const cards: Array<{ label: string; value: string; tone?: string; testId: string }> = [
+    {
+      label: "Names tested",
+      value: `${s.tested}${s.skipped ? ` (+${s.skipped} skipped)` : ""}`,
+      testId: "backtest-summary-tested",
+    },
+    {
+      label: "Avg 1Y return",
+      value: fmtSignedPct(s.avgReturnPct),
+      tone: pctTone(s.avgReturnPct),
+      testId: "backtest-summary-avg",
+    },
+    {
+      label: "Median 1Y return",
+      value: fmtSignedPct(s.medianReturnPct),
+      tone: pctTone(s.medianReturnPct),
+      testId: "backtest-summary-median",
+    },
+    {
+      label: "Hit rate (positive)",
+      value: fmtPct(s.hitRatePct),
+      testId: "backtest-summary-hitrate",
+    },
+    {
+      label: "Avg max drawdown",
+      value: fmtSignedPct(s.avgMaxDrawdownPct),
+      tone: pctTone(s.avgMaxDrawdownPct),
+      testId: "backtest-summary-drawdown",
+    },
+    {
+      label: "Best bucket",
+      value: s.bestBucket ?? "—",
+      testId: "backtest-summary-best",
+    },
+    {
+      label: "Worst bucket",
+      value: s.worstBucket ?? "—",
+      testId: "backtest-summary-worst",
+    },
+    {
+      label: "SPY 1Y",
+      value: fmtSignedPct(s.spyReturnPct),
+      tone: pctTone(s.spyReturnPct),
+      testId: "backtest-summary-spy",
+    },
+    {
+      label: "QQQ 1Y",
+      value: fmtSignedPct(s.qqqReturnPct),
+      tone: pctTone(s.qqqReturnPct),
+      testId: "backtest-summary-qqq",
+    },
+    {
+      label: "Beat SPY rate",
+      value: fmtPct(s.beatSpyRatePct),
+      testId: "backtest-summary-beat-spy",
+    },
+    {
+      label: "Beat QQQ rate",
+      value: fmtPct(s.beatQqqRatePct),
+      testId: "backtest-summary-beat-qqq",
+    },
+  ];
+  return (
+    <div
+      className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2"
+      data-testid="backtest-summary-cards"
+    >
+      {cards.map((c) => (
+        <div
+          key={c.label}
+          className="rounded-md border border-border/60 bg-card/40 px-3 py-2"
+          data-testid={c.testId}
+        >
+          <div className="text-[10px] uppercase tracking-widest text-muted-foreground">
+            {c.label}
+          </div>
+          <div className={`text-sm font-medium tabular-nums ${c.tone ?? ""}`}>
+            {c.value}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function BacktestBucketTable({
+  buckets,
+}: {
+  buckets: BacktestBucketAgg[];
+}) {
+  return (
+    <div
+      className="rounded-md border border-border/60 overflow-x-auto"
+      data-testid="backtest-bucket-table"
+    >
+      <table className="w-full text-[12px]">
+        <thead className="bg-card/40">
+          <tr className="text-left text-[10px] uppercase tracking-widest text-muted-foreground">
+            <th className="px-3 py-2">Classification</th>
+            <th className="px-3 py-2 text-right">Count</th>
+            <th className="px-3 py-2 text-right">Avg return</th>
+            <th className="px-3 py-2 text-right">Median return</th>
+            <th className="px-3 py-2 text-right">Hit rate</th>
+            <th className="px-3 py-2 text-right">Avg DD</th>
+            <th className="px-3 py-2 text-right">Beat SPY</th>
+            <th className="px-3 py-2 text-right">Beat QQQ</th>
+          </tr>
+        </thead>
+        <tbody>
+          {buckets.length === 0 && (
+            <tr>
+              <td
+                colSpan={8}
+                className="px-3 py-4 text-center text-muted-foreground"
+              >
+                No bucket data — backtest may still be loading.
+              </td>
+            </tr>
+          )}
+          {buckets.map((b) => (
+            <tr
+              key={b.classification}
+              className="border-t border-border/40"
+              data-testid={`backtest-bucket-row-${b.classification.replace(/\s+/g, "-")}`}
+            >
+              <td className="px-3 py-2">
+                <span
+                  className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${classifyTone(b.classification)}`}
+                >
+                  {b.classification}
+                </span>
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums">{b.count}</td>
+              <td
+                className={`px-3 py-2 text-right tabular-nums ${pctTone(b.avgReturnPct)}`}
+              >
+                {fmtSignedPct(b.avgReturnPct)}
+              </td>
+              <td
+                className={`px-3 py-2 text-right tabular-nums ${pctTone(b.medianReturnPct)}`}
+              >
+                {fmtSignedPct(b.medianReturnPct)}
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums">
+                {fmtPct(b.hitRatePct)}
+              </td>
+              <td
+                className={`px-3 py-2 text-right tabular-nums ${pctTone(b.avgMaxDrawdownPct)}`}
+              >
+                {fmtSignedPct(b.avgMaxDrawdownPct)}
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums">
+                {fmtPct(b.beatSpyRatePct)}
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums">
+                {fmtPct(b.beatQqqRatePct)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function BacktestStockTable({
+  rows,
+  sortKey,
+  sortDir,
+  onSort,
+}: {
+  rows: BacktestStockResult[];
+  sortKey: BacktestSortKey;
+  sortDir: SortDir;
+  onSort: (k: BacktestSortKey) => void;
+}) {
+  return (
+    <div
+      className="rounded-md border border-border/60 overflow-x-auto"
+      data-testid="backtest-stock-table"
+    >
+      <table className="w-full text-[12px]">
+        <thead className="bg-card/40">
+          <tr className="text-left">
+            <th className="px-3 py-2">
+              <button
+                onClick={() => onSort("ticker")}
+                className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground"
+                data-testid="backtest-sort-ticker"
+              >
+                Ticker
+                <ArrowUpDown
+                  className={`h-3 w-3 ${sortKey === "ticker" ? "opacity-100" : "opacity-40"}`}
+                />
+              </button>
+            </th>
+            <th className="px-3 py-2">
+              <button
+                onClick={() => onSort("company")}
+                className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground"
+                data-testid="backtest-sort-company"
+              >
+                Company
+                <ArrowUpDown
+                  className={`h-3 w-3 ${sortKey === "company" ? "opacity-100" : "opacity-40"}`}
+                />
+              </button>
+            </th>
+            <th className="px-3 py-2">
+              <button
+                onClick={() => onSort("class")}
+                className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground"
+                data-testid="backtest-sort-class"
+              >
+                Class
+                <ArrowUpDown
+                  className={`h-3 w-3 ${sortKey === "class" ? "opacity-100" : "opacity-40"}`}
+                />
+              </button>
+            </th>
+            <th className="px-3 py-2 text-[10px] uppercase tracking-widest text-muted-foreground">
+              Theme / Sub
+            </th>
+            <th className="px-3 py-2 text-right text-[10px] uppercase tracking-widest text-muted-foreground">
+              Entry
+            </th>
+            <th className="px-3 py-2 text-right text-[10px] uppercase tracking-widest text-muted-foreground">
+              Latest
+            </th>
+            <th className="px-3 py-2 text-right">
+              <button
+                onClick={() => onSort("return")}
+                className="inline-flex items-center gap-1 justify-end w-full text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground"
+                data-testid="backtest-sort-return"
+              >
+                1Y Return
+                <ArrowUpDown
+                  className={`h-3 w-3 ${sortKey === "return" ? "opacity-100" : "opacity-40"}`}
+                />
+              </button>
+            </th>
+            <th className="px-3 py-2 text-right">
+              <button
+                onClick={() => onSort("drawdown")}
+                className="inline-flex items-center gap-1 justify-end w-full text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground"
+                data-testid="backtest-sort-drawdown"
+              >
+                Max DD
+                <ArrowUpDown
+                  className={`h-3 w-3 ${sortKey === "drawdown" ? "opacity-100" : "opacity-40"}`}
+                />
+              </button>
+            </th>
+            <th className="px-3 py-2 text-right">
+              <button
+                onClick={() => onSort("beatSpy")}
+                className="inline-flex items-center gap-1 justify-end w-full text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground"
+                data-testid="backtest-sort-spy"
+              >
+                vs SPY
+                <ArrowUpDown
+                  className={`h-3 w-3 ${sortKey === "beatSpy" ? "opacity-100" : "opacity-40"}`}
+                />
+              </button>
+            </th>
+            <th className="px-3 py-2 text-right">
+              <button
+                onClick={() => onSort("beatQqq")}
+                className="inline-flex items-center gap-1 justify-end w-full text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground"
+                data-testid="backtest-sort-qqq"
+              >
+                vs QQQ
+                <ArrowUpDown
+                  className={`h-3 w-3 ${sortKey === "beatQqq" ? "opacity-100" : "opacity-40"}`}
+                />
+              </button>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 && (
+            <tr>
+              <td
+                colSpan={10}
+                className="px-3 py-4 text-center text-muted-foreground"
+              >
+                No backtest rows.
+              </td>
+            </tr>
+          )}
+          {rows.map((r) => (
+            <tr
+              key={r.ticker}
+              className="border-t border-border/40"
+              data-testid={`backtest-row-${r.ticker}`}
+            >
+              <td className="px-3 py-2 font-medium">{r.ticker}</td>
+              <td className="px-3 py-2 text-muted-foreground truncate max-w-[180px]">
+                {r.companyName}
+              </td>
+              <td className="px-3 py-2">
+                <span
+                  className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${classifyTone(r.classification)}`}
+                >
+                  {r.classification}
+                </span>
+              </td>
+              <td className="px-3 py-2 text-muted-foreground text-[11px]">
+                {r.themes.join(", ")}
+                {r.subTheme ? (
+                  <span className="text-muted-foreground/70">
+                    {" · "}
+                    {SUBTHEME_LABEL[r.subTheme] ?? r.subTheme}
+                  </span>
+                ) : null}
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                {fmtPrice(r.entryPrice)}
+                <div className="text-[10px] text-muted-foreground/70">
+                  {r.entryDate ?? "—"}
+                </div>
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                {fmtPrice(r.latestPrice)}
+                <div className="text-[10px] text-muted-foreground/70">
+                  {r.latestDate ?? "—"}
+                </div>
+              </td>
+              <td
+                className={`px-3 py-2 text-right tabular-nums ${pctTone(r.returnPct)}`}
+              >
+                {fmtSignedPct(r.returnPct)}
+              </td>
+              <td
+                className={`px-3 py-2 text-right tabular-nums ${pctTone(r.maxDrawdownPct)}`}
+              >
+                {fmtSignedPct(r.maxDrawdownPct)}
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums">
+                {r.beatSpy == null ? (
+                  "—"
+                ) : r.beatSpy ? (
+                  <span className="text-pos">Yes</span>
+                ) : (
+                  <span className="text-neg">No</span>
+                )}
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums">
+                {r.beatQqq == null ? (
+                  "—"
+                ) : r.beatQqq ? (
+                  <span className="text-pos">Yes</span>
+                ) : (
+                  <span className="text-neg">No</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function BacktestPanel() {
+  const query = useQuery<BacktestResponse>({
+    queryKey: ["/api/stock-picks/backtest"],
+  });
+  const data = query.data;
+  const [sortKey, setSortKey] = useState<BacktestSortKey>("return");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  const onSort = (k: BacktestSortKey) => {
+    if (k === sortKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(k);
+      setSortDir(k === "ticker" || k === "company" || k === "class" ? "asc" : "desc");
+    }
+  };
+
+  const sortedRows = useMemo<BacktestStockResult[]>(() => {
+    if (!data) return [];
+    const rows = [...data.stocks];
+    const cmpNum = (a: number | null, b: number | null): number => {
+      if (a == null && b == null) return 0;
+      if (a == null) return 1; // nulls last
+      if (b == null) return -1;
+      return a - b;
+    };
+    const cmpStr = (a: string, b: string) => a.localeCompare(b);
+    rows.sort((a, b) => {
+      let v = 0;
+      switch (sortKey) {
+        case "ticker":
+          v = cmpStr(a.ticker, b.ticker);
+          break;
+        case "company":
+          v = cmpStr(a.companyName, b.companyName);
+          break;
+        case "class":
+          v = cmpStr(a.classification, b.classification);
+          break;
+        case "return":
+          v = cmpNum(a.returnPct, b.returnPct);
+          break;
+        case "drawdown":
+          v = cmpNum(a.maxDrawdownPct, b.maxDrawdownPct);
+          break;
+        case "beatSpy": {
+          const av = a.beatSpy === null ? null : a.beatSpy ? 1 : 0;
+          const bv = b.beatSpy === null ? null : b.beatSpy ? 1 : 0;
+          v = cmpNum(av, bv);
+          break;
+        }
+        case "beatQqq": {
+          const av = a.beatQqq === null ? null : a.beatQqq ? 1 : 0;
+          const bv = b.beatQqq === null ? null : b.beatQqq ? 1 : 0;
+          v = cmpNum(av, bv);
+          break;
+        }
+      }
+      return sortDir === "asc" ? v : -v;
+    });
+    return rows;
+  }, [data, sortKey, sortDir]);
+
+  return (
+    <section className="space-y-4" data-testid="backtest-panel">
+      <div
+        className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-3 text-[12px] text-foreground"
+        data-testid="backtest-limitation-banner"
+      >
+        <div className="flex items-start gap-2">
+          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
+          <div className="space-y-1.5 leading-relaxed">
+            <p>
+              <span className="font-medium">
+                Scenario-label reconstruction — not a track record.
+              </span>{" "}
+              We do NOT freeze the universe or scenario labels as of one year ago.
+              We apply today's curated classifications (2x/3x/5x/…) to historical
+              prices and aggregate by bucket. This carries survivorship and
+              look-ahead bias.
+            </p>
+            <p className="text-muted-foreground">
+              Research/education only. Not personalized investment advice, not a
+              performance claim.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {query.isLoading && (
+        <div className="space-y-3" data-testid="backtest-loading">
+          <Skeleton className="h-20 rounded-md" />
+          <Skeleton className="h-40 rounded-md" />
+          <Skeleton className="h-60 rounded-md" />
+        </div>
+      )}
+
+      {query.isError && (
+        <div
+          className="rounded-md border border-neg/30 bg-neg/5 px-3 py-3 text-sm text-neg"
+          data-testid="backtest-error"
+        >
+          Failed to load backtest:{" "}
+          {(query.error as Error)?.message ?? "unknown"}
+        </div>
+      )}
+
+      {data && (
+        <>
+          <section
+            className="rounded-lg border border-border/70 bg-card/40 p-4"
+            data-testid="backtest-header"
+          >
+            <h2 className="text-base font-semibold">
+              Scenario Backtest — 1Y reconstruction
+            </h2>
+            <p className="text-[12px] text-muted-foreground leading-relaxed mt-1">
+              Window: {data.windowStartDate ?? "—"} → {data.windowEndDate ?? "—"}
+              {" "}({data.lookbackDays} calendar days). Universe: today's curated
+              picks. Aggregated by today's scenario classification.
+            </p>
+          </section>
+
+          <BacktestSummaryCards data={data} />
+
+          <section className="space-y-2">
+            <h3 className="text-[11px] uppercase tracking-widest text-muted-foreground">
+              Aggregates by classification
+            </h3>
+            <BacktestBucketTable buckets={data.buckets} />
+          </section>
+
+          <section className="space-y-2">
+            <h3 className="text-[11px] uppercase tracking-widest text-muted-foreground">
+              Per-stock results ({data.summary.tested} tested
+              {data.summary.skipped
+                ? `, ${data.summary.skipped} skipped (insufficient history)`
+                : ""}
+              )
+            </h3>
+            <BacktestStockTable
+              rows={sortedRows}
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onSort={onSort}
+            />
+          </section>
+
+          <section
+            className="rounded-md border border-border/60 bg-background/30 px-3 py-3 text-[11px] text-muted-foreground space-y-2"
+            data-testid="backtest-methodology"
+          >
+            <div className="text-foreground text-[12px] font-medium">
+              Methodology
+            </div>
+            <p className="leading-relaxed">{data.methodology}</p>
+            <div className="text-foreground text-[12px] font-medium pt-1">
+              Known limitations
+            </div>
+            <ul className="list-disc pl-4 space-y-1 leading-relaxed">
+              {data.limitations.map((l, i) => (
+                <li key={i}>{l}</li>
+              ))}
+            </ul>
+            <p className="pt-1">{data.disclaimer}</p>
+          </section>
+        </>
+      )}
+    </section>
+  );
+}
+
 export default function StockPicksPage() {
   const { dark, setDark } = useTheme();
   const [selectedTheme, setSelectedTheme] = useState<StockPickTheme>(
@@ -2239,7 +2833,7 @@ export default function StockPicksPage() {
                 </section>
               )}
 
-              {view === "stocks" ? (
+              {view === "stocks" && (
                 <>
                   <div
                     className="flex flex-col sm:flex-row sm:items-center gap-2"
@@ -2275,7 +2869,8 @@ export default function StockPicksPage() {
                   />
                   {selectedPick && <PickDetail pick={selectedPick} />}
                 </>
-              ) : (
+              )}
+              {view === "etfs" && (
                 <section data-testid="etf-exposure-section" className="space-y-4">
                   <div className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-[11px] text-muted-foreground flex items-start gap-2">
                     <LayoutGrid className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary/80" />
@@ -2296,6 +2891,7 @@ export default function StockPicksPage() {
                   {selectedEtf && <EtfDetail etf={selectedEtf} />}
                 </section>
               )}
+              {view === "backtest" && <BacktestPanel />}
             </div>
           </div>
 
