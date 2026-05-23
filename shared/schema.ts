@@ -603,6 +603,68 @@ export type StockPickSubTheme =
   | "energy-storage"
   | "uranium";
 
+// =============================================================================
+// Scenario model — deterministic, transparent bull/base/bear math attached to
+// each stock pick. Assumptions and outputs are visible so the 2x/3x labels are
+// backed by formulas, not just curated opinion. Not a prediction or advice.
+// =============================================================================
+
+export type ScenarioCaseKey = "bear" | "base" | "bull";
+
+export interface ScenarioCaseAssumptions {
+  revenueCagrPct: number; // % annualised, over horizon
+  terminalMarginPct: number; // % e.g. operating/FCF margin at horizon
+  exitMultipleChangePct: number; // % change vs current valuation multiple
+  dilutionPct: number; // % share dilution over horizon
+  executionProbability: number; // 0-1 rough subjective weight
+  rationale: string[]; // short bullets
+}
+
+export interface ScenarioCaseOutputs {
+  targetMultipleOfCurrent: number; // e.g. 0.6 (bear), 1.5 (base), 3.0 (bull)
+  impliedReturnPct: number; // % over the horizon, simple total
+  targetPrice: number | null; // current price * multiple, or null if no price
+  targetMarketCap: number | null; // current mcap * multiple, or null
+  requiredCagrPct: number; // annualised CAGR implied by the multiple over horizonYears
+  warning: string | null;
+}
+
+export interface ScenarioCase {
+  key: ScenarioCaseKey;
+  label: string; // human label e.g. "Bull case"
+  assumptions: ScenarioCaseAssumptions;
+  outputs: ScenarioCaseOutputs;
+}
+
+export type ScenarioClassification =
+  | "defensive"
+  | "compounder"
+  | "2x potential"
+  | "3x potential"
+  | "5x potential"
+  | "speculative";
+
+export type ScenarioModelType =
+  | "curated-bands-v1"
+  | "curated-bands-with-price-v1";
+
+export interface ScenarioModel {
+  horizonYears: number; // e.g. 5
+  modelType: ScenarioModelType;
+  modelConfidence: DataConfidence;
+  modelWarnings: string[];
+  methodology: string; // one-paragraph explanation of how the cases were derived
+  classification: ScenarioClassification;
+  bear: ScenarioCase;
+  base: ScenarioCase;
+  bull: ScenarioCase;
+  // Convenience top-level outputs derived from the cases above. Rounded.
+  bullUpsidePct: number; // bull.impliedReturnPct
+  bearDownsidePct: number; // bear.impliedReturnPct (typically negative)
+  rewardRiskRatio: number | null; // bullUpside / |bearDownside|, null if denom=0
+  disclaimer: string;
+}
+
 export interface StockPick {
   ticker: string;
   companyName: string;
@@ -624,6 +686,7 @@ export interface StockPick {
   // Optional country/issuer hint used when SEC EDGAR is not applicable.
   issuerCountry?: string | null;
   keyMetrics?: StockPickKeyMetrics | null;
+  scenarioModel?: ScenarioModel | null;
 }
 
 export interface StockPickThemeInfo {
@@ -677,6 +740,19 @@ export interface StockPickEtf {
   keyMetrics?: StockPickEtfMetrics | null;
 }
 
+export interface ScenarioMethodology {
+  modelType: ScenarioModelType;
+  horizonYears: number;
+  summary: string; // one paragraph plain-English description
+  notes: string[]; // bullet list of caveats
+  classificationBands: {
+    classification: ScenarioClassification;
+    bullUpsidePctMin: number; // bull case ≥ this implied return %
+    description: string;
+  }[];
+  disclaimer: string;
+}
+
 export interface StockPicksResponse {
   themes: StockPickThemeInfo[];
   picks: StockPick[];
@@ -689,6 +765,7 @@ export interface StockPicksResponse {
     fundamentals: boolean; // true if SEC EDGAR was queried
     note: string;
   };
+  scenarioMethodology: ScenarioMethodology;
 }
 
 export interface TreasurySnapshot {

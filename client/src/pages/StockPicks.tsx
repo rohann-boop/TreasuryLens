@@ -3,6 +3,8 @@ import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import type {
   MarketCapBucket,
+  ScenarioCase,
+  ScenarioModel,
   StockPick,
   StockPickEtf,
   StockPickSubTheme,
@@ -99,7 +101,10 @@ type SortKey =
   | "perf12m"
   | "scenario"
   | "conviction"
-  | "risk";
+  | "risk"
+  | "bullUpside"
+  | "bearDownside"
+  | "rewardRisk";
 
 const RISK_ORDER = ["low", "moderate", "elevated", "high", "very high"];
 
@@ -157,6 +162,25 @@ function pctTone(p: number | null | undefined): string {
 function fmtRatio(p: number | null | undefined, digits = 2): string {
   if (p == null || !Number.isFinite(p)) return "—";
   return p.toFixed(digits);
+}
+
+function fmtRewardRisk(r: number | null | undefined): string {
+  if (r == null || !Number.isFinite(r)) return "—";
+  return `${r.toFixed(2)}×`;
+}
+
+function fmtMultiple(m: number | null | undefined): string {
+  if (m == null || !Number.isFinite(m)) return "—";
+  return `${m.toFixed(2)}×`;
+}
+
+function fmtMarketCap(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  const abs = Math.abs(n);
+  if (abs >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
+  if (abs >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+  return `$${n.toFixed(0)}`;
 }
 
 function SortHeader({
@@ -682,6 +706,202 @@ function MetricsPanel({ pick }: { pick: StockPick }) {
   );
 }
 
+function ScenarioCaseCard({
+  c,
+  caseKey,
+  currency,
+}: {
+  c: ScenarioCase;
+  caseKey: "bear" | "base" | "bull";
+  currency: string | null | undefined;
+}) {
+  const tone =
+    caseKey === "bear"
+      ? "border-neg/30 bg-neg/5"
+      : caseKey === "bull"
+        ? "border-pos/30 bg-pos/5"
+        : "border-border/60 bg-background/35";
+  const upside = c.outputs.impliedReturnPct;
+  return (
+    <div
+      className={`rounded-md border ${tone} p-3 space-y-2`}
+      data-testid={`scenario-case-${caseKey}`}
+    >
+      <div className="flex items-center justify-between">
+        <div className="text-[11px] font-semibold uppercase tracking-widest">
+          {c.label}
+        </div>
+        <div
+          className={`text-[12px] tabular-nums font-medium ${pctTone(upside)}`}
+          data-testid={`scenario-case-${caseKey}-return`}
+        >
+          {fmtSignedPct(upside, 0)}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+        <div>
+          <div className="text-muted-foreground">Target multiple</div>
+          <div
+            className="tabular-nums"
+            data-testid={`scenario-case-${caseKey}-multiple`}
+          >
+            {fmtMultiple(c.outputs.targetMultipleOfCurrent)}
+          </div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Req. CAGR</div>
+          <div className="tabular-nums">
+            {fmtSignedPct(c.outputs.requiredCagrPct, 1)}
+          </div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Target price</div>
+          <div
+            className="tabular-nums"
+            data-testid={`scenario-case-${caseKey}-target-price`}
+          >
+            {fmtPrice(c.outputs.targetPrice, currency)}
+          </div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Target mkt cap</div>
+          <div className="tabular-nums">
+            {fmtMarketCap(c.outputs.targetMarketCap)}
+          </div>
+        </div>
+      </div>
+      <div className="border-t border-border/40 pt-2 space-y-1.5">
+        <div className="text-[10px] uppercase tracking-widest text-muted-foreground">
+          Assumptions
+        </div>
+        <div className="grid grid-cols-2 gap-1 text-[10px] text-muted-foreground">
+          <div>Rev CAGR</div>
+          <div className="tabular-nums text-foreground/80">
+            {fmtSignedPct(c.assumptions.revenueCagrPct, 1)}
+          </div>
+          <div>Terminal margin</div>
+          <div className="tabular-nums text-foreground/80">
+            {fmtPct(c.assumptions.terminalMarginPct, 1)}
+          </div>
+          <div>Multiple change</div>
+          <div className="tabular-nums text-foreground/80">
+            {fmtSignedPct(c.assumptions.exitMultipleChangePct, 1)}
+          </div>
+          <div>Dilution</div>
+          <div className="tabular-nums text-foreground/80">
+            {fmtPct(c.assumptions.dilutionPct, 1)}
+          </div>
+          <div>Probability</div>
+          <div className="tabular-nums text-foreground/80">
+            {Math.round(c.assumptions.executionProbability * 100)}%
+          </div>
+        </div>
+        <ul className="list-disc list-inside text-[10.5px] leading-snug text-muted-foreground">
+          {c.assumptions.rationale.map((r, i) => (
+            <li key={i}>{r}</li>
+          ))}
+        </ul>
+      </div>
+      {c.outputs.warning && (
+        <div className="text-[10px] text-warn flex items-start gap-1.5 border-t border-border/40 pt-2">
+          <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+          <span>{c.outputs.warning}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ScenarioPanel({ pick }: { pick: StockPick }) {
+  const sm: ScenarioModel | null | undefined = pick.scenarioModel;
+  if (!sm) {
+    return (
+      <div
+        className="rounded-md border border-border/60 bg-background/35 p-3 text-[11px] text-muted-foreground"
+        data-testid="detail-scenario-model"
+      >
+        Scenario model unavailable for this pick.
+      </div>
+    );
+  }
+  const currency = pick.keyMetrics?.priceCurrency;
+  return (
+    <div
+      className="rounded-md border border-border/60 bg-background/35 p-3 space-y-3"
+      data-testid="detail-scenario-model"
+    >
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="text-[10px] uppercase tracking-widest text-muted-foreground">
+          Scenario model
+        </div>
+        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+          <span>{sm.horizonYears}y horizon</span>
+          <span>·</span>
+          <span>{sm.modelType}</span>
+          <span>·</span>
+          <span className="capitalize">{sm.modelConfidence}</span>
+        </div>
+      </div>
+      <div className="grid grid-cols-3 gap-2 text-[11px]">
+        <div>
+          <div className="text-muted-foreground">Bull upside</div>
+          <div
+            className={`tabular-nums font-medium ${pctTone(sm.bullUpsidePct)}`}
+            data-testid="scenario-bull-upside"
+          >
+            {fmtSignedPct(sm.bullUpsidePct, 0)}
+          </div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Bear downside</div>
+          <div
+            className={`tabular-nums font-medium ${pctTone(sm.bearDownsidePct)}`}
+            data-testid="scenario-bear-downside"
+          >
+            {fmtSignedPct(sm.bearDownsidePct, 0)}
+          </div>
+        </div>
+        <div>
+          <div className="text-muted-foreground">Reward / risk</div>
+          <div
+            className="tabular-nums font-medium"
+            data-testid="scenario-reward-risk"
+          >
+            {fmtRewardRisk(sm.rewardRiskRatio)}
+          </div>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+        <ScenarioCaseCard c={sm.bear} caseKey="bear" currency={currency} />
+        <ScenarioCaseCard c={sm.base} caseKey="base" currency={currency} />
+        <ScenarioCaseCard c={sm.bull} caseKey="bull" currency={currency} />
+      </div>
+      <div className="border-t border-border/40 pt-2 text-[10.5px] leading-relaxed text-muted-foreground">
+        <span className="uppercase tracking-widest text-[9.5px] mr-1">
+          Methodology:
+        </span>
+        <span data-testid="scenario-methodology">{sm.methodology}</span>
+      </div>
+      {sm.modelWarnings.length > 0 && (
+        <div
+          className="flex items-start gap-1.5 text-[10.5px] text-muted-foreground border-t border-border/40 pt-2"
+          data-testid="scenario-model-warnings"
+        >
+          <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0 text-warn" />
+          <ul className="space-y-0.5">
+            {sm.modelWarnings.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div className="text-[10px] text-muted-foreground border-t border-border/40 pt-2">
+        {sm.disclaimer}
+      </div>
+    </div>
+  );
+}
+
 function PickDetail({ pick }: { pick: StockPick }) {
   return (
     <section
@@ -714,6 +934,8 @@ function PickDetail({ pick }: { pick: StockPick }) {
       <MetricsPanel pick={pick} />
 
       <PerformancePanel pick={pick} />
+
+      <ScenarioPanel pick={pick} />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="rounded-md border border-border/60 bg-background/35 p-3">
@@ -881,6 +1103,24 @@ function PicksTable({
           return compareNum(a.convictionScore, b.convictionScore, sortDir);
         case "risk":
           return compareOrdered(a.riskLevel, b.riskLevel, RISK_ORDER, sortDir);
+        case "bullUpside":
+          return compareNullableNum(
+            a.scenarioModel?.bullUpsidePct,
+            b.scenarioModel?.bullUpsidePct,
+            sortDir,
+          );
+        case "bearDownside":
+          return compareNullableNum(
+            a.scenarioModel?.bearDownsidePct,
+            b.scenarioModel?.bearDownsidePct,
+            sortDir,
+          );
+        case "rewardRisk":
+          return compareNullableNum(
+            a.scenarioModel?.rewardRiskRatio,
+            b.scenarioModel?.rewardRiskRatio,
+            sortDir,
+          );
       }
     });
     return arr;
@@ -1011,6 +1251,39 @@ function PicksTable({
                 testId="picks-sort-scenario"
               />
             </th>
+            <th className="px-3 py-2 text-right">
+              <SortHeader
+                label="Bull %"
+                k="bullUpside"
+                active={sortKey}
+                dir={sortDir}
+                onSort={onSort}
+                align="right"
+                testId="picks-sort-bull-upside"
+              />
+            </th>
+            <th className="px-3 py-2 text-right">
+              <SortHeader
+                label="Bear %"
+                k="bearDownside"
+                active={sortKey}
+                dir={sortDir}
+                onSort={onSort}
+                align="right"
+                testId="picks-sort-bear-downside"
+              />
+            </th>
+            <th className="px-3 py-2 text-right">
+              <SortHeader
+                label="R/R"
+                k="rewardRisk"
+                active={sortKey}
+                dir={sortDir}
+                onSort={onSort}
+                align="right"
+                testId="picks-sort-reward-risk"
+              />
+            </th>
             <th className="px-3 py-2 text-left">
               <SortHeader
                 label="Conviction"
@@ -1091,6 +1364,24 @@ function PicksTable({
                 </td>
                 <td className="px-3 py-2">
                   <ScenarioBadge value={p.scenarioPotential} />
+                </td>
+                <td
+                  className={`px-3 py-2 text-right tabular-nums ${pctTone(p.scenarioModel?.bullUpsidePct)}`}
+                  data-testid={`picks-cell-bull-upside-${p.ticker}`}
+                >
+                  {fmtSignedPct(p.scenarioModel?.bullUpsidePct, 0)}
+                </td>
+                <td
+                  className={`px-3 py-2 text-right tabular-nums ${pctTone(p.scenarioModel?.bearDownsidePct)}`}
+                  data-testid={`picks-cell-bear-downside-${p.ticker}`}
+                >
+                  {fmtSignedPct(p.scenarioModel?.bearDownsidePct, 0)}
+                </td>
+                <td
+                  className="px-3 py-2 text-right tabular-nums text-muted-foreground"
+                  data-testid={`picks-cell-reward-risk-${p.ticker}`}
+                >
+                  {fmtRewardRisk(p.scenarioModel?.rewardRiskRatio)}
                 </td>
                 <td className="px-3 py-2">
                   <ConvictionBar score={p.convictionScore} />

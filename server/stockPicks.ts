@@ -21,6 +21,7 @@ import {
   fetchYahooQuote,
 } from "./marketData";
 import { getEquityFundamentals, getSharesOutstanding } from "./secEdgar";
+import { buildScenarioMethodology, buildScenarioModel } from "./scenarioModel";
 
 const THEMES: StockPickThemeInfo[] = [
   {
@@ -4518,7 +4519,17 @@ async function buildResponse(): Promise<StockPicksResponse> {
         if (metrics.revenueGrowth != null || metrics.grossMargin != null) {
           fundamentalsHit = true;
         }
-        return { ...p, keyMetrics: metrics };
+        const withMetrics: StockPick = { ...p, keyMetrics: metrics };
+        const scenarioModel = buildScenarioModel(withMetrics);
+        // Keep `scenarioPotential` aligned with classification where they
+        // diverge so badges and labels remain consistent.
+        const aligned: StockPick = {
+          ...withMetrics,
+          scenarioModel,
+          scenarioPotential:
+            scenarioModel.classification as StockPick["scenarioPotential"],
+        };
+        return aligned;
       }),
     );
     enrichedPicks.push(...enrichedSlice);
@@ -4553,6 +4564,7 @@ async function buildResponse(): Promise<StockPicksResponse> {
         ? "Live pricing and fundamentals attached where available."
         : "Pricing unavailable — showing curated content only.",
     },
+    scenarioMethodology: buildScenarioMethodology(),
   };
 }
 

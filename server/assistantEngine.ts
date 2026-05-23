@@ -258,9 +258,9 @@ const GLOSSARY: GlossaryEntry[] = [
     body: "TreasuryLens' Buffett Index is a business-quality / valuation framework that scores fundamentals (margins, returns, balance sheet) and management/governance signals from SEC filings — separate from the short-term Signal Lab. For Bitcoin-treasury equities it uses a different rubric centered on holdings and mNAV.",
   },
   {
-    keys: ["3x potential", "3x", "scenario potential", "2x potential", "5x potential"],
-    title: "Scenario potential labels",
-    body: "Scenario potentials (2x / 3x / 5x / compounder / defensive / speculative) are hypothetical, opinion-only tags. They describe a constructive case if the thesis plays out — not a prediction, target price, or probability.",
+    keys: ["3x potential", "3x", "scenario potential", "2x potential", "5x potential", "reward risk", "reward / risk", "r/r ratio"],
+    title: "Scenario model & potential labels",
+    body: "Each pick has a deterministic bull/base/bear scenario model over a 5-year horizon. The classification (2x / 3x / 5x / compounder / defensive / speculative) is derived from bull case implied return %: 2x ≈ ≥100% bull upside, 3x ≈ ≥200%, 5x ≈ ≥400%. Reward/risk = bull% / |bear%|. These are hypothetical bands derived from curated inputs — not predictions, targets, or probabilities.",
   },
   {
     keys: ["compounder"],
@@ -294,6 +294,127 @@ async function answerStockPicks(q: string, route: string): Promise<AssistantAnsw
   const data: StockPicksResponse = await getStockPicks();
   const picks = data.picks;
   const etfs = data.etfs;
+
+  // 0a) Scenario-aware reward/risk filter — must win over generic glossary
+  //     so "best reward risk in AI Energy" routes to the ranked filter rather
+  //     than the scenario glossary entry.
+  if (
+    any(q, "best reward", "highest reward risk", "best risk reward", "best r/r", "best rr") ||
+    (any(q, "reward risk", "reward / risk") && any(q, "best", "top", "highest", "show"))
+  ) {
+    let themeForRR: string | null = null;
+    if (any(q, "ai energy", "energy")) themeForRR = "ai-energy";
+    else if (any(q, "ai hardware", "hardware")) themeForRR = "ai-hardware";
+    else if (any(q, "ai software", "software")) themeForRR = "ai-software";
+    let pool = picks;
+    if (themeForRR) {
+      pool = pool.filter((p) =>
+        p.themes.includes(themeForRR as StockPick["themes"][number]),
+      );
+    }
+    const ranked = pool
+      .map((p) => ({ p, rr: p.scenarioModel?.rewardRiskRatio ?? null }))
+      .filter((r) => r.rr != null)
+      .sort((a, b) => (b.rr as number) - (a.rr as number))
+      .slice(0, 10);
+    const bullets = ranked.map(
+      (r) =>
+        `${r.p.ticker} — ${r.p.companyName} — R/R ${(r.rr as number).toFixed(2)}× — bull ${pct(r.p.scenarioModel?.bullUpsidePct)} / bear ${pct(r.p.scenarioModel?.bearDownsidePct)}`,
+    );
+    return {
+      intent: "stock-picks.reward-risk",
+      title: themeForRR
+        ? `Best reward/risk — ${themeForRR.replace("-", " ")}`
+        : "Best reward/risk in the universe",
+      sections: [
+        {
+          bullets: bullets.length
+            ? bullets
+            : ["No scenario model data available yet — try refreshing the Stock Picks page first."],
+        },
+        {
+          body:
+            "Reward/risk = bull case implied return % ÷ |bear case implied return %|. Hypothetical bands only.",
+        },
+      ],
+      sources: [{ label: "TreasuryLens scenario model" }],
+      disclaimer: INVESTING_DISCLAIMER,
+      followUps: followUps(route),
+      mode: "rules",
+    };
+  }
+
+  // 0b) "Why is X (2x|3x|5x|...) potential" — single-pick scenario explanation
+  //     must win over the scenario glossary entry.
+  if (
+    (any(q, "why is", "why's") || has(q, "why")) &&
+    (q.match(/(2x|3x|5x)/) || any(q, "potential", "scenario", "upside", "downside"))
+  ) {
+    const ticker = extractTickerFromQuery(q, picks);
+    if (ticker) {
+      const pick = findPick(picks, ticker);
+      if (pick && pick.scenarioModel) {
+        const sm = pick.scenarioModel;
+        return {
+          intent: "stock-picks.why.scenario",
+          title: `${pick.ticker} — ${pick.companyName}`,
+          sections: [
+            { heading: "Thesis", bullets: pick.thesis },
+            { heading: "Upside case", body: pick.upsideCase },
+            {
+              heading: `Scenario model — classified ${sm.classification}`,
+              bullets: [
+                `Bull case: ${sm.bull.outputs.targetMultipleOfCurrent.toFixed(2)}× of current (${pct(sm.bullUpsidePct)} upside, req CAGR ${pct(sm.bull.outputs.requiredCagrPct)}).`,
+                `Base case: ${sm.base.outputs.targetMultipleOfCurrent.toFixed(2)}× of current (${pct(sm.base.outputs.impliedReturnPct)}).`,
+                `Bear case: ${sm.bear.outputs.targetMultipleOfCurrent.toFixed(2)}× of current (${pct(sm.bear.outputs.impliedReturnPct)}).`,
+                sm.rewardRiskRatio != null
+                  ? `Reward / risk: ${sm.rewardRiskRatio.toFixed(2)}× over ${sm.horizonYears}y.`
+                  : `Reward / risk: n/a (bear ≈ 0).`,
+              ],
+            },
+            { heading: "Methodology", body: sm.methodology },
+            { heading: "Risks", bullets: pick.risks.slice(0, 3) },
+          ],
+          sources: [{ label: pick.sourceNote }],
+          disclaimer: INVESTING_DISCLAIMER,
+          followUps: followUps(route),
+          mode: "rules",
+        };
+      }
+    }
+  }
+
+  // 0c) "Explain scenario model" — describe the methodology (matches before glossary)
+  if (
+    any(q, "explain scenario model", "how does the scenario model work", "scenario methodology", "scenario model methodology") ||
+    (any(q, "scenario model") && any(q, "explain", "how", "what"))
+  ) {
+    const m = data.scenarioMethodology;
+    if (m) {
+      return {
+        intent: "stock-picks.scenario-methodology",
+        title: "Scenario model methodology",
+        sections: [
+          { body: m.summary },
+          { heading: "Notes", bullets: m.notes },
+          {
+            heading: "Classification bands",
+            bullets: m.classificationBands.map(
+              (b) =>
+                `${b.classification} — bull ≥ ${b.bullUpsidePctMin}%: ${b.description}`,
+            ),
+          },
+          {
+            body: `Horizon: ${m.horizonYears} years. Model type: ${m.modelType}.`,
+          },
+        ],
+        sources: [{ label: "TreasuryLens curated scenario model" }],
+        disclaimer: INVESTING_DISCLAIMER,
+        followUps: followUps(route),
+        mode: "rules",
+      };
+    }
+  }
 
   // 1) Glossary first — terminology is route-agnostic.
   const glossary = matchGlossary(q);
@@ -343,21 +464,42 @@ async function answerStockPicks(q: string, route: string): Promise<AssistantAnsw
     };
   }
 
-  // 4) Why is X in theme Y — explain a single pick
+  // 4) Why is X in theme Y / Why is X Nx potential — explain a single pick
   if (any(q, "why is", "why's") || has(q, "why", "in")) {
     const ticker = extractTickerFromQuery(q, picks);
     if (ticker) {
       const pick = findPick(picks, ticker);
       if (pick) {
+        const askedAboutScenario =
+          q.match(/(2x|3x|5x|defensive|compounder|speculative)/) != null ||
+          any(q, "potential", "scenario", "upside", "downside");
+        const sm = pick.scenarioModel ?? null;
+        const sections: AssistantSection[] = [
+          { heading: "Thesis", bullets: pick.thesis },
+          { heading: "Upside case", body: pick.upsideCase },
+          { heading: "Risks", bullets: pick.risks.slice(0, 3) },
+        ];
+        if (askedAboutScenario && sm) {
+          sections.push({
+            heading: `Scenario model — classified ${sm.classification}`,
+            bullets: [
+              `Bull case: ${sm.bull.outputs.targetMultipleOfCurrent.toFixed(2)}× of current (${pct(sm.bullUpsidePct)} upside, req CAGR ${pct(sm.bull.outputs.requiredCagrPct)}).`,
+              `Base case: ${sm.base.outputs.targetMultipleOfCurrent.toFixed(2)}× of current (${pct(sm.base.outputs.impliedReturnPct)}).`,
+              `Bear case: ${sm.bear.outputs.targetMultipleOfCurrent.toFixed(2)}× of current (${pct(sm.bear.outputs.impliedReturnPct)}).`,
+              sm.rewardRiskRatio != null
+                ? `Reward / risk: ${sm.rewardRiskRatio.toFixed(2)}× over ${sm.horizonYears}y.`
+                : `Reward / risk: n/a (bear ≈ 0).`,
+            ],
+          });
+          sections.push({ heading: "Methodology", body: sm.methodology });
+        }
+        sections.push({
+          body: `Themes: ${pick.themes.join(", ")}. ${bucketLabel(pick.marketCapBucket)}. Scenario: ${pick.scenarioPotential}.`,
+        });
         return {
-          intent: "stock-picks.why",
+          intent: askedAboutScenario ? "stock-picks.why.scenario" : "stock-picks.why",
           title: `${pick.ticker} — ${pick.companyName}`,
-          sections: [
-            { heading: "Thesis", bullets: pick.thesis },
-            { heading: "Upside case", body: pick.upsideCase },
-            { heading: "Risks", bullets: pick.risks.slice(0, 3) },
-            { body: `Themes: ${pick.themes.join(", ")}. ${bucketLabel(pick.marketCapBucket)}. Scenario: ${pick.scenarioPotential}.` },
-          ],
+          sections,
           sources: [{ label: pick.sourceNote }],
           disclaimer: INVESTING_DISCLAIMER,
           followUps: followUps(route),
@@ -397,17 +539,28 @@ async function answerStockPicks(q: string, route: string): Promise<AssistantAnsw
     let matches = picks.filter((p) => p.scenarioPotential === tag);
     if (themeKey) matches = matches.filter((p) => p.themes.includes(themeKey as StockPick["themes"][number]));
     matches = applySubTheme(matches);
-    const bullets = matches.map((p) =>
-      `${p.ticker} — ${p.companyName} — ${p.themes.join(", ")} — conviction ${p.convictionScore}/100`
-    );
+    const bullets = matches.map((p) => {
+      const sm = p.scenarioModel;
+      const bull = sm ? `bull ${pct(sm.bullUpsidePct)}` : null;
+      const rr =
+        sm && sm.rewardRiskRatio != null
+          ? `R/R ${sm.rewardRiskRatio.toFixed(2)}×`
+          : null;
+      const extras = [bull, rr].filter(Boolean).join(" · ");
+      return `${p.ticker} — ${p.companyName} — ${p.themes.join(", ")} — conviction ${p.convictionScore}/100${extras ? ` · ${extras}` : ""}`;
+    });
     return {
       intent: "stock-picks.scenario",
       title: themeKey ? `${tag} — ${themeKey.replace("-", " ")}` : `${tag} names`,
       sections: [
         { bullets: bullets.length ? bullets : ["No names in the universe carry that scenario tag right now."] },
-        { body: "Scenario tags are hypothetical, opinion-only labels — not predictions." },
+        {
+          body:
+            "Scenario tags now reflect deterministic bull/base/bear bands per pick. " +
+            "2x ≈ ≥100% bull upside, 3x ≈ ≥200%, 5x ≈ ≥400%. Hypothetical bands, not predictions.",
+        },
       ],
-      sources: [{ label: "TreasuryLens curated scenarios" }],
+      sources: [{ label: "TreasuryLens scenario model" }],
       disclaimer: INVESTING_DISCLAIMER,
       followUps: followUps(route),
       mode: "rules",
