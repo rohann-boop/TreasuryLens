@@ -20,7 +20,6 @@ import type {
   ConvictionIdeasResponse,
   ConvictionRole,
   ConvictionRoleInfo,
-  ConvictionSectionInfo,
   ConvictionSectionKey,
   EquityRevenueResponse,
   ScenarioModel,
@@ -56,6 +55,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
   Anchor,
   Scale,
@@ -69,10 +69,12 @@ import {
   Plus,
   Trash2,
   LineChart as LineChartIcon,
-  ChevronDown,
-  ChevronRight,
   DollarSign,
   Rocket,
+  LayoutGrid,
+  Star,
+  Eye,
+  PanelLeft,
 } from "lucide-react";
 import { fmtPrice, fmtCompactCurrency, fmtPct } from "@/lib/format";
 
@@ -713,74 +715,111 @@ function SelectorItem({
   );
 }
 
-// A thematic section in the selector. Ideas within a section are sub-grouped
-// by role so the role context (compounder / asymmetric / optionality) is
-// preserved while the primary grouping is the theme.
-function IdeaSelectorSection({
-  section,
+// A view in the section rail: either a curated thematic section or a
+// synthesized cross-cutting view ("Custom / personal", "Needs review").
+// `key` is used for testids and active-state; `count` is the number of ideas
+// that resolve to this view.
+interface RailView {
+  key: string;
+  label: string;
+  blurb: string;
+  icon: typeof Anchor;
+  count: number;
+  synthetic?: boolean;
+}
+
+// The left rail of watchlist sections. The active section drives which ticker
+// list is shown. Renders as a vertical list of section buttons with counts.
+function SectionRail({
+  views,
+  activeKey,
+  onSelect,
+}: {
+  views: RailView[];
+  activeKey: string;
+  onSelect: (key: string) => void;
+}) {
+  return (
+    <nav
+      className="space-y-1"
+      aria-label="Watchlist sections"
+      data-testid="section-rail"
+    >
+      {views.map((v) => {
+        const active = v.key === activeKey;
+        const Icon = v.icon;
+        return (
+          <button
+            key={v.key}
+            type="button"
+            onClick={() => onSelect(v.key)}
+            aria-current={active ? "true" : undefined}
+            title={v.blurb}
+            data-testid={`section-rail-item-${v.key}`}
+            className={`w-full flex items-center gap-2 rounded-md border px-2.5 py-2 text-left transition-colors ${
+              active
+                ? "border-primary bg-primary/10 text-foreground"
+                : "border-transparent hover:bg-muted/60 text-foreground/90"
+            }`}
+          >
+            <Icon
+              className={`h-4 w-4 shrink-0 ${active ? "text-primary" : "text-muted-foreground"}`}
+              aria-hidden
+            />
+            <span className="text-xs font-semibold truncate flex-1 min-w-0">
+              {v.label}
+            </span>
+            <span
+              className="text-[10px] text-muted-foreground shrink-0 tabular-nums"
+              data-testid={`section-rail-count-${v.key}`}
+            >
+              {v.count}
+            </span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
+// The ticker list for the active section. Ideas are ordered by role so the
+// role context (compounder / asymmetric / optionality) reads top-to-bottom.
+function TickerList({
   ideas,
   roles,
   selectedId,
   onSelect,
-  collapsed,
-  onToggle,
 }: {
-  section: ConvictionSectionInfo;
   ideas: ConvictionIdea[];
   roles: ConvictionRoleInfo[];
   selectedId: string | null;
   onSelect: (id: string) => void;
-  collapsed: boolean;
-  onToggle: () => void;
 }) {
-  if (ideas.length === 0) return null;
-  // Order ideas by role for a stable, readable list.
+  if (ideas.length === 0) {
+    return (
+      <div
+        className="rounded-md border border-dashed border-border/60 px-3 py-6 text-center text-xs text-muted-foreground"
+        data-testid="ticker-list-empty"
+      >
+        No ideas in this section yet.
+      </div>
+    );
+  }
   const roleOrder = roles.map((r) => r.key);
   const sorted = [...ideas].sort(
     (a, b) => roleOrder.indexOf(a.role) - roleOrder.indexOf(b.role),
   );
-  const listId = `selector-section-list-${section.key}`;
   return (
-    <div className="space-y-1.5" data-testid={`selector-section-${section.key}`}>
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={!collapsed}
-        aria-controls={listId}
-        title={section.blurb}
-        className="w-full flex items-center justify-between gap-2 px-1 py-1 rounded-md text-left hover:bg-muted/60 transition-colors"
-        data-testid={`selector-section-toggle-${section.key}`}
-      >
-        <span className="flex items-center gap-1.5 min-w-0">
-          {collapsed ? (
-            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-          ) : (
-            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-          )}
-          <span className="text-xs font-bold uppercase tracking-wide text-foreground truncate">
-            {section.label}
-          </span>
-        </span>
-        <span
-          className="text-[10px] text-muted-foreground shrink-0"
-          data-testid={`selector-section-count-${section.key}`}
-        >
-          {ideas.length}
-        </span>
-      </button>
-      {!collapsed && (
-        <ul id={listId} className="space-y-1">
-          {sorted.map((idea) => (
-            <SelectorItem
-              key={idea.id}
-              idea={idea}
-              selectedId={selectedId}
-              onSelect={onSelect}
-            />
-          ))}
-        </ul>
-      )}
-    </div>
+    <ul className="space-y-1" data-testid="ticker-list">
+      {sorted.map((idea) => (
+        <SelectorItem
+          key={idea.id}
+          idea={idea}
+          selectedId={selectedId}
+          onSelect={onSelect}
+        />
+      ))}
+    </ul>
   );
 }
 
@@ -872,9 +911,11 @@ function IdeaDetail({
         </div>
       </div>
 
-      {/* Metrics row */}
+      {/* Metrics row — quote, market cap, P/E, 1m/6m/12m performance and the
+          scenario reward/risk. Each is independently nullable so short or
+          missing series degrade to "N/A" rather than fabricating a value. */}
       <div
-        className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2"
+        className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-2"
         data-testid="idea-metrics"
       >
         <MetricCard
@@ -891,6 +932,18 @@ function IdeaDetail({
           label="P/E (TTM)"
           value={km?.peRatio != null ? km.peRatio.toFixed(1) : "N/A"}
           testId="metric-pe"
+        />
+        <MetricCard
+          label="1m return"
+          value={fmtPct(perf?.change1mPct, 1)}
+          tone={perfTone(perf?.change1mPct)}
+          testId="metric-perf1m"
+        />
+        <MetricCard
+          label="6m return"
+          value={fmtPct(perf?.change6mPct, 1)}
+          tone={perfTone(perf?.change6mPct)}
+          testId="metric-perf6m"
         />
         <MetricCard
           label="12m return"
@@ -1224,28 +1277,40 @@ function AddIdeaDialog({
   );
 }
 
-// The full watchlist experience: a thematic, collapsible selector of conviction
-// ideas (Bravos + AI sections, custom adds) alongside a rich detail pane with
-// price/MA charts, breakout status, revenue, scenario model, thesis/risks, and
-// add/remove persistence via the SQLite-backed API. Extracted from the former
-// "Additional Stock Ideas" page so the Dashboard can embed it directly.
-export function ConvictionWatchlist() {
+// Synthetic cross-cutting rail views appended after the curated sections.
+const CUSTOM_VIEW_KEY = "custom";
+const REVIEW_VIEW_KEY = "needs-review";
+
+const SECTION_ICON: Record<string, typeof Anchor> = {
+  bravos: Star,
+  "core-ai-compounders": Anchor,
+  "speculative-ai-infra": Sparkles,
+  "ai-power-grid": Rocket,
+  "ai-software-data": LayoutGrid,
+  "frontier-high-upside": Target,
+  other: ListChecks,
+  [CUSTOM_VIEW_KEY]: Plus,
+  [REVIEW_VIEW_KEY]: Eye,
+};
+
+// The full watchlist workspace and the Dashboard's primary content: a left
+// rail of thematic watchlist sections (Bravos + AI sections, plus synthesized
+// "Custom / personal" and "Needs review" views) that drives a ticker list,
+// alongside a rich detail pane with quote/market-cap/PE + performance KPIs,
+// price/MA charts, breakout status, revenue, scenario model, thesis / bull-bear
+// / catalysts / risks / kill-criteria, and add/remove persistence via the
+// SQLite-backed API. `addSignal` is bumped by the Dashboard header's "Add idea"
+// button to open the add dialog without lifting dialog state out of here.
+export function ConvictionWatchlist({ addSignal = 0 }: { addSignal?: number }) {
   const { toast } = useToast();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [activeSection, setActiveSection] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [mobileRailOpen, setMobileRailOpen] = useState(false);
   const [pendingRemove, setPendingRemove] = useState<ConvictionIdea | null>(
     null,
   );
   const [removing, setRemoving] = useState(false);
-  // Per-section collapsed state. React-state only (not persisted): a section
-  // key present here with value `true` is collapsed. Sections default to
-  // expanded.
-  const [collapsedSections, setCollapsedSections] = useState<
-    Record<string, boolean>
-  >({});
-
-  const toggleSection = (key: ConvictionSectionKey) =>
-    setCollapsedSections((prev) => ({ ...prev, [key]: !prev[key] }));
 
   const query = useQuery<ConvictionIdeasResponse>({
     queryKey: ["/api/conviction-ideas"],
@@ -1258,20 +1323,13 @@ export function ConvictionWatchlist() {
   const isLoading = query.isLoading;
   const isError = query.isError;
 
-  // Default-select the first idea once data loads.
+  // Open the add dialog when the Dashboard header signals it.
   useEffect(() => {
-    if (!selectedId && ideas.length > 0) {
-      setSelectedId(ideas[0].id);
-    }
-  }, [ideas, selectedId]);
-
-  const selected = useMemo(
-    () => ideas.find((i) => i.id === selectedId) ?? null,
-    [ideas, selectedId],
-  );
+    if (addSignal > 0) setAddOpen(true);
+  }, [addSignal]);
 
   const ideasBySection = useMemo(() => {
-    const map = new Map<ConvictionSectionKey, ConvictionIdea[]>();
+    const map = new Map<string, ConvictionIdea[]>();
     for (const idea of ideas) {
       const key = (idea.sectionKey ?? "other") as ConvictionSectionKey;
       const arr = map.get(key) ?? [];
@@ -1280,6 +1338,87 @@ export function ConvictionWatchlist() {
     }
     return map;
   }, [ideas]);
+
+  const customIdeas = useMemo(() => ideas.filter((i) => i.custom), [ideas]);
+  const reviewIdeas = useMemo(
+    () => ideas.filter((i) => i.reviewStatus === "needs-review"),
+    [ideas],
+  );
+
+  // Rail views = curated sections that actually have ideas, then the synthetic
+  // Custom / Needs-review views (only when non-empty).
+  const railViews = useMemo<RailView[]>(() => {
+    const views: RailView[] = sections
+      .map((s) => ({
+        key: s.key as string,
+        label: s.label,
+        blurb: s.blurb,
+        icon: SECTION_ICON[s.key] ?? ListChecks,
+        count: ideasBySection.get(s.key)?.length ?? 0,
+      }))
+      .filter((v) => v.count > 0);
+    if (customIdeas.length > 0) {
+      views.push({
+        key: CUSTOM_VIEW_KEY,
+        label: "Custom / personal",
+        blurb: "Your own ideas added to the watchlist.",
+        icon: SECTION_ICON[CUSTOM_VIEW_KEY],
+        count: customIdeas.length,
+        synthetic: true,
+      });
+    }
+    if (reviewIdeas.length > 0) {
+      views.push({
+        key: REVIEW_VIEW_KEY,
+        label: "Needs review",
+        blurb: "Ideas flagged for a fresh look against their kill criteria.",
+        icon: SECTION_ICON[REVIEW_VIEW_KEY],
+        count: reviewIdeas.length,
+        synthetic: true,
+      });
+    }
+    return views;
+  }, [sections, ideasBySection, customIdeas, reviewIdeas]);
+
+  // Default-select the first available section + idea once data loads.
+  useEffect(() => {
+    if (railViews.length === 0) return;
+    if (!activeSection || !railViews.some((v) => v.key === activeSection)) {
+      setActiveSection(railViews[0].key);
+    }
+  }, [railViews, activeSection]);
+
+  const sectionIdeas = useMemo(() => {
+    if (activeSection === CUSTOM_VIEW_KEY) return customIdeas;
+    if (activeSection === REVIEW_VIEW_KEY) return reviewIdeas;
+    if (activeSection) return ideasBySection.get(activeSection) ?? [];
+    return [];
+  }, [activeSection, customIdeas, reviewIdeas, ideasBySection]);
+
+  // Keep a valid selection scoped to the active section.
+  useEffect(() => {
+    if (sectionIdeas.length === 0) return;
+    if (!selectedId || !sectionIdeas.some((i) => i.id === selectedId)) {
+      setSelectedId(sectionIdeas[0].id);
+    }
+  }, [sectionIdeas, selectedId]);
+
+  const selected = useMemo(
+    () => ideas.find((i) => i.id === selectedId) ?? null,
+    [ideas, selectedId],
+  );
+
+  const handleSelectSection = (key: string) => {
+    setActiveSection(key);
+    setMobileRailOpen(false);
+    const first =
+      key === CUSTOM_VIEW_KEY
+        ? customIdeas[0]
+        : key === REVIEW_VIEW_KEY
+          ? reviewIdeas[0]
+          : ideasBySection.get(key)?.[0];
+    if (first) setSelectedId(first.id);
+  };
 
   // Both add and remove endpoints return the full refreshed response, so we
   // write it straight into the query cache for an immediate update.
@@ -1290,7 +1429,10 @@ export function ConvictionWatchlist() {
   const handleAdded = (next: ConvictionIdeasResponse, ticker: string) => {
     applyResponse(next);
     const added = next.ideas.find((i) => i.ticker === ticker);
-    if (added) setSelectedId(added.id);
+    if (added) {
+      setActiveSection((added.sectionKey ?? "other") as string);
+      setSelectedId(added.id);
+    }
   };
 
   const confirmRemove = async () => {
@@ -1304,7 +1446,7 @@ export function ConvictionWatchlist() {
       const next = (await res.json()) as ConvictionIdeasResponse;
       applyResponse(next);
       if (selectedId === pendingRemove.id) {
-        setSelectedId(next.ideas[0]?.id ?? null);
+        setSelectedId(null);
       }
       toast({ title: `Removed ${pendingRemove.ticker}` });
       setPendingRemove(null);
@@ -1319,74 +1461,158 @@ export function ConvictionWatchlist() {
     }
   };
 
-  return (
-    <section className="space-y-5" data-testid="conviction-watchlist">
-      <div
-        className="flex items-start gap-2 rounded-md border border-border/70 bg-card/40 px-3 py-2 text-[11px] text-muted-foreground"
-        data-testid="watchlist-disclaimer"
+  const activeLabel =
+    railViews.find((v) => v.key === activeSection)?.label ?? "Sections";
+
+  // Shared rail body — reused by the desktop column and the mobile drawer.
+  const railBody = (
+    <div className="space-y-4" data-testid="conviction-selector">
+      <Button
+        type="button"
+        variant="outline"
+        className="w-full justify-center gap-1.5 h-9"
+        onClick={() => {
+          setMobileRailOpen(false);
+          setAddOpen(true);
+        }}
+        data-testid="button-add-idea"
       >
-        <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary/80" />
-        <p className="leading-relaxed">
-          <span className="text-foreground">
-            Starter research ideas, not recommendations.
-          </span>{" "}
-          A small, deliberate research book — not personalized financial advice.
-          Conviction scores, checklist scores, and scenario models are
-          hypothetical research inputs, not predictions or targets.
-          Position-sizing bands are educational labels, not allocation guidance.
-          Investments can lose value. Consult a qualified financial professional
-          before acting.
-        </p>
-      </div>
-
-      {isError && (
-        <div
-          className="rounded-md border border-neg/30 bg-neg/5 px-3 py-3 text-sm text-neg"
-          data-testid="error-banner"
-        >
-          Failed to load conviction ideas:{" "}
-          {(query.error as Error)?.message ?? "unknown"}
+        <Plus className="h-3.5 w-3.5" />
+        Add idea
+      </Button>
+      {isLoading && ideas.length === 0 ? (
+        <div className="space-y-2">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-9 rounded-md" />
+          ))}
         </div>
-      )}
-
-      <div className="grid grid-cols-1 md:grid-cols-[260px_minmax(0,1fr)] gap-4">
-        <aside
-          className="md:sticky md:top-[72px] md:self-start space-y-4"
-          data-testid="conviction-selector"
-        >
-          <Button
-            type="button"
-            variant="outline"
-            className="w-full justify-center gap-1.5 h-9"
-            onClick={() => setAddOpen(true)}
-            data-testid="button-add-idea"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Add idea
-          </Button>
-          {isLoading && ideas.length === 0 ? (
-            <div className="space-y-2">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <Skeleton key={i} className="h-14 rounded-md" />
-              ))}
+      ) : (
+        <>
+          <SectionRail
+            views={railViews}
+            activeKey={activeSection ?? ""}
+            onSelect={handleSelectSection}
+          />
+          <div className="pt-2 border-t border-border/60 space-y-2">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground px-1">
+              {activeLabel}
             </div>
-          ) : (
-            sections.map((section) => (
-              <IdeaSelectorSection
-                key={section.key}
-                section={section}
-                ideas={ideasBySection.get(section.key) ?? []}
-                roles={roles}
-                selectedId={selectedId}
-                onSelect={setSelectedId}
-                collapsed={!!collapsedSections[section.key]}
-                onToggle={() => toggleSection(section.key)}
-              />
-            ))
-          )}
-        </aside>
+            <TickerList
+              ideas={sectionIdeas}
+              roles={roles}
+              selectedId={selectedId}
+              onSelect={(id) => {
+                setSelectedId(id);
+                setMobileRailOpen(false);
+              }}
+            />
+          </div>
+        </>
+      )}
+    </div>
+  );
 
-        <div className="min-w-0" data-testid="conviction-pane">
+  return (
+    <section
+      className="flex flex-col md:h-full md:min-h-0 md:flex-row"
+      data-testid="conviction-watchlist"
+    >
+      {/* Desktop section rail + ticker list */}
+      <aside
+        className="hidden md:flex md:w-[280px] md:shrink-0 md:flex-col md:border-r md:border-border md:overflow-y-auto md:[overscroll-behavior:contain] p-4"
+        data-testid="watchlist-rail"
+      >
+        {railBody}
+      </aside>
+
+      {/* Detail pane */}
+      <div
+        className="min-w-0 flex-1 md:overflow-y-auto md:[overscroll-behavior:contain]"
+        data-testid="conviction-pane"
+      >
+        <div className="px-4 md:px-6 py-4 space-y-4 max-w-[1400px] mx-auto pb-24 md:pb-8">
+          {/* Mobile: section selector trigger + active section label */}
+          <div className="md:hidden flex items-center gap-2">
+            <Sheet open={mobileRailOpen} onOpenChange={setMobileRailOpen}>
+              <SheetTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-9 gap-1.5"
+                  data-testid="button-mobile-sections"
+                >
+                  <PanelLeft className="h-4 w-4" />
+                  Sections
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="left" className="p-4 w-[300px] overflow-y-auto">
+                {railBody}
+              </SheetContent>
+            </Sheet>
+            <span className="text-xs font-semibold text-foreground truncate">
+              {activeLabel}
+            </span>
+          </div>
+
+          {/* Mobile: horizontal section chips for quick switching */}
+          {!isLoading && railViews.length > 0 && (
+            <div
+              className="md:hidden -mx-4 px-4 overflow-x-auto"
+              data-testid="section-chips"
+            >
+              <div className="flex gap-1.5 w-max">
+                {railViews.map((v) => {
+                  const active = v.key === activeSection;
+                  return (
+                    <button
+                      key={v.key}
+                      type="button"
+                      onClick={() => handleSelectSection(v.key)}
+                      data-testid={`section-chip-${v.key}`}
+                      aria-current={active ? "true" : undefined}
+                      className={`whitespace-nowrap rounded-full border px-3 py-1 text-[11px] font-medium transition-colors ${
+                        active
+                          ? "border-primary bg-primary/10 text-foreground"
+                          : "border-border/70 bg-card/40 text-muted-foreground"
+                      }`}
+                    >
+                      {v.label}{" "}
+                      <span className="opacity-60">{v.count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <div
+            className="flex items-start gap-2 rounded-md border border-border/70 bg-card/40 px-3 py-2 text-[11px] text-muted-foreground"
+            data-testid="watchlist-disclaimer"
+          >
+            <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary/80" />
+            <p className="leading-relaxed">
+              <span className="text-foreground">
+                Starter research ideas, not recommendations.
+              </span>{" "}
+              A small, deliberate research book — not personalized financial
+              advice. Conviction scores, checklist scores, and scenario models
+              are hypothetical research inputs, not predictions or targets.
+              Position-sizing bands are educational labels, not allocation
+              guidance. Investments can lose value. Consult a qualified
+              financial professional before acting.
+            </p>
+          </div>
+
+          {isError && (
+            <div
+              className="rounded-md border border-neg/30 bg-neg/5 px-3 py-3 text-sm text-neg"
+              data-testid="error-banner"
+            >
+              Failed to load conviction ideas:{" "}
+              {(query.error as Error)?.message ?? "unknown"}
+            </div>
+          )}
+
           {isLoading && !selected ? (
             <div className="space-y-3">
               <Skeleton className="h-24 rounded-md" />
@@ -1399,8 +1625,12 @@ export function ConvictionWatchlist() {
               onRemove={() => setPendingRemove(selected)}
             />
           ) : (
-            !isError && (
-              <div className="text-sm text-muted-foreground">
+            !isError &&
+            !isLoading && (
+              <div
+                className="text-sm text-muted-foreground"
+                data-testid="empty-detail"
+              >
                 No idea selected.
               </div>
             )
