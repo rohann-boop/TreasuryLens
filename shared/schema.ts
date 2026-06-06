@@ -998,6 +998,34 @@ export interface ConvictionChartPoint {
   ma200: number | null;
 }
 
+// A single breakout event: a close that cleared the prior N-day high. The
+// `window` is the lookback length (20 or 50) and `priorHigh` is the highest
+// close over the N bars *before* this one (current bar excluded). When volume
+// bars exist, `volumeConfirmed` is true if that day's volume exceeded the
+// 20-day average; null means volume data was unavailable.
+export interface ConvictionBreakoutPoint {
+  t: number; // epoch ms (trading day the breakout closed)
+  c: number; // close on the breakout day
+  window: 20 | 50;
+  priorHigh: number;
+  volumeConfirmed: boolean | null;
+}
+
+// Latest breakout status for the chart. `status` is "breakout" when the most
+// recent bar itself broke out, "recent" when a breakout happened within the
+// recent lookback but not on the latest bar, "none" when no recent breakout,
+// and "unavailable" when there is not enough history to evaluate.
+export interface ConvictionBreakoutStatus {
+  status: "breakout" | "recent" | "none" | "unavailable";
+  // Strongest window cleared on the latest breakout (50 ranks above 20).
+  latestWindow: 20 | 50 | null;
+  latestAt: number | null; // epoch ms of the most recent breakout
+  volumeConfirmed: boolean | null; // for the most recent breakout
+  volumeAvailable: boolean; // whether any volume data was present
+  points: ConvictionBreakoutPoint[]; // recent breakouts (ascending by t)
+  note: string;
+}
+
 export interface ConvictionChartResponse {
   ticker: string;
   points: ConvictionChartPoint[];
@@ -1007,6 +1035,7 @@ export interface ConvictionChartResponse {
   availableMaWindows: number[]; // e.g. [50, 200] or [50] or []
   lastClose: number | null;
   changePct: number | null; // over the returned window
+  breakout: ConvictionBreakoutStatus;
   note: string;
   warnings: string[];
 }

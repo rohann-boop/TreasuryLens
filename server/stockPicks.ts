@@ -1,4 +1,6 @@
 import type {
+  ConvictionBreakoutPoint,
+  ConvictionBreakoutStatus,
   ConvictionChartPoint,
   ConvictionChartResponse,
   DataConfidence,
@@ -4601,6 +4603,132 @@ function downsampleIndices(length: number, target: number): number[] {
   return Array.from(new Set(out)).sort((a, b) => a - b);
 }
 
+// Number of recent breakout events to surface on the chart, and how many of
+// the most-recent bars count as "recent" for the latest status badge.
+const MAX_BREAKOUT_POINTS = 8;
+const RECENT_BREAKOUT_BARS = 20;
+
+// Detect N-day breakouts from a full (chronological) bar series. A breakout is
+// a close strictly above the prior N-day high — the highest close over the N
+// bars *before* the current one (current bar excluded), per the spec. When
+// volume is present, a breakout is volume-confirmed if its volume exceeds the
+// trailing 20-bar average volume (excluding the current bar); otherwise volume
+// confirmation is unavailable (null).
+function computeBreakouts(bars: Bar[]): ConvictionBreakoutStatus {
+  const n = bars.length;
+  // Need at least one bar beyond the largest window to evaluate a prior high.
+  if (n < 21) {
+    return {
+      status: "unavailable",
+      latestWindow: null,
+      latestAt: null,
+      volumeConfirmed: null,
+      volumeAvailable: false,
+      points: [],
+      note: "Not enough history to evaluate breakouts (need at least 21 trading days).",
+    };
+  }
+
+  // Volume is available only if at least one bar carries a positive, finite
+  // volume. Providers that omit volume fill it with 0 / NaN.
+  const volumeAvailable = bars.some((b) => Number.isFinite(b.v) && b.v > 0);
+
+  const priorHigh = (i: number, window: number): number | null => {
+    if (i < window) return null; // not enough prior bars
+    let hi = -Infinity;
+    for (let j = i - window; j < i; j++) {
+      if (bars[j].c > hi) hi = bars[j].c;
+    }
+    return hi === -Infinity ? null : hi;
+  };
+
+  const priorAvgVol = (i: number, window = 20): number | null => {
+    if (!volumeAvailable || i < window) return null;
+    let sum = 0;
+    let cnt = 0;
+    for (let j = i - window; j < i; j++) {
+      if (Number.isFinite(bars[j].v) && bars[j].v > 0) {
+        sum += bars[j].v;
+        cnt++;
+      }
+    }
+    return cnt > 0 ? sum / cnt : null;
+  };
+
+  const all: ConvictionBreakoutPoint[] = [];
+  for (let i = 20; i < n; i++) {
+    const c = bars[i].c;
+    const ph50 = priorHigh(i, 50);
+    const ph20 = priorHigh(i, 20);
+    // Prefer the stronger 50-day breakout when both fire on the same bar.
+    let window: 20 | 50 | null = null;
+    let ph: number | null = null;
+    if (ph50 != null && c > ph50) {
+      window = 50;
+      ph = ph50;
+    } else if (ph20 != null && c > ph20) {
+      window = 20;
+      ph = ph20;
+    }
+    if (window == null || ph == null) continue;
+
+    let volumeConfirmed: boolean | null = null;
+    const avgVol = priorAvgVol(i, 20);
+    if (avgVol != null && Number.isFinite(bars[i].v) && bars[i].v > 0) {
+      volumeConfirmed = bars[i].v > avgVol;
+    }
+    all.push({ t: bars[i].t, c, window, priorHigh: ph, volumeConfirmed });
+  }
+
+  const points = all.slice(-MAX_BREAKOUT_POINTS);
+
+  if (all.length === 0) {
+    return {
+      status: "none",
+      latestWindow: null,
+      latestAt: null,
+      volumeConfirmed: null,
+      volumeAvailable,
+      points: [],
+      note: "No recent breakout above the prior 20- or 50-day high.",
+    };
+  }
+
+  const latest = all[all.length - 1];
+  const latestIdx = bars.findIndex((b) => b.t === latest.t);
+  const isOnLatestBar = latestIdx >= n - 1;
+  const isRecent = latestIdx >= n - RECENT_BREAKOUT_BARS;
+  const status: ConvictionBreakoutStatus["status"] = isOnLatestBar
+    ? "breakout"
+    : isRecent
+      ? "recent"
+      : "none";
+
+  const windowLabel = `${latest.window}-day`;
+  const volNote =
+    latest.volumeConfirmed === true
+      ? " on above-average volume"
+      : latest.volumeConfirmed === false
+        ? " (volume below 20-day average)"
+        : "";
+  const note =
+    status === "breakout"
+      ? `Latest close broke the prior ${windowLabel} high${volNote}.`
+      : status === "recent"
+        ? `Recent ${windowLabel} breakout${volNote}; not on the latest bar.`
+        : `No recent breakout above the prior 20- or 50-day high.`;
+
+  return {
+    status,
+    latestWindow: status === "none" ? null : latest.window,
+    latestAt: status === "none" ? null : latest.t,
+    volumeConfirmed: status === "none" ? null : latest.volumeConfirmed,
+    volumeAvailable,
+    points,
+    note,
+  };
+}
+
 export async function getTickerChart(
   rawTicker: string,
 ): Promise<ConvictionChartResponse> {
@@ -4621,6 +4749,15 @@ export async function getTickerChart(
       availableMaWindows: [],
       lastClose: null,
       changePct: null,
+      breakout: {
+        status: "unavailable",
+        latestWindow: null,
+        latestAt: null,
+        volumeConfirmed: null,
+        volumeAvailable: false,
+        points: [],
+        note: "No historical price series available to evaluate breakouts.",
+      },
       note: "No historical price series available for this ticker.",
       warnings: ["Historical price series unavailable for this ticker."],
     };
@@ -4633,6 +4770,10 @@ export async function getTickerChart(
   const closes = bars.map((b) => b.c);
   const ma50Full = sma(closes, 50);
   const ma200Full = sma(closes, 200);
+
+  // Breakouts are computed on the full series (prior-window highs need the
+  // un-downsampled bars to be correct), then surfaced as a compact status.
+  const breakout = computeBreakouts(bars);
 
   const idxs = downsampleIndices(bars.length, MAX_CHART_POINTS);
   const points: ConvictionChartPoint[] = idxs.map((i) => ({
@@ -4678,6 +4819,7 @@ export async function getTickerChart(
     availableMaWindows,
     lastClose,
     changePct,
+    breakout,
     note,
     warnings,
   };

@@ -8,12 +8,14 @@ import {
   CartesianGrid,
   ComposedChart,
   Line,
+  ReferenceDot,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
 import type {
+  ConvictionBreakoutStatus,
   ConvictionChartResponse,
   ConvictionIdea,
   ConvictionIdeasResponse,
@@ -74,6 +76,7 @@ import {
   ChevronDown,
   ChevronRight,
   DollarSign,
+  Rocket,
 } from "lucide-react";
 import { fmtAgo, fmtPrice, fmtCompactCurrency, fmtPct } from "@/lib/format";
 import { WordMark } from "@/components/Logo";
@@ -166,6 +169,56 @@ function BulletSection({
   );
 }
 
+// Compact breakout status badge. Shows the latest 20D/50D breakout state with
+// a volume-confirmation hint, or "No recent breakout" / unavailable. Kept tiny
+// and wrappable so it sits cleanly in the chart header on mobile.
+function BreakoutBadge({ breakout }: { breakout: ConvictionBreakoutStatus | undefined }) {
+  if (!breakout || breakout.status === "unavailable") return null;
+
+  if (breakout.status === "none") {
+    return (
+      <span
+        className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+        data-testid="breakout-badge"
+        data-breakout-status="none"
+        title={breakout.note}
+      >
+        No recent breakout
+      </span>
+    );
+  }
+
+  const isFresh = breakout.status === "breakout";
+  const windowLabel = breakout.latestWindow != null ? `${breakout.latestWindow}D` : "";
+  const tone = isFresh
+    ? "border-pos/40 bg-pos/10 text-pos"
+    : "border-amber-500/40 bg-amber-500/10 text-amber-500";
+  const vol =
+    breakout.volumeConfirmed === true
+      ? "vol✓"
+      : breakout.volumeConfirmed === false
+        ? "vol↓"
+        : null;
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${tone}`}
+      data-testid="breakout-badge"
+      data-breakout-status={breakout.status}
+      data-breakout-window={breakout.latestWindow ?? ""}
+      title={breakout.note}
+    >
+      <Rocket className="h-3 w-3" aria-hidden />
+      {isFresh ? "Breakout" : "Recent breakout"} · {windowLabel}
+      {vol && (
+        <span className="font-normal opacity-80" data-testid="breakout-volume">
+          {vol}
+        </span>
+      )}
+    </span>
+  );
+}
+
 // Compact price + moving-average chart for the selected idea. Fetches a
 // downsampled close series plus 50-/200-day SMAs from the server (deployment-
 // safe via the shared query client). Mobile-friendly height + responsive.
@@ -183,15 +236,26 @@ function ConvictionChart({ ticker }: { ticker: string }) {
   const currency = data?.currency ?? "USD";
   const fmt = (v: number) => fmtPrice(v, currency);
 
+  // Only mark breakouts that fall inside the rendered (downsampled) window so
+  // a ReferenceDot never floats off the visible axis.
+  const domainMin = points.length ? points[0].t : 0;
+  const domainMax = points.length ? points[points.length - 1].t : 0;
+  const breakoutMarkers = (data?.breakout?.points ?? []).filter(
+    (b) => b.t >= domainMin && b.t <= domainMax,
+  );
+
   return (
     <div
       className="rounded-md border border-border/70 bg-card/40 p-3 space-y-2"
       data-testid="idea-chart-card"
     >
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          <LineChartIcon className="h-3.5 w-3.5 text-primary/80" aria-hidden />
-          Price &amp; moving averages
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <LineChartIcon className="h-3.5 w-3.5 text-primary/80" aria-hidden />
+            Price &amp; moving averages
+          </div>
+          <BreakoutBadge breakout={data?.breakout} />
         </div>
         <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
           <span className="inline-flex items-center gap-1">
@@ -306,8 +370,49 @@ function ConvictionChart({ ticker }: { ticker: string }) {
                   connectNulls
                 />
               )}
+              {breakoutMarkers.map((b) => (
+                <ReferenceDot
+                  key={b.t}
+                  x={b.t}
+                  y={b.c}
+                  r={4}
+                  fill={b.window === 50 ? "hsl(var(--chart-5))" : "hsl(var(--chart-2))"}
+                  stroke="hsl(var(--background))"
+                  strokeWidth={1.5}
+                  isFront
+                  ifOverflow="hidden"
+                />
+              ))}
             </ComposedChart>
           </ResponsiveContainer>
+        </div>
+      )}
+
+      {hasData && data?.breakout && data.breakout.status !== "unavailable" && (
+        <div
+          className="flex items-center justify-between flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground"
+          data-testid="breakout-status"
+          data-breakout-status={data.breakout.status}
+        >
+          <span>{data.breakout.note}</span>
+          {breakoutMarkers.length > 0 && (
+            <span className="flex items-center gap-2" data-testid="breakout-legend">
+              <span className="inline-flex items-center gap-1">
+                <span
+                  className="inline-block h-2 w-2 rounded-full"
+                  style={{ background: "hsl(var(--chart-2))" }}
+                />
+                20D
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span
+                  className="inline-block h-2 w-2 rounded-full"
+                  style={{ background: "hsl(var(--chart-5))" }}
+                />
+                50D
+              </span>
+            </span>
+          )}
         </div>
       )}
 
