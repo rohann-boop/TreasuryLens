@@ -109,12 +109,14 @@ const DEFAULT_FOLLOW_UPS: Record<string, string[]> = {
     "Why is TSLA optionality?",
     "Show kill criteria for PLTR",
     "Compare compounders",
+    "Why NVDA?",
     "What must be true for META?",
   ],
   "/ideas": [
     "Why is TSLA optionality?",
     "Show kill criteria for PLTR",
     "Compare compounders",
+    "Why NVDA?",
     "What must be true for META?",
   ],
 };

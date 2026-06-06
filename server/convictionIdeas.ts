@@ -349,6 +349,64 @@ const SEEDS: IdeaSeed[] = [
     },
     scenario: { marketCapBucket: "large", scenarioPotential: "2x potential", riskLevel: "high" },
   },
+  {
+    idea: {
+      id: "nvda",
+      ticker: "NVDA",
+      companyName: "NVIDIA Corporation",
+      role: "core-compounder",
+      themes: ["AI hardware/accelerators", "Data-center infrastructure", "CUDA/software ecosystem", "Networking/systems"],
+      timeHorizon: "Long-term (5y+)",
+      targetOutcome: "Compounder — ~2x if AI growth and margins stay durable (not guaranteed)",
+      convictionScore: 74,
+      dataConfidence: "curated",
+      thesis: [
+        "Dominant AI accelerator platform — the default training/inference hardware through the current data-center build-out.",
+        "CUDA and the broader software ecosystem create a deep, sticky moat that raises switching costs versus raw silicon.",
+        "Riding the data-center capex cycle while expanding from chips to networking and full system-level platforms.",
+      ],
+      whatMustBeTrue: [
+        "AI capex remains strong and hyperscalers keep buying GPUs at scale.",
+        "Gross and operating margins stay high rather than normalizing under competition.",
+        "Competitors and customer custom silicon do not materially erode NVIDIA's unit economics.",
+      ],
+      catalysts: [
+        "Continued data-center revenue growth and next-gen platform ramps.",
+        "Networking/systems attach lifting average revenue per deployment.",
+        "Broadening AI adoption beyond hyperscalers into enterprise and sovereign demand.",
+      ],
+      risks: [
+        "Valuation already embeds durable hypergrowth — disappointment compresses the multiple hard.",
+        "Cyclicality of the capex cycle and demand/supply imbalance risk.",
+        "Customer concentration in a handful of hyperscalers.",
+        "Export controls limiting addressable markets, plus customer custom-silicon and competitive pressure.",
+      ],
+      killCriteria: [
+        "AI capex decelerates materially across major customers.",
+        "Gross/operating margins compress persistently.",
+        "A major customer shifts decisively to in-house chips at scale.",
+        "Sustained demand/supply imbalance signals a cycle rollover.",
+      ],
+      downsideGuardrail:
+        "Dominant install base, software lock-in, and net-cash balance sheet anchor the floor, but the rich price still embeds strong forward growth.",
+      positionSizingBand: "core",
+      positionSizingNote:
+        "Educational label only: a dominant-platform compounder fits a core-anchor research role, tempered by valuation and capex-cycle risk.",
+      reviewFrequency: "Quarterly (earnings-driven) + on capex-cycle signals",
+      reviewStatus: "fresh",
+      sourceNote: CURATED_SOURCE,
+      checklist: [
+        { key: "thesis-strength", label: "Thesis strength", score: 85, note: "Dominant platform with a deep software moat across the AI stack." },
+        { key: "valuation", label: "Valuation", score: 40, note: "Rich — embeds durable hypergrowth and high margins." },
+        { key: "momentum", label: "Momentum", score: 78, note: "Strong data-center growth and platform ramps." },
+        { key: "management", label: "Management", score: 80, note: "Founder-led with a long execution track record." },
+        { key: "balance-sheet", label: "Balance sheet", score: 88, note: "Net cash, very strong FCF — funds itself." },
+        { key: "catalyst-clarity", label: "Catalyst clarity", score: 72, note: "Clear quarterly data-center and platform-ramp signposts." },
+        { key: "data-confidence", label: "Data confidence", score: 80, note: "US filer — live pricing and SEC fundamentals available." },
+      ],
+    },
+    scenario: { marketCapBucket: "mega", scenarioPotential: "compounder", riskLevel: "high" },
+  },
 ];
 
 const DISCLAIMER =
