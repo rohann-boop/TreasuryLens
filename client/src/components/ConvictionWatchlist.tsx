@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
   Area,
@@ -62,8 +61,6 @@ import {
   Scale,
   Sparkles,
   Info,
-  Sun,
-  Moon,
   Target,
   ShieldAlert,
   AlertTriangle,
@@ -77,20 +74,7 @@ import {
   DollarSign,
   Rocket,
 } from "lucide-react";
-import { fmtAgo, fmtPrice, fmtCompactCurrency, fmtPct } from "@/lib/format";
-import { WordMark } from "@/components/Logo";
-import { MobileNav } from "@/components/MobileNav";
-import { PrimaryNav } from "@/components/PrimaryNav";
-
-function useTheme() {
-  const [dark, setDark] = useState(true);
-  useEffect(() => {
-    const root = document.documentElement;
-    if (dark) root.classList.add("dark");
-    else root.classList.remove("dark");
-  }, [dark]);
-  return { dark, setDark };
-}
+import { fmtPrice, fmtCompactCurrency, fmtPct } from "@/lib/format";
 
 const ROLE_ICON: Record<ConvictionRole, typeof Anchor> = {
   "core-compounder": Anchor,
@@ -1240,8 +1224,12 @@ function AddIdeaDialog({
   );
 }
 
-export default function ConvictionIdeas() {
-  const { dark, setDark } = useTheme();
+// The full watchlist experience: a thematic, collapsible selector of conviction
+// ideas (Bravos + AI sections, custom adds) alongside a rich detail pane with
+// price/MA charts, breakout status, revenue, scenario model, thesis/risks, and
+// add/remove persistence via the SQLite-backed API. Extracted from the former
+// "Additional Stock Ideas" page so the Dashboard can embed it directly.
+export function ConvictionWatchlist() {
   const { toast } = useToast();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -1332,137 +1320,93 @@ export default function ConvictionIdeas() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-background text-foreground" data-testid="page-conviction">
-      <header className="h-14 border-b border-border bg-background/80 backdrop-blur sticky top-0 z-20 flex items-center justify-between px-4 md:px-6">
-        <div className="flex items-center gap-3 min-w-0">
-          <Link href="/dashboard" data-testid="link-home">
-            <WordMark />
-          </Link>
-          <span className="text-muted-foreground hidden md:inline">·</span>
-          <h1
-            className="hidden md:inline text-base font-semibold"
-            data-testid="text-page-title"
-          >
-            Additional Stock Ideas
-          </h1>
+    <section className="space-y-5" data-testid="conviction-watchlist">
+      <div
+        className="flex items-start gap-2 rounded-md border border-border/70 bg-card/40 px-3 py-2 text-[11px] text-muted-foreground"
+        data-testid="watchlist-disclaimer"
+      >
+        <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary/80" />
+        <p className="leading-relaxed">
+          <span className="text-foreground">
+            Starter research ideas, not recommendations.
+          </span>{" "}
+          A small, deliberate research book — not personalized financial advice.
+          Conviction scores, checklist scores, and scenario models are
+          hypothetical research inputs, not predictions or targets.
+          Position-sizing bands are educational labels, not allocation guidance.
+          Investments can lose value. Consult a qualified financial professional
+          before acting.
+        </p>
+      </div>
+
+      {isError && (
+        <div
+          className="rounded-md border border-neg/30 bg-neg/5 px-3 py-3 text-sm text-neg"
+          data-testid="error-banner"
+        >
+          Failed to load conviction ideas:{" "}
+          {(query.error as Error)?.message ?? "unknown"}
         </div>
-        <div className="flex items-center gap-2">
-          <PrimaryNav className="mr-1" />
-          {data?.lastUpdated && (
-            <span
-              className="hidden lg:inline text-[11px] text-muted-foreground"
-              data-testid="text-last-updated"
-            >
-              Updated {fmtAgo(data.lastUpdated)}
-            </span>
-          )}
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-[260px_minmax(0,1fr)] gap-4">
+        <aside
+          className="md:sticky md:top-[72px] md:self-start space-y-4"
+          data-testid="conviction-selector"
+        >
           <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={() => setDark(!dark)}
-            aria-label="Toggle theme"
-            data-testid="button-theme"
+            type="button"
+            variant="outline"
+            className="w-full justify-center gap-1.5 h-9"
+            onClick={() => setAddOpen(true)}
+            data-testid="button-add-idea"
           >
-            {dark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+            <Plus className="h-3.5 w-3.5" />
+            Add idea
           </Button>
-        </div>
-      </header>
-
-      <main className="flex-1">
-        <div className="px-4 md:px-6 py-5 space-y-5 max-w-[1600px] mx-auto pb-20 md:pb-5">
-          <div className="md:hidden">
-            <h1 className="text-lg font-semibold">Additional Stock Ideas</h1>
-          </div>
-
-          <div
-            className="flex items-start gap-2 rounded-md border border-border/70 bg-card/40 px-3 py-2 text-[11px] text-muted-foreground"
-            data-testid="page-disclaimer"
-          >
-            <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary/80" />
-            <p className="leading-relaxed">
-              <span className="text-foreground">
-                Starter research ideas, not recommendations.
-              </span>{" "}
-              A small, deliberate research book — not personalized financial
-              advice. Conviction scores, checklist scores, and scenario models
-              are hypothetical research inputs, not predictions or targets.
-              Position-sizing bands are educational labels, not allocation
-              guidance. Investments can lose value. Consult a qualified
-              financial professional before acting.
-            </p>
-          </div>
-
-          {isError && (
-            <div
-              className="rounded-md border border-neg/30 bg-neg/5 px-3 py-3 text-sm text-neg"
-              data-testid="error-banner"
-            >
-              Failed to load conviction ideas:{" "}
-              {(query.error as Error)?.message ?? "unknown"}
+          {isLoading && ideas.length === 0 ? (
+            <div className="space-y-2">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-14 rounded-md" />
+              ))}
             </div>
+          ) : (
+            sections.map((section) => (
+              <IdeaSelectorSection
+                key={section.key}
+                section={section}
+                ideas={ideasBySection.get(section.key) ?? []}
+                roles={roles}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+                collapsed={!!collapsedSections[section.key]}
+                onToggle={() => toggleSection(section.key)}
+              />
+            ))
           )}
+        </aside>
 
-          <div className="grid grid-cols-1 md:grid-cols-[260px_minmax(0,1fr)] gap-4">
-            <aside
-              className="md:sticky md:top-[72px] md:self-start space-y-4"
-              data-testid="conviction-selector"
-            >
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full justify-center gap-1.5 h-9"
-                onClick={() => setAddOpen(true)}
-                data-testid="button-add-idea"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Add idea
-              </Button>
-              {isLoading && ideas.length === 0 ? (
-                <div className="space-y-2">
-                  {Array.from({ length: 5 }).map((_, i) => (
-                    <Skeleton key={i} className="h-14 rounded-md" />
-                  ))}
-                </div>
-              ) : (
-                sections.map((section) => (
-                  <IdeaSelectorSection
-                    key={section.key}
-                    section={section}
-                    ideas={ideasBySection.get(section.key) ?? []}
-                    roles={roles}
-                    selectedId={selectedId}
-                    onSelect={setSelectedId}
-                    collapsed={!!collapsedSections[section.key]}
-                    onToggle={() => toggleSection(section.key)}
-                  />
-                ))
-              )}
-            </aside>
-
-            <div className="min-w-0" data-testid="conviction-pane">
-              {isLoading && !selected ? (
-                <div className="space-y-3">
-                  <Skeleton className="h-24 rounded-md" />
-                  <Skeleton className="h-16 rounded-md" />
-                  <Skeleton className="h-40 rounded-md" />
-                </div>
-              ) : selected ? (
-                <IdeaDetail
-                  idea={selected}
-                  onRemove={() => setPendingRemove(selected)}
-                />
-              ) : (
-                !isError && (
-                  <div className="text-sm text-muted-foreground">
-                    No idea selected.
-                  </div>
-                )
-              )}
+        <div className="min-w-0" data-testid="conviction-pane">
+          {isLoading && !selected ? (
+            <div className="space-y-3">
+              <Skeleton className="h-24 rounded-md" />
+              <Skeleton className="h-16 rounded-md" />
+              <Skeleton className="h-40 rounded-md" />
             </div>
-          </div>
+          ) : selected ? (
+            <IdeaDetail
+              idea={selected}
+              onRemove={() => setPendingRemove(selected)}
+            />
+          ) : (
+            !isError && (
+              <div className="text-sm text-muted-foreground">
+                No idea selected.
+              </div>
+            )
+          )}
         </div>
-      </main>
+      </div>
 
       <AddIdeaDialog
         open={addOpen}
@@ -1505,8 +1449,6 @@ export default function ConvictionIdeas() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      <MobileNav />
-    </div>
+    </section>
   );
 }

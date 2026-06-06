@@ -2,6 +2,20 @@ import { Link, useLocation } from "wouter";
 import { LineChart, Users, Lightbulb } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+// Routes that resolve to the merged Dashboard (which now embeds the watchlist).
+// Legacy /ideas and /conviction live here so the Dashboard tab stays active on
+// those backward-compatible routes.
+const DASHBOARD_ROUTES = [
+  "/",
+  "",
+  "/dashboard",
+  "/app",
+  "/ideas",
+  "/conviction",
+];
+
+const STOCK_PICKS_ROUTES = ["/stock-picks", "/themes"];
+
 type Tab = {
   href: string;
   label: string;
@@ -10,15 +24,22 @@ type Tab = {
   match: (loc: string) => boolean;
 };
 
-// The three primary tabs of the watchlist-first app. Order is intentional:
-// Dashboard (landing), 13F Filings, Additional Stock Ideas (watchlist).
+// The three primary tabs. Order is intentional: Dashboard (merged
+// dashboard + watchlist), Stock Picks (theme discovery), 13F Filings.
 export const PRIMARY_TABS: Tab[] = [
   {
     href: "/dashboard",
     label: "Dashboard",
     testId: "nav-dashboard",
     icon: LineChart,
-    match: (loc) => loc === "/" || loc === "" || loc === "/dashboard" || loc === "/app",
+    match: (loc) => DASHBOARD_ROUTES.includes(loc),
+  },
+  {
+    href: "/stock-picks",
+    label: "Stock Picks",
+    testId: "nav-stock-picks",
+    icon: Lightbulb,
+    match: (loc) => STOCK_PICKS_ROUTES.includes(loc),
   },
   {
     href: "/13f",
@@ -26,17 +47,6 @@ export const PRIMARY_TABS: Tab[] = [
     testId: "nav-13f",
     icon: Users,
     match: (loc) => loc === "/13f" || loc === "/superinvestors",
-  },
-  {
-    href: "/ideas",
-    label: "Additional Stock Ideas",
-    testId: "nav-ideas",
-    icon: Lightbulb,
-    match: (loc) =>
-      loc === "/ideas" ||
-      loc === "/conviction" ||
-      loc === "/stock-picks" ||
-      loc === "/themes",
   },
 ];
 

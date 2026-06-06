@@ -5,8 +5,8 @@ import { PRIMARY_TABS } from "@/components/PrimaryNav";
 // the source of truth for the tabs themselves is PRIMARY_TABS in PrimaryNav.
 const MOBILE_LABELS: Record<string, string> = {
   "nav-dashboard": "Dashboard",
+  "nav-stock-picks": "Stock Picks",
   "nav-13f": "13F",
-  "nav-ideas": "Ideas",
 };
 
 const ITEMS = PRIMARY_TABS.map((tab) => ({

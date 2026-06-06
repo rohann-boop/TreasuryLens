@@ -39,6 +39,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { WordMark } from "@/components/Logo";
 import { MobileNav } from "@/components/MobileNav";
 import { PrimaryNav } from "@/components/PrimaryNav";
+import { ConvictionWatchlist } from "@/components/ConvictionWatchlist";
+import { Lightbulb } from "lucide-react";
 
 function useTheme() {
   const [dark, setDark] = useState(true);
@@ -393,6 +395,27 @@ export default function Dashboard() {
             onSelect={setSelectedId}
             selectedId={selectedId}
           />
+
+          {/* Watchlist ideas — the former "Additional Stock Ideas" experience,
+              now merged into the Dashboard. Thematic sections (Bravos + AI),
+              add/remove, charts, breakout status, revenue, and full
+              thesis/scenario detail. */}
+          <section
+            className="border-t border-border/70 pt-5 space-y-3"
+            data-testid="dashboard-watchlist-section"
+            id="watchlist"
+          >
+            <div className="flex items-center gap-2">
+              <Lightbulb className="h-4 w-4 text-primary/80" aria-hidden />
+              <h2
+                className="text-base font-semibold"
+                data-testid="dashboard-watchlist-heading"
+              >
+                Watchlist &amp; conviction ideas
+              </h2>
+            </div>
+            <ConvictionWatchlist />
+          </section>
 
           <footer className="text-[10px] text-muted-foreground py-3 leading-relaxed">
             TreasuryLens · Equity pricing can use Massive when

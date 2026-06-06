@@ -8,23 +8,23 @@ import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/Dashboard";
 import ThirteenF from "@/pages/ThirteenF";
 import StockPicks from "@/pages/StockPicks";
-import ConvictionIdeas from "@/pages/ConvictionIdeas";
 import { AssistantWidget } from "@/components/AssistantWidget";
 
-// Watchlist-first app: the root route renders the Dashboard (no marketing
-// landing page). The three primary tabs are Dashboard, 13F Filings, and
-// Additional Stock Ideas (the watchlist). Legacy routes (/conviction,
-// /superinvestors, /stock-picks, /themes) remain for backward compatibility.
+// The root route renders the merged Dashboard, which now embeds the Watchlist /
+// conviction-ideas experience. Three primary tabs: Dashboard, Stock Picks, 13F
+// Filings. Legacy /ideas and /conviction routes resolve to the Dashboard so old
+// links land on the merged watchlist section; /themes still maps to Stock
+// Picks; /superinvestors to 13F.
 function AppRouter() {
   return (
     <Switch>
       <Route path="/" component={Dashboard} />
       <Route path="/dashboard" component={Dashboard} />
       <Route path="/app" component={Dashboard} />
+      <Route path="/ideas" component={Dashboard} />
+      <Route path="/conviction" component={Dashboard} />
       <Route path="/13f" component={ThirteenF} />
       <Route path="/superinvestors" component={ThirteenF} />
-      <Route path="/ideas" component={ConvictionIdeas} />
-      <Route path="/conviction" component={ConvictionIdeas} />
       <Route path="/stock-picks" component={StockPicks} />
       <Route path="/themes" component={StockPicks} />
       <Route component={NotFound} />
