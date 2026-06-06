@@ -34,6 +34,7 @@ import {
   PanelLeftOpen,
   Users,
   Lightbulb,
+  Target,
 } from "lucide-react";
 import { fmtAgo, fmtCompact, fmtNum, fmtPrice } from "@/lib/format";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -198,6 +199,15 @@ export default function Dashboard() {
           >
             <Lightbulb className="h-3.5 w-3.5" />
             <span>Picks</span>
+          </Link>
+          <Link
+            href="/conviction"
+            className="hidden sm:inline-flex items-center gap-1 h-8 px-2 rounded text-[12px] text-muted-foreground hover:text-foreground hover-elevate"
+            data-testid="link-conviction"
+            title="Conviction Ideas — focused high-conviction research book"
+          >
+            <Target className="h-3.5 w-3.5" />
+            <span>Ideas</span>
           </Link>
           <AutoRefreshControl
             interval={interval}

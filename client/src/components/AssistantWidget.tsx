@@ -68,6 +68,18 @@ const SUGGESTED: Record<string, string[]> = {
     "Show Berkshire top holdings",
     "What did Scion sell?",
   ],
+  "/conviction": [
+    "Why is TSLA optionality?",
+    "Show kill criteria for PLTR",
+    "Compare compounders",
+    "What must be true for META?",
+  ],
+  "/ideas": [
+    "Why is TSLA optionality?",
+    "Show kill criteria for PLTR",
+    "Compare compounders",
+    "What must be true for META?",
+  ],
 };
 
 function suggestionsFor(route: string): string[] {

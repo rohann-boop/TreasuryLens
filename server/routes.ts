@@ -12,6 +12,7 @@ import { getThirteenFSummary } from "./sec13f";
 import { getPoliticiansSummary } from "./politicians";
 import { getStockPicks } from "./stockPicks";
 import { getStockPicksBacktest } from "./backtest";
+import { getConvictionIdeas } from "./convictionIdeas";
 import { answerAssistant } from "./assistantEngine";
 import {
   insertInstrumentSchema,
@@ -379,6 +380,17 @@ export async function registerRoutes(
   app.get("/api/stock-picks/backtest", async (_req, res) => {
     try {
       res.json(await getStockPicksBacktest());
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // Conviction Ideas — a small, deliberate research book (curated, static
+  // content). Enriched with live pricing + scenario models via the same
+  // helpers Stock Picks uses. Cached server-side (30 min).
+  app.get("/api/conviction-ideas", async (_req, res) => {
+    try {
+      res.json(await getConvictionIdeas());
     } catch (e) {
       res.status(500).json({ message: (e as Error).message });
     }

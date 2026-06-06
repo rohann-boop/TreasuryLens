@@ -2694,6 +2694,13 @@ export default function StockPicksPage() {
             </span>
           )}
           <Link
+            href="/conviction"
+            className="hidden sm:inline-flex items-center gap-1 h-8 px-2 rounded text-[12px] text-muted-foreground hover:text-foreground"
+            data-testid="link-conviction"
+          >
+            Conviction
+          </Link>
+          <Link
             href="/superinvestors"
             className="hidden sm:inline-flex items-center gap-1 h-8 px-2 rounded text-[12px] text-muted-foreground hover:text-foreground"
             data-testid="link-superinvestors"

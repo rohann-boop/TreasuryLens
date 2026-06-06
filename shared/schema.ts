@@ -872,3 +872,91 @@ export interface TreasurySnapshot {
   yieldSinceMs: number | null;
   history: TreasuryHistoryPoint[];
 }
+
+// =============================================================================
+// Conviction Ideas — a focused idea-tracking workflow for a small set of
+// high-conviction research candidates. Unlike Stock Picks (a broad curated
+// watchlist), this is a deliberate, narrow list with explicit "what must be
+// true", kill criteria, and review guardrails. Research/education only — not
+// personalized advice, and the position-sizing bands are educational labels,
+// not allocation guidance.
+// =============================================================================
+
+// Role / bucket the idea plays in a research book. Drives left-pane grouping.
+export type ConvictionRole =
+  | "core-compounder"
+  | "asymmetric-candidate"
+  | "high-variance-optionality";
+
+// Educational position-sizing band. NOT a recommendation to allocate any
+// particular amount — these are labels describing how a researcher might
+// *think about* an idea's place on a watchlist.
+export type ConvictionSizingBand = "watchlist" | "starter" | "core";
+
+export type ConvictionReviewStatus =
+  | "fresh"
+  | "monitoring"
+  | "needs-review";
+
+// A single checklist dimension the researcher scores qualitatively. Score is a
+// coarse 0-100 self-assessment; rationale explains it. Not a model output.
+export interface ConvictionChecklistItem {
+  key:
+    | "thesis-strength"
+    | "valuation"
+    | "momentum"
+    | "management"
+    | "balance-sheet"
+    | "catalyst-clarity"
+    | "data-confidence";
+  label: string;
+  score: number; // 0-100 qualitative self-assessment
+  note: string;
+}
+
+export interface ConvictionIdea {
+  id: string; // stable slug e.g. "tsla"
+  ticker: string; // canonical ticker used by app conventions
+  companyName: string;
+  role: ConvictionRole;
+  roleLabel: string; // human label e.g. "High-variance optionality"
+  themes: string[]; // free-form theme tags (autonomy, robotics, ...)
+  timeHorizon: string; // e.g. "Long-term (5y+)"
+  targetOutcome: string; // e.g. "Optionality — 3x/5x on success"
+  convictionScore: number; // 0-100, opinion only
+  dataConfidence: DataConfidence;
+  thesis: string[]; // why it's a candidate
+  whatMustBeTrue: string[]; // preconditions for the thesis to play out
+  catalysts: string[]; // what could move it
+  risks: string[]; // key risks
+  killCriteria: string[]; // what would remove it from the list
+  downsideGuardrail: string; // short phrase — the floor / why it isn't zero
+  positionSizingBand: ConvictionSizingBand;
+  positionSizingNote: string; // educational framing for the band
+  reviewFrequency: string; // e.g. "Quarterly + on major catalysts"
+  reviewStatus: ConvictionReviewStatus;
+  sourceNote: string;
+  checklist: ConvictionChecklistItem[];
+  // Enrichment, attached server-side. Null when providers are unavailable.
+  keyMetrics?: StockPickKeyMetrics | null;
+  scenarioModel?: ScenarioModel | null;
+}
+
+export interface ConvictionRoleInfo {
+  key: ConvictionRole;
+  label: string;
+  blurb: string;
+}
+
+export interface ConvictionIdeasResponse {
+  roles: ConvictionRoleInfo[];
+  ideas: ConvictionIdea[];
+  lastUpdated: number;
+  disclaimer: string;
+  notes: string;
+  metricsStatus: {
+    livePricing: boolean;
+    fundamentals: boolean;
+    note: string;
+  };
+}

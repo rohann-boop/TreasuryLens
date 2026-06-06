@@ -9,6 +9,7 @@ import Dashboard from "@/pages/Dashboard";
 import ThirteenF from "@/pages/ThirteenF";
 import Landing from "@/pages/Landing";
 import StockPicks from "@/pages/StockPicks";
+import ConvictionIdeas from "@/pages/ConvictionIdeas";
 import { AssistantWidget } from "@/components/AssistantWidget";
 
 function AppRouter() {
@@ -21,6 +22,8 @@ function AppRouter() {
       <Route path="/superinvestors" component={ThirteenF} />
       <Route path="/stock-picks" component={StockPicks} />
       <Route path="/themes" component={StockPicks} />
+      <Route path="/conviction" component={ConvictionIdeas} />
+      <Route path="/ideas" component={ConvictionIdeas} />
       <Route component={NotFound} />
     </Switch>
   );

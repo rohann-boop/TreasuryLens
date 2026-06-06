@@ -12,6 +12,7 @@ import { getStockPicks } from "./stockPicks";
 import { getStockPicksBacktest } from "./backtest";
 import { getThirteenFSummary } from "./sec13f";
 import { getPoliticiansSummary } from "./politicians";
+import { getConvictionIdeas } from "./convictionIdeas";
 import type {
   BacktestResponse,
   StockPicksResponse,
@@ -19,6 +20,8 @@ import type {
   StockPickEtf,
   ThirteenFSummaryResponse,
   Manager13FSummary,
+  ConvictionIdea,
+  ConvictionIdeasResponse,
 } from "@shared/schema";
 
 // ---------------------------------------------------------------------------
@@ -101,6 +104,18 @@ const DEFAULT_FOLLOW_UPS: Record<string, string[]> = {
     "What is a 13F?",
     "Show Berkshire top holdings",
     "What did Scion sell?",
+  ],
+  "/conviction": [
+    "Why is TSLA optionality?",
+    "Show kill criteria for PLTR",
+    "Compare compounders",
+    "What must be true for META?",
+  ],
+  "/ideas": [
+    "Why is TSLA optionality?",
+    "Show kill criteria for PLTR",
+    "Compare compounders",
+    "What must be true for META?",
   ],
 };
 
@@ -1160,6 +1175,155 @@ async function answerLanding(q: string, route: string): Promise<AssistantAnswer>
 }
 
 // ---------------------------------------------------------------------------
+// Conviction Ideas route answerer. Answers deterministically from
+// /api/conviction-ideas data: per-idea thesis / what-must-be-true / kill
+// criteria, and a compounder comparison.
+// ---------------------------------------------------------------------------
+
+function findIdea(q: string, ideas: ConvictionIdea[]): ConvictionIdea | null {
+  for (const idea of ideas) {
+    const t = idea.ticker.toLowerCase();
+    if (q.includes(t)) return idea;
+  }
+  // Company-name fallback (first token, e.g. "alphabet", "tesla", "amazon").
+  for (const idea of ideas) {
+    const first = idea.companyName.toLowerCase().split(/[\s,.]/)[0];
+    if (first.length >= 4 && q.includes(first)) return idea;
+  }
+  if (q.includes("alphabet") || q.includes("google")) {
+    return ideas.find((i) => i.id === "googl") ?? null;
+  }
+  return null;
+}
+
+async function answerConviction(q: string, route: string): Promise<AssistantAnswer> {
+  const data: ConvictionIdeasResponse = await getConvictionIdeas();
+  const ideas = data.ideas;
+  const idea = findIdea(q, ideas);
+
+  // Compare compounders.
+  if (any(q, "compare", "compounder", "compounders")) {
+    const compounders = ideas.filter((i) => i.role === "core-compounder");
+    if (compounders.length > 0) {
+      return {
+        intent: "conviction.compare-compounders",
+        title: "Core compounders compared",
+        sections: [
+          {
+            heading: "Core compounders",
+            bullets: compounders.map((i) => {
+              const km = i.keyMetrics;
+              const r12 = km?.performance?.change12mPct;
+              return `${i.ticker} (${i.companyName.split(/[ ,]/)[0]}): conviction ${i.convictionScore}/100, ${i.targetOutcome}. 12m ${pct(r12)}, reward/risk ${
+                i.scenarioModel?.rewardRiskRatio != null
+                  ? `${i.scenarioModel.rewardRiskRatio.toFixed(2)}x`
+                  : "N/A"
+              }.`;
+            }),
+          },
+          {
+            body: "Core compounders are the lower-variance anchors of the book — durable franchises expected to compound over many years, not asymmetric bets.",
+          },
+        ],
+        sources: [{ label: "TreasuryLens conviction-ideas data" }],
+        disclaimer: INVESTING_DISCLAIMER,
+        followUps: followUps(route),
+        mode: "rules",
+      };
+    }
+  }
+
+  if (idea) {
+    const askKill = any(q, "kill", "remove", "exit", "sell out");
+    const askWmbt = any(q, "must be true", "must-be-true", "precondition", "what must");
+    const askWhy = any(q, "why", "optionality", "thesis", "case");
+
+    if (askKill) {
+      return {
+        intent: "conviction.kill-criteria",
+        title: `${idea.ticker} — kill criteria`,
+        sections: [
+          { heading: "What would remove it", bullets: idea.killCriteria },
+          { body: `Downside guardrail: ${idea.downsideGuardrail}` },
+        ],
+        sources: [{ label: "TreasuryLens conviction-ideas data" }],
+        disclaimer: INVESTING_DISCLAIMER,
+        followUps: followUps(route),
+        mode: "rules",
+      };
+    }
+
+    if (askWmbt) {
+      return {
+        intent: "conviction.what-must-be-true",
+        title: `${idea.ticker} — what must be true`,
+        sections: [
+          { heading: "Preconditions", bullets: idea.whatMustBeTrue },
+          { heading: "Catalysts to watch", bullets: idea.catalysts },
+        ],
+        sources: [{ label: "TreasuryLens conviction-ideas data" }],
+        disclaimer: INVESTING_DISCLAIMER,
+        followUps: followUps(route),
+        mode: "rules",
+      };
+    }
+
+    // Default per-idea answer (also covers "why is X optionality?").
+    const km = idea.keyMetrics;
+    return {
+      intent: askWhy ? "conviction.why" : "conviction.idea",
+      title: `${idea.ticker} — ${idea.roleLabel}`,
+      sections: [
+        {
+          body: `${idea.companyName}. Role: ${idea.roleLabel}. Target outcome: ${idea.targetOutcome}. Horizon: ${idea.timeHorizon}. Conviction ${idea.convictionScore}/100.`,
+        },
+        { heading: "Thesis", bullets: idea.thesis },
+        { heading: "Risks", bullets: idea.risks },
+        {
+          body: `Metrics: price ${
+            km?.price != null ? formatMoney(km.price) : "N/A"
+          }, market cap ${formatMoney(km?.marketCap)}, 12m ${pct(
+            km?.performance?.change12mPct,
+          )}, reward/risk ${
+            idea.scenarioModel?.rewardRiskRatio != null
+              ? `${idea.scenarioModel.rewardRiskRatio.toFixed(2)}x`
+              : "N/A"
+          }.`,
+        },
+      ],
+      sources: [{ label: "TreasuryLens conviction-ideas data" }],
+      disclaimer: INVESTING_DISCLAIMER,
+      followUps: followUps(route),
+      mode: "rules",
+    };
+  }
+
+  // Overview: list the book.
+  if (any(q, "list", "ideas", "show", "what", "overview")) {
+    return {
+      intent: "conviction.overview",
+      title: "Conviction Ideas — the book",
+      sections: [
+        {
+          bullets: ideas.map(
+            (i) => `${i.ticker} — ${i.roleLabel}: ${i.targetOutcome} (conviction ${i.convictionScore}/100).`,
+          ),
+        },
+        {
+          body: "A small, deliberate research book grouped by role: core compounders, asymmetric 2x/3x candidates, and high-variance optionality. Starter research ideas, not recommendations.",
+        },
+      ],
+      sources: [{ label: "TreasuryLens conviction-ideas data" }],
+      disclaimer: INVESTING_DISCLAIMER,
+      followUps: followUps(route),
+      mode: "rules",
+    };
+  }
+
+  return fallbackAnswer(route, followUps(route));
+}
+
+// ---------------------------------------------------------------------------
 // Provider interface — future LLM swap-in.
 //
 // The rules engine is the only provider today. A future LLM provider would
@@ -1187,6 +1351,9 @@ export const rulesProvider: AssistantProvider = {
       }
       if (route === "/superinvestors" || route === "/13f") {
         return await answerSuperInvestors(q, route);
+      }
+      if (route === "/conviction" || route === "/ideas") {
+        return await answerConviction(q, route);
       }
       if (route === "/dashboard" || route === "/app") {
         return await answerDashboard(q, route);

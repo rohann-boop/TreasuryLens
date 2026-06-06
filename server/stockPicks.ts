@@ -4221,7 +4221,7 @@ async function fetchBars(ticker: string): Promise<{ bars: Bar[] | null; source: 
   return { bars: null, source: "unavailable" };
 }
 
-async function enrichOne(pick: StockPick): Promise<StockPickKeyMetrics> {
+export async function enrichOne(pick: StockPick): Promise<StockPickKeyMetrics> {
   const warnings: string[] = [];
   let price: number | null = null;
   let priceCurrency: string | null = null;

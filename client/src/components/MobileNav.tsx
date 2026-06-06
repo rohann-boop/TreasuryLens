@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Home, LineChart, Lightbulb, Users } from "lucide-react";
+import { Home, LineChart, Lightbulb, Users, Target } from "lucide-react";
 
 type Item = {
   href: string;
@@ -32,8 +32,15 @@ const ITEMS: Item[] = [
     match: (loc) => loc === "/stock-picks" || loc === "/themes",
   },
   {
+    href: "/conviction",
+    label: "Ideas",
+    testId: "mobile-nav-conviction",
+    icon: Target,
+    match: (loc) => loc === "/conviction" || loc === "/ideas",
+  },
+  {
     href: "/superinvestors",
-    label: "SuperInvestors",
+    label: "Investors",
     testId: "mobile-nav-superinvestors",
     icon: Users,
     match: (loc) => loc === "/superinvestors" || loc === "/13f",
@@ -48,7 +55,7 @@ export function MobileNav() {
       data-testid="mobile-nav"
       className="md:hidden fixed bottom-0 inset-x-0 z-40 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 pb-[env(safe-area-inset-bottom)]"
     >
-      <ul className="grid grid-cols-4">
+      <ul className="grid grid-cols-5">
         {ITEMS.map((item) => {
           const Icon = item.icon;
           const active = item.match(location);
