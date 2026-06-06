@@ -68,6 +68,8 @@ import {
   Plus,
   Trash2,
   LineChart as LineChartIcon,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { fmtAgo, fmtPrice, fmtCompactCurrency, fmtPct } from "@/lib/format";
 import { WordMark } from "@/components/Logo";
@@ -453,12 +455,16 @@ function IdeaSelectorSection({
   roles,
   selectedId,
   onSelect,
+  collapsed,
+  onToggle,
 }: {
   section: ConvictionSectionInfo;
   ideas: ConvictionIdea[];
   roles: ConvictionRoleInfo[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  collapsed: boolean;
+  onToggle: () => void;
 }) {
   if (ideas.length === 0) return null;
   // Order ideas by role for a stable, readable list.
@@ -466,26 +472,47 @@ function IdeaSelectorSection({
   const sorted = [...ideas].sort(
     (a, b) => roleOrder.indexOf(a.role) - roleOrder.indexOf(b.role),
   );
+  const listId = `selector-section-list-${section.key}`;
   return (
     <div className="space-y-1.5" data-testid={`selector-section-${section.key}`}>
-      <div className="flex items-center justify-between gap-2 px-1">
-        <span className="text-xs font-bold uppercase tracking-wide text-foreground">
-          {section.label}
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={!collapsed}
+        aria-controls={listId}
+        title={section.blurb}
+        className="w-full flex items-center justify-between gap-2 px-1 py-1 rounded-md text-left hover:bg-muted/60 transition-colors"
+        data-testid={`selector-section-toggle-${section.key}`}
+      >
+        <span className="flex items-center gap-1.5 min-w-0">
+          {collapsed ? (
+            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+          ) : (
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+          )}
+          <span className="text-xs font-bold uppercase tracking-wide text-foreground truncate">
+            {section.label}
+          </span>
         </span>
-        <span className="text-[10px] text-muted-foreground" data-testid={`selector-section-count-${section.key}`}>
+        <span
+          className="text-[10px] text-muted-foreground shrink-0"
+          data-testid={`selector-section-count-${section.key}`}
+        >
           {ideas.length}
         </span>
-      </div>
-      <ul className="space-y-1">
-        {sorted.map((idea) => (
-          <SelectorItem
-            key={idea.id}
-            idea={idea}
-            selectedId={selectedId}
-            onSelect={onSelect}
-          />
-        ))}
-      </ul>
+      </button>
+      {!collapsed && (
+        <ul id={listId} className="space-y-1">
+          {sorted.map((idea) => (
+            <SelectorItem
+              key={idea.id}
+              idea={idea}
+              selectedId={selectedId}
+              onSelect={onSelect}
+            />
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -936,6 +963,15 @@ export default function ConvictionIdeas() {
     null,
   );
   const [removing, setRemoving] = useState(false);
+  // Per-section collapsed state. React-state only (not persisted): a section
+  // key present here with value `true` is collapsed. Sections default to
+  // expanded.
+  const [collapsedSections, setCollapsedSections] = useState<
+    Record<string, boolean>
+  >({});
+
+  const toggleSection = (key: ConvictionSectionKey) =>
+    setCollapsedSections((prev) => ({ ...prev, [key]: !prev[key] }));
 
   const query = useQuery<ConvictionIdeasResponse>({
     queryKey: ["/api/conviction-ideas"],
@@ -1124,6 +1160,8 @@ export default function ConvictionIdeas() {
                     roles={roles}
                     selectedId={selectedId}
                     onSelect={setSelectedId}
+                    collapsed={!!collapsedSections[section.key]}
+                    onToggle={() => toggleSection(section.key)}
                   />
                 ))
               )}
