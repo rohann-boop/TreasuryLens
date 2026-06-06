@@ -3,6 +3,8 @@ import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
   Area,
+  Bar,
+  BarChart,
   CartesianGrid,
   ComposedChart,
   Line,
@@ -19,6 +21,7 @@ import type {
   ConvictionRoleInfo,
   ConvictionSectionInfo,
   ConvictionSectionKey,
+  EquityRevenueResponse,
   ScenarioModel,
 } from "@shared/schema";
 import { Button } from "@/components/ui/button";
@@ -70,6 +73,7 @@ import {
   LineChart as LineChartIcon,
   ChevronDown,
   ChevronRight,
+  DollarSign,
 } from "lucide-react";
 import { fmtAgo, fmtPrice, fmtCompactCurrency, fmtPct } from "@/lib/format";
 import { WordMark } from "@/components/Logo";
@@ -311,6 +315,180 @@ function ConvictionChart({ ticker }: { ticker: string }) {
         <p className="text-[10px] text-muted-foreground" data-testid="chart-note">
           {data.note}
           {data.source && data.source !== "unavailable" ? ` · source: ${data.source}` : ""}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Current + historical revenue for the selected idea. Sourced from SEC EDGAR
+// companyfacts via the shared query client. Renders a compact, mobile-friendly
+// panel: TTM headline, a mini annual bar chart, a small quarterly table, and a
+// projections row. Graceful "not available / not meaningful" states for
+// ETFs/funds/foreign/ambiguous tickers.
+function RevenuePanel({ ticker }: { ticker: string }) {
+  const query = useQuery<EquityRevenueResponse>({
+    queryKey: ["/api/conviction-ideas/revenue", ticker],
+    enabled: !!ticker,
+  });
+  const data = query.data;
+  const currency = data?.currency ?? "USD";
+  const annual = data?.annual ?? [];
+  const quarterly = data?.quarterly ?? [];
+  const hasSeries = annual.length > 0 || quarterly.length > 0;
+  const available = data?.status === "available" && hasSeries;
+
+  return (
+    <div
+      className="rounded-md border border-border/70 bg-card/40 p-3 space-y-3"
+      data-testid="idea-revenue-card"
+    >
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <DollarSign className="h-3.5 w-3.5 text-primary/80" aria-hidden />
+          Revenue (current &amp; historical)
+        </div>
+        {available && (
+          <div className="text-[11px] text-muted-foreground" data-testid="revenue-ttm">
+            TTM:{" "}
+            <span className="font-semibold text-foreground">
+              {data?.ttmRevenue != null ? fmtCompactCurrency(data.ttmRevenue, currency) : "—"}
+            </span>
+            {data?.ttmIsAnnualFallback && data?.ttmRevenue != null && (
+              <span className="ml-1 text-muted-foreground">(latest FY)</span>
+            )}
+            {data?.annualGrowthPct != null && (
+              <span className={`ml-2 ${perfTone(data.annualGrowthPct)}`}>
+                YoY {fmtPct(data.annualGrowthPct, 0)}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {query.isLoading ? (
+        <Skeleton className="h-[140px] rounded-md" data-testid="revenue-loading" />
+      ) : query.isError ? (
+        <div
+          className="text-xs text-muted-foreground"
+          data-testid="revenue-error"
+        >
+          Revenue unavailable: {(query.error as Error)?.message ?? "unknown"}
+        </div>
+      ) : !available ? (
+        <div
+          className="rounded border border-border/60 bg-background/40 px-3 py-3 text-xs text-muted-foreground"
+          data-testid="revenue-status"
+        >
+          {data?.status === "not-meaningful"
+            ? "Not meaningful — "
+            : "Not available — "}
+          {data?.note ??
+            "Historical revenue is not available from free SEC data for this ticker."}
+        </div>
+      ) : (
+        <div className="space-y-3" data-testid="revenue-body">
+          {annual.length > 0 && (
+            <div className="h-[140px]" data-testid="revenue-chart">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={annual}
+                  margin={{ top: 6, right: 8, left: 4, bottom: 0 }}
+                >
+                  <CartesianGrid
+                    stroke="hsl(var(--border))"
+                    strokeOpacity={0.4}
+                    vertical={false}
+                  />
+                  <XAxis
+                    dataKey="label"
+                    stroke="hsl(var(--muted-foreground))"
+                    fontSize={10}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    stroke="hsl(var(--muted-foreground))"
+                    fontSize={10}
+                    tickFormatter={(v) => fmtCompactCurrency(v, currency)}
+                    tickLine={false}
+                    width={52}
+                    orientation="right"
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      background: "hsl(var(--popover))",
+                      border: "1px solid hsl(var(--popover-border))",
+                      borderRadius: 6,
+                      fontSize: 12,
+                    }}
+                    formatter={(v: number) => [fmtCompactCurrency(v, currency), "Revenue"]}
+                  />
+                  <Bar
+                    dataKey="value"
+                    name="Revenue"
+                    fill="hsl(var(--chart-1))"
+                    radius={[2, 2, 0, 0]}
+                    isAnimationActive={false}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {quarterly.length > 0 && (
+            <div className="overflow-x-auto" data-testid="revenue-table">
+              <table className="w-full text-[11px]">
+                <thead>
+                  <tr className="text-muted-foreground">
+                    <th className="text-left font-medium py-1 pr-2">Quarter</th>
+                    <th className="text-right font-medium py-1">Revenue</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...quarterly].reverse().map((p) => (
+                    <tr
+                      key={p.end}
+                      className="border-t border-border/50"
+                      data-testid={`revenue-row-${p.end}`}
+                    >
+                      <td className="py-1 pr-2 text-foreground/90">{p.label}</td>
+                      <td className="py-1 text-right font-medium text-foreground">
+                        {fmtCompactCurrency(p.value, currency)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Projections — always rendered so the unavailable state is explicit. */}
+      <div
+        className="rounded border border-dashed border-border/60 bg-background/30 px-3 py-2 text-[11px] text-muted-foreground"
+        data-testid="revenue-projections"
+      >
+        <span className="font-semibold text-foreground/90">Projections:</span>{" "}
+        {data?.projections?.status === "available" &&
+        data.projections.points.length > 0 ? (
+          <span data-testid="revenue-projections-available">
+            {data.projections.points
+              .map((p) => `${p.label} ${fmtCompactCurrency(p.value, currency)}`)
+              .join(" · ")}
+            {data.projections.source ? ` · source: ${data.projections.source}` : ""}
+          </span>
+        ) : (
+          <span data-testid="revenue-projections-unavailable">
+            {data?.projections?.note ??
+              "Revenue projections unavailable with current free data sources."}
+          </span>
+        )}
+      </div>
+
+      {available && (
+        <p className="text-[10px] text-muted-foreground" data-testid="revenue-source-note">
+          {data?.note} {data?.entityName ? `· ${data.entityName}` : ""}
         </p>
       )}
     </div>
@@ -655,6 +833,9 @@ function IdeaDetail({
 
       {/* Price + moving-average chart */}
       <ConvictionChart ticker={idea.ticker} />
+
+      {/* Revenue (current + historical from SEC EDGAR) */}
+      <RevenuePanel ticker={idea.ticker} />
 
       {/* Scenario card */}
       {idea.scenarioModel ? (

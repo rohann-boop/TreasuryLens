@@ -1212,6 +1212,39 @@ const THEME_SEEDS: IdeaSeed[] = [
     checklist: { thesis: 25, valuation: 25, momentum: 30, management: 25, balanceSheet: 25, catalyst: 30, data: 20 },
     scenario: { marketCapBucket: "small", scenarioPotential: "2x potential", riskLevel: "high" },
   }),
+  themeSeed({
+    id: "cbrs",
+    ticker: "CBRS",
+    companyName: "CBRS — verify ticker / issuer before acting (distinct from CRBS)",
+    role: "high-variance-optionality",
+    sectionKey: "frontier-high-upside",
+    themes: ["Frontier", "Unverified ticker", "Watchlist — needs verification"],
+    targetOutcome: "Watchlist placeholder — confirm the issuer behind this symbol before research",
+    convictionScore: 30,
+    thesis: [
+      "Added as a frontier watchlist entry at user request. The ticker symbol 'CBRS' is ambiguous (note: it is NOT the same as the separate 'CRBS' watchlist entry) and must be verified against the intended issuer and exchange before any thesis is built.",
+      "If no price series resolves, the card degrades gracefully to curated content only — that is expected for an unverified name.",
+    ],
+    whatMustBeTrue: [
+      "Confirm which company/exchange 'CBRS' refers to and that it matches the intended idea — and that it is distinct from 'CRBS'.",
+      "Confirm a tradable, data-available listing exists for the intended issuer.",
+      "Replace this placeholder with a real thesis once the name is confirmed.",
+    ],
+    catalysts: ["Ticker/issuer verification", "Initial research once confirmed"],
+    risks: [
+      "Ticker may be ambiguous, delisted, or unavailable from the data provider — pricing/fundamentals may not resolve at all.",
+      "Easily confused with 'CRBS'; do not assume they are the same issuer.",
+      "No verified fundamentals or thesis yet; placeholder only.",
+    ],
+    killCriteria: ["Ticker cannot be verified to a real intended issuer", "No tradable/data-available listing exists"],
+    downsideGuardrail: "Unverified placeholder — no downside floor can be assessed until the issuer is confirmed. Not a recommendation.",
+    positionSizingBand: "watchlist",
+    positionSizingNote: "Educational label only: an unverified ticker stays a no-size watchlist entry until the issuer is confirmed.",
+    reviewFrequency: "Verify before next review",
+    reviewStatus: "needs-review",
+    checklist: { thesis: 25, valuation: 25, momentum: 30, management: 25, balanceSheet: 25, catalyst: 30, data: 20 },
+    scenario: { marketCapBucket: "small", scenarioPotential: "2x potential", riskLevel: "high" },
+  }),
 ];
 
 const SEEDS: IdeaSeed[] = [

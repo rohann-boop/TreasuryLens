@@ -23,7 +23,12 @@
 //   5. Cache responses in-memory with a long TTL — SEC filings update daily
 //      at most.
 
-import type { EquityFundamentals, FundamentalValue } from "@shared/schema";
+import type {
+  EquityFundamentals,
+  EquityRevenueResponse,
+  FundamentalValue,
+  RevenuePoint,
+} from "@shared/schema";
 
 const SEC_USER_AGENT = "TreasuryLens rohanr@me.com";
 const HEADERS: Record<string, string> = {
@@ -732,4 +737,222 @@ export async function getEquityFundamentals(
   };
   fundamentalsCache.set(t, { at: now, data: fundamentals });
   return fundamentals;
+}
+
+// =============================================================================
+// Historical revenue series for the Conviction Ideas revenue panel.
+//
+// Returns annual + quarterly revenue points sourced from SEC EDGAR
+// companyfacts. Operating companies that file with the SEC resolve to a
+// status of "available"; tickers with no CIK/ticker mapping (foreign-only,
+// ambiguous, or unverified placeholders) resolve to "not-available"; and
+// issuers that map to a CIK but report no revenue concept at all (most
+// ETFs/funds/trusts/non-operating entities) resolve to "not-meaningful".
+//
+// Caching is independent of the fundamentals cache (the revenue series is a
+// different projection of companyfacts) but reuses the same long TTL since
+// the underlying filings update at most daily.
+// =============================================================================
+
+const revenueCache = new Map<
+  string,
+  { at: number; data: EquityRevenueResponse }
+>();
+
+const REVENUE_TAGS = [
+  "Revenues",
+  "RevenueFromContractWithCustomerExcludingAssessedTax",
+  "RevenueFromContractWithCustomerIncludingAssessedTax",
+  "SalesRevenueNet",
+  "SalesRevenueGoodsNet",
+];
+
+function fyLabel(entry: FactUnitEntry): string {
+  const year = entry.fy ?? (entry.end ? Number(entry.end.slice(0, 4)) : null);
+  return year != null ? `FY${year}` : entry.end;
+}
+
+function quarterLabel(entry: FactUnitEntry): string {
+  const year = entry.end ? entry.end.slice(0, 4) : "";
+  if (entry.fp && /^Q[1-4]$/.test(entry.fp)) return `${entry.fp} ${year}`;
+  // Derive a calendar quarter from the period-end month as a fallback.
+  const month = entry.end ? Number(entry.end.slice(5, 7)) : 0;
+  const q = month >= 1 && month <= 12 ? Math.ceil(month / 3) : 0;
+  return q ? `Q${q} ${year}` : entry.end;
+}
+
+function toRevenuePoint(entry: FactUnitEntry, kind: "annual" | "quarterly"): RevenuePoint {
+  return {
+    end: entry.end,
+    label: kind === "annual" ? fyLabel(entry) : quarterLabel(entry),
+    value: entry.val,
+    fy: entry.fy ?? null,
+    fp: entry.fp ?? null,
+    form: entry.form ?? null,
+  };
+}
+
+function dedupeByEnd(entries: FactUnitEntry[]): FactUnitEntry[] {
+  // Keep the most recently filed entry for any given period end (amended
+  // filings win). Input is assumed sorted ascending by end.
+  const byEnd = new Map<string, FactUnitEntry>();
+  for (const e of entries) {
+    const prev = byEnd.get(e.end);
+    if (!prev || (e.filed ?? "") >= (prev.filed ?? "")) byEnd.set(e.end, e);
+  }
+  return Array.from(byEnd.values()).sort((a, b) => (a.end < b.end ? -1 : 1));
+}
+
+function collectRevenueEntries(
+  facts: NonNullable<CompanyFactsResponse["facts"]>,
+): { entries: FactUnitEntry[]; unit: string } | null {
+  const usGaap = facts["us-gaap"] ?? {};
+  // Merge across the candidate tags so issuers that switched tags over time
+  // still get a continuous series. Prefer USD units.
+  const merged: FactUnitEntry[] = [];
+  let unit = "USD";
+  for (const tag of REVENUE_TAGS) {
+    const concept = usGaap[tag];
+    const picked = pickUnit(concept);
+    if (!picked) continue;
+    unit = picked.unit;
+    for (const e of picked.entries) {
+      if (Number.isFinite(e.val) && e.start) merged.push(e);
+    }
+  }
+  if (!merged.length) return null;
+  return { entries: merged, unit };
+}
+
+export async function getEquityRevenue(
+  ticker: string,
+): Promise<EquityRevenueResponse> {
+  const t = ticker.toUpperCase();
+  const now = Date.now();
+  const cached = revenueCache.get(t);
+  if (cached && now - cached.at < CACHE_TTL_MS) return cached.data;
+
+  const base: EquityRevenueResponse = {
+    ticker: t,
+    status: "not-available",
+    source: "none",
+    currency: "USD",
+    ttmRevenue: null,
+    ttmAsOf: null,
+    ttmIsAnnualFallback: false,
+    annual: [],
+    quarterly: [],
+    annualGrowthPct: null,
+    cik: null,
+    entityName: null,
+    asOf: now,
+    note: "No SEC EDGAR revenue data is available for this ticker.",
+    projections: {
+      status: "unavailable",
+      source: null,
+      points: [],
+      note: "Revenue projections unavailable with current free data sources.",
+    },
+  };
+
+  const cik = await resolveCik(t);
+  if (!cik) {
+    const out = {
+      ...base,
+      note: "This ticker does not map to a US SEC filer (it may be foreign-listed, an ETF/fund, or an unverified symbol). Historical revenue is not available from free SEC data.",
+    };
+    revenueCache.set(t, { at: now, data: out });
+    return out;
+  }
+
+  const facts = await fetchCompanyFacts(cik);
+  if (!facts?.facts) {
+    const out = { ...base, cik: pad10(cik), note: "SEC company facts could not be retrieved for this filer right now." };
+    revenueCache.set(t, { at: now, data: out });
+    return out;
+  }
+
+  const collected = collectRevenueEntries(facts.facts);
+  if (!collected) {
+    // CIK exists but no revenue concept — typical for ETFs/funds/trusts and
+    // other non-operating entities. Revenue is not a meaningful metric here.
+    const out: EquityRevenueResponse = {
+      ...base,
+      status: "not-meaningful",
+      source: "sec_edgar",
+      cik: pad10(cik),
+      entityName: facts.entityName ?? null,
+      note: "This issuer files with the SEC but reports no revenue concept — revenue is not a meaningful metric for this entity (e.g. an ETF, fund, trust, or holding/non-operating company).",
+    };
+    revenueCache.set(t, { at: now, data: out });
+    return out;
+  }
+
+  const annualRaw = dedupeByEnd(collected.entries.filter(isAnnual));
+  const quarterlyRaw = dedupeByEnd(collected.entries.filter(isQuarter));
+
+  // Keep a readable tail: last ~6 fiscal years and last ~8 quarters.
+  const annual = annualRaw.slice(-6).map((e) => toRevenuePoint(e, "annual"));
+  const quarterly = quarterlyRaw.slice(-8).map((e) => toRevenuePoint(e, "quarterly"));
+
+  if (!annual.length && !quarterly.length) {
+    const out: EquityRevenueResponse = {
+      ...base,
+      status: "not-meaningful",
+      source: "sec_edgar",
+      cik: pad10(cik),
+      entityName: facts.entityName ?? null,
+      note: "No annual or quarterly revenue periods could be extracted for this filer.",
+    };
+    revenueCache.set(t, { at: now, data: out });
+    return out;
+  }
+
+  // TTM = sum of the last 4 distinct quarters when available; else the latest
+  // annual value as a fallback.
+  let ttmRevenue: number | null = null;
+  let ttmAsOf: string | null = null;
+  let ttmIsAnnualFallback = false;
+  if (quarterlyRaw.length >= 4) {
+    const last4 = quarterlyRaw.slice(-4);
+    ttmRevenue = last4.reduce((a, e) => a + e.val, 0);
+    ttmAsOf = last4[last4.length - 1].end;
+  } else if (annualRaw.length) {
+    const latest = annualRaw[annualRaw.length - 1];
+    ttmRevenue = latest.val;
+    ttmAsOf = latest.end;
+    ttmIsAnnualFallback = true;
+  }
+
+  let annualGrowthPct: number | null = null;
+  if (annual.length >= 2) {
+    const prev = annual[annual.length - 2].value;
+    const curr = annual[annual.length - 1].value;
+    if (prev !== 0) annualGrowthPct = ((curr - prev) / Math.abs(prev)) * 100;
+  }
+
+  const out: EquityRevenueResponse = {
+    ticker: t,
+    status: "available",
+    source: "sec_edgar",
+    currency: collected.unit === "USD" ? "USD" : collected.unit,
+    ttmRevenue,
+    ttmAsOf,
+    ttmIsAnnualFallback,
+    annual,
+    quarterly,
+    annualGrowthPct,
+    cik: pad10(cik),
+    entityName: facts.entityName ?? null,
+    asOf: now,
+    note: "Historical revenue from SEC EDGAR companyfacts (annual from 10-K, quarterly from 10-Q). TTM is the sum of the last four reported quarters when available.",
+    projections: {
+      status: "unavailable",
+      source: null,
+      points: [],
+      note: "Revenue projections unavailable with current free data sources. Forward estimates require a paid provider; the API shape is ready to populate when one is added.",
+    },
+  };
+  revenueCache.set(t, { at: now, data: out });
+  return out;
 }

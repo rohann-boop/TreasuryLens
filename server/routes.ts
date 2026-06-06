@@ -6,7 +6,7 @@ import { buildSnapshot } from "./marketData";
 import type { Bar } from "./indicators";
 import { computeSignal, parseSignalConfig, DEFAULT_CONFIG } from "./signals";
 import { computeBuffettIndex } from "./buffett";
-import { getEquityFundamentals } from "./secEdgar";
+import { getEquityFundamentals, getEquityRevenue } from "./secEdgar";
 import { getManagementGovernance } from "./secGovernance";
 import { getThirteenFSummary } from "./sec13f";
 import { getPoliticiansSummary } from "./politicians";
@@ -412,6 +412,22 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Invalid ticker." });
       }
       res.json(await getTickerChart(ticker));
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // Current + historical revenue for a single conviction idea. Sourced from
+  // SEC EDGAR companyfacts for US filers; returns graceful "not-available" /
+  // "not-meaningful" states for ETFs/funds/foreign/ambiguous tickers. Cached
+  // server-side inside the secEdgar module.
+  app.get("/api/conviction-ideas/revenue/:ticker", async (req, res) => {
+    try {
+      const ticker = String(req.params.ticker ?? "").trim();
+      if (!ticker || !/^[A-Za-z0-9.\-]{1,12}$/.test(ticker)) {
+        return res.status(400).json({ message: "Invalid ticker." });
+      }
+      res.json(await getEquityRevenue(ticker));
     } catch (e) {
       res.status(500).json({ message: (e as Error).message });
     }

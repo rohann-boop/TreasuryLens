@@ -1011,6 +1011,68 @@ export interface ConvictionChartResponse {
   warnings: string[];
 }
 
+// Revenue panel for a single conviction idea. Historical (annual + quarterly)
+// revenue is sourced from SEC EDGAR companyfacts for US-listed operating
+// companies where a CIK/ticker mapping exists. ETFs/funds/trusts/non-operating
+// or ambiguous tickers resolve to status "not-available" / "not-meaningful".
+export interface RevenuePoint {
+  // Fiscal-period end date (YYYY-MM-DD).
+  end: string;
+  // Period label, e.g. "FY2024" for annual or "Q3 2024" for quarterly.
+  label: string;
+  // Revenue value in `currency` units (absolute, not millions).
+  value: number;
+  fy: number | null;
+  fp: string | null;
+  form: string | null; // 10-K / 10-Q / 20-F etc.
+}
+
+export type RevenueStatus =
+  | "available" // historical revenue resolved from EDGAR
+  | "not-available" // no CIK/ticker mapping or no revenue facts (unverified/foreign/etc.)
+  | "not-meaningful"; // ETF / fund / trust / non-operating — revenue is not a meaningful metric
+
+export type RevenueProjectionStatus =
+  | "available" // a free estimate source returned projections
+  | "unavailable"; // no reliable free estimate source — API shape kept for a future provider
+
+export interface RevenueProjectionPoint {
+  // Fiscal year the estimate is for, e.g. 2026.
+  fy: number;
+  label: string;
+  value: number; // estimated revenue (absolute)
+  source: string; // labelled source of the estimate
+}
+
+export interface EquityRevenueResponse {
+  ticker: string;
+  status: RevenueStatus;
+  source: "sec_edgar" | "none";
+  currency: string; // typically "USD"
+  // Most recent trailing-twelve-month revenue (sum of last 4 reported
+  // quarters) when computable; otherwise the latest annual value; else null.
+  ttmRevenue: number | null;
+  ttmAsOf: string | null; // period end the TTM is anchored to
+  ttmIsAnnualFallback: boolean; // true when ttmRevenue is a single FY value
+  annual: RevenuePoint[]; // ascending by period end (oldest first)
+  quarterly: RevenuePoint[]; // ascending by period end (oldest first)
+  // Year-over-year growth of the two most recent annual points (%), or null.
+  annualGrowthPct: number | null;
+  cik: string | null;
+  entityName: string | null;
+  asOf: number; // epoch ms the response was built
+  note: string; // human-readable status / source note
+  // Forward revenue projections. With current free data sources this is
+  // always { status: "unavailable" } — the shape is kept so a future paid
+  // estimate provider can populate `points` without an API change.
+  projections: {
+    status: RevenueProjectionStatus;
+    source: string | null;
+    points: RevenueProjectionPoint[];
+    note: string;
+  };
+}
+
 // Payload to add a user-defined conviction idea. Kept intentionally small —
 // ticker, name, theme, role, and an optional conviction score.
 export const addConvictionIdeaSchema = z.object({
