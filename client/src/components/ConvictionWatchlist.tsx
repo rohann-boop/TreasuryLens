@@ -75,11 +75,21 @@ import {
   Star,
   Eye,
   PanelLeft,
+  Table2,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react";
 import { fmtPrice, fmtCompactCurrency, fmtPct } from "@/lib/format";
 import {
   BuffettConvictionPanel,
   SignalConvictionPanel,
+  RiskConvictionPanel,
+  useIdeaSignal,
+  useIdeaBuffett,
+  deriveRisk,
+  buffettScoreIsMeaningful,
+  type DerivedRiskLevel,
 } from "@/components/IdeaInsights";
 
 const ROLE_ICON: Record<ConvictionRole, typeof Anchor> = {
@@ -977,17 +987,23 @@ function IdeaDetail({
         </ul>
       )}
 
+      {/* Selected-ticker insight cards — surfaced near the top so the Buffett
+          score, buy/sell signal and risk read are visible without scrolling
+          past the chart and revenue panels. */}
+      <div className="space-y-4" data-testid="idea-insight-cards">
+        {/* Buy / sell + confidence signal (rules-based model) */}
+        <SignalConvictionPanel ticker={idea.ticker} />
+        {/* Risk assessment (rules-based, derived from the signal model) */}
+        <RiskConvictionPanel ticker={idea.ticker} />
+        {/* Buffett Index — business quality & valuation */}
+        <BuffettConvictionPanel ticker={idea.ticker} />
+      </div>
+
       {/* Price + moving-average chart */}
       <ConvictionChart ticker={idea.ticker} />
 
-      {/* Buy / sell + confidence signal (rules-based model) */}
-      <SignalConvictionPanel ticker={idea.ticker} />
-
       {/* Revenue (current + historical from SEC EDGAR) */}
       <RevenuePanel ticker={idea.ticker} />
-
-      {/* Buffett Index — business quality & valuation */}
-      <BuffettConvictionPanel ticker={idea.ticker} />
 
       {/* Scenario card */}
       {idea.scenarioModel ? (
@@ -1302,6 +1318,453 @@ const SECTION_ICON: Record<string, typeof Anchor> = {
   [CUSTOM_VIEW_KEY]: Plus,
   [REVIEW_VIEW_KEY]: Eye,
 };
+
+// =============================================================================
+// Bottom summary grid — a sortable, full-watchlist table across all visible
+// ideas. Base columns (ticker / name / section / price / 1M / 6M / revenue
+// growth / status) come straight from the already-loaded idea keyMetrics, so
+// the table renders instantly with no extra provider calls. The enriched
+// columns (signal / confidence / risk / Buffett score / breakout) are fetched
+// lazily and only when the user opts in, capped to a reasonable subset to avoid
+// fanning out 40+ requests at once. Already-viewed tickers fill in from cache.
+// =============================================================================
+
+const RISK_TONE: Record<DerivedRiskLevel, string> = {
+  Low: "text-pos",
+  Moderate: "text-primary",
+  Elevated: "text-amber-500",
+  High: "text-neg",
+  Unknown: "text-muted-foreground",
+};
+
+const SIGNAL_TONE: Record<string, string> = {
+  "Strong Buy": "text-pos",
+  Buy: "text-pos",
+  Watch: "text-primary",
+  Hold: "text-muted-foreground",
+  Trim: "text-amber-500",
+  Sell: "text-neg",
+  "Invalid Setup": "text-neg",
+};
+
+// Max number of visible rows we will auto-enrich when the user turns on
+// signals/scores, to keep the provider fan-out bounded.
+const ENRICH_CAP = 25;
+
+type SortKey =
+  | "ticker"
+  | "name"
+  | "section"
+  | "price"
+  | "perf1m"
+  | "perf6m"
+  | "breakout"
+  | "signal"
+  | "confidence"
+  | "risk"
+  | "buffett"
+  | "revGrowth"
+  | "status";
+
+interface EnrichedRow {
+  signalLabel: string | null;
+  confidence: number | null;
+  riskLevel: DerivedRiskLevel;
+  riskScore: number | null;
+  buffettScore: number | null;
+  breakout: string | null;
+  loading: boolean;
+}
+
+// A single enriched row. Uses the shared per-ticker query hooks so the cells
+// reuse the same cache as the detail pane. `enabled` gates the network call.
+function useEnrichedRow(ticker: string, enabled: boolean): EnrichedRow {
+  const signalQ = useIdeaSignal(enabled ? ticker : null);
+  const buffettQ = useIdeaBuffett(enabled ? ticker : null);
+  const chartQ = useQuery<ConvictionChartResponse>({
+    queryKey: ["/api/conviction-ideas/chart", ticker],
+    enabled: enabled && !!ticker,
+  });
+
+  const signal = signalQ.data;
+  const buffett = buffettQ.data;
+  const risk = deriveRisk(signal);
+  const breakoutStatus = chartQ.data?.breakout?.status;
+  const breakout =
+    breakoutStatus == null || breakoutStatus === "unavailable"
+      ? null
+      : breakoutStatus === "none"
+        ? "None"
+        : breakoutStatus === "breakout"
+          ? "Breakout"
+          : "Recent";
+
+  return {
+    signalLabel: signal?.signal ?? null,
+    confidence: signal ? Math.round(signal.compositeScore) : null,
+    riskLevel: risk.level,
+    riskScore: risk.riskScore,
+    buffettScore: buffettScoreIsMeaningful(buffett)
+      ? (buffett?.overallScore ?? null)
+      : null,
+    breakout,
+    loading: enabled && (signalQ.isLoading || buffettQ.isLoading || chartQ.isLoading),
+  };
+}
+
+function SummaryRow({
+  idea,
+  enrich,
+  selected,
+  onSelect,
+}: {
+  idea: ConvictionIdea;
+  enrich: boolean;
+  selected: boolean;
+  onSelect: (id: string) => void;
+}) {
+  const km = idea.keyMetrics;
+  const perf = km?.performance ?? null;
+  const row = useEnrichedRow(idea.ticker, enrich);
+  const buffettMeaningful = row.buffettScore != null;
+
+  const cell = (v: string | number | null | undefined, tone?: string) => (
+    <td className={`px-2 py-1.5 text-right tabular-nums whitespace-nowrap ${tone ?? ""}`}>
+      {v == null || v === "" ? "—" : v}
+    </td>
+  );
+
+  return (
+    <tr
+      role="button"
+      tabIndex={0}
+      aria-current={selected ? "true" : undefined}
+      data-testid={`summary-row-${idea.id}`}
+      onClick={() => onSelect(idea.id)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(idea.id);
+        }
+      }}
+      className={`border-t border-border/50 cursor-pointer transition-colors ${
+        selected ? "bg-primary/10" : "hover:bg-muted/50"
+      }`}
+    >
+      <td className="px-2 py-1.5 font-semibold text-foreground whitespace-nowrap sticky left-0 z-10 bg-inherit">
+        {idea.ticker}
+      </td>
+      <td className="px-2 py-1.5 text-foreground/80 max-w-[180px] truncate">
+        {idea.companyName}
+      </td>
+      <td className="px-2 py-1.5 text-muted-foreground whitespace-nowrap">
+        {idea.sectionLabel ?? idea.sectionKey ?? "—"}
+      </td>
+      {cell(
+        km?.price != null ? fmtPrice(km.price, km.priceCurrency ?? "USD") : null,
+      )}
+      {cell(fmtPct(perf?.change1mPct, 1), perfTone(perf?.change1mPct))}
+      {cell(fmtPct(perf?.change6mPct, 1), perfTone(perf?.change6mPct))}
+      {/* Enriched columns */}
+      {cell(
+        enrich ? (row.loading ? "…" : row.breakout) : "·",
+        row.breakout === "Breakout"
+          ? "text-pos"
+          : row.breakout === "Recent"
+            ? "text-amber-500"
+            : "text-muted-foreground",
+      )}
+      <td className="px-2 py-1.5 text-right whitespace-nowrap">
+        {!enrich ? (
+          <span className="text-muted-foreground">·</span>
+        ) : row.loading ? (
+          "…"
+        ) : row.signalLabel ? (
+          <span
+            className={`font-medium ${SIGNAL_TONE[row.signalLabel] ?? "text-foreground"}`}
+            data-testid={`summary-signal-${idea.id}`}
+          >
+            {row.signalLabel}
+          </span>
+        ) : (
+          "—"
+        )}
+      </td>
+      {cell(
+        enrich ? (row.loading ? "…" : row.confidence != null ? `${row.confidence}%` : null) : "·",
+      )}
+      <td className="px-2 py-1.5 text-right whitespace-nowrap">
+        {!enrich ? (
+          <span className="text-muted-foreground">·</span>
+        ) : row.loading ? (
+          "…"
+        ) : (
+          <span
+            className={`font-medium ${RISK_TONE[row.riskLevel]}`}
+            data-testid={`summary-risk-${idea.id}`}
+          >
+            {row.riskLevel}
+          </span>
+        )}
+      </td>
+      {cell(
+        enrich
+          ? row.loading
+            ? "…"
+            : buffettMeaningful
+              ? (row.buffettScore as number).toFixed(0)
+              : "N/A"
+          : "·",
+        buffettMeaningful ? scoreToneClass(row.buffettScore) : "text-muted-foreground",
+      )}
+      {cell(fmtPct(km?.revenueGrowth, 1), perfTone(km?.revenueGrowth))}
+      <td className="px-2 py-1.5 text-right whitespace-nowrap">
+        <span
+          className={`text-[10px] uppercase tracking-wide ${
+            idea.reviewStatus === "needs-review"
+              ? "text-amber-500"
+              : "text-muted-foreground"
+          }`}
+        >
+          {REVIEW_LABEL[idea.reviewStatus] ?? idea.reviewStatus}
+        </span>
+      </td>
+    </tr>
+  );
+}
+
+function scoreToneClass(score: number | null | undefined): string {
+  if (score == null) return "text-muted-foreground";
+  if (score >= 70) return "text-pos";
+  if (score >= 45) return "text-amber-500";
+  return "text-neg";
+}
+
+function SortHeader({
+  label,
+  sortKey,
+  active,
+  dir,
+  onSort,
+  align = "right",
+}: {
+  label: string;
+  sortKey: SortKey;
+  active: boolean;
+  dir: "asc" | "desc";
+  onSort: (k: SortKey) => void;
+  align?: "left" | "right";
+}) {
+  const Icon = !active ? ArrowUpDown : dir === "asc" ? ArrowUp : ArrowDown;
+  return (
+    <th
+      className={`px-2 py-2 font-medium select-none ${align === "left" ? "text-left" : "text-right"}`}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        data-testid={`summary-sort-${sortKey}`}
+        aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}
+        className={`inline-flex items-center gap-1 hover:text-foreground transition-colors ${
+          align === "left" ? "" : "flex-row-reverse"
+        } ${active ? "text-foreground" : "text-muted-foreground"}`}
+      >
+        {label}
+        <Icon className="h-3 w-3 opacity-70" aria-hidden />
+      </button>
+    </th>
+  );
+}
+
+export function WatchlistSummaryGrid({
+  ideas,
+  selectedId,
+  onSelect,
+}: {
+  ideas: ConvictionIdea[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}) {
+  const [enrich, setEnrich] = useState(false);
+  const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({
+    key: "ticker",
+    dir: "asc",
+  });
+
+  const handleSort = (key: SortKey) => {
+    setSort((s) =>
+      s.key === key
+        ? { key, dir: s.dir === "asc" ? "desc" : "asc" }
+        : { key, dir: key === "ticker" || key === "name" || key === "section" ? "asc" : "desc" },
+    );
+  };
+
+  // Base-data sort comparator. Enriched-only columns (signal/confidence/risk/
+  // buffett/breakout) sort by their cached values when enrichment is on, else
+  // they fall back to ticker order so headers stay clickable.
+  const sorted = useMemo(() => {
+    const dir = sort.dir === "asc" ? 1 : -1;
+    const num = (v: number | null | undefined) =>
+      v == null || !Number.isFinite(v) ? -Infinity : v;
+    const sec = (i: ConvictionIdea) => i.sectionLabel ?? i.sectionKey ?? "";
+    return [...ideas].sort((a, b) => {
+      switch (sort.key) {
+        case "ticker":
+          return a.ticker.localeCompare(b.ticker) * dir;
+        case "name":
+          return a.companyName.localeCompare(b.companyName) * dir;
+        case "section":
+          return sec(a).localeCompare(sec(b)) * dir || a.ticker.localeCompare(b.ticker);
+        case "price":
+          return (num(a.keyMetrics?.price) - num(b.keyMetrics?.price)) * dir;
+        case "perf1m":
+          return (
+            (num(a.keyMetrics?.performance?.change1mPct) -
+              num(b.keyMetrics?.performance?.change1mPct)) *
+            dir
+          );
+        case "perf6m":
+          return (
+            (num(a.keyMetrics?.performance?.change6mPct) -
+              num(b.keyMetrics?.performance?.change6mPct)) *
+            dir
+          );
+        case "revGrowth":
+          return (num(a.keyMetrics?.revenueGrowth) - num(b.keyMetrics?.revenueGrowth)) * dir;
+        case "status":
+          return (
+            (a.reviewStatus === "needs-review" ? 1 : 0) -
+            (b.reviewStatus === "needs-review" ? 1 : 0)
+          ) * dir || a.ticker.localeCompare(b.ticker);
+        default:
+          // Enriched-only sorts read from the React Query cache directly so we
+          // don't need to hoist 40 hook calls into this component.
+          if (!enrich) return a.ticker.localeCompare(b.ticker);
+          return enrichedSortValue(b, sort.key) - enrichedSortValue(a, sort.key) === 0
+            ? a.ticker.localeCompare(b.ticker)
+            : (enrichedSortValue(a, sort.key) - enrichedSortValue(b, sort.key)) * dir;
+      }
+    });
+  }, [ideas, sort, enrich]);
+
+  // When enrichment is on, cap how many rows actually fetch to avoid a large
+  // provider fan-out. Rows beyond the cap show base data only.
+  const enrichSet = useMemo(() => {
+    if (!enrich) return new Set<string>();
+    const ids = sorted.slice(0, ENRICH_CAP).map((i) => i.id);
+    if (selectedId && !ids.includes(selectedId)) ids.push(selectedId);
+    return new Set(ids);
+  }, [enrich, sorted, selectedId]);
+
+  return (
+    <div
+      className="rounded-md border border-border/70 bg-card/40 p-3 space-y-3"
+      data-testid="watchlist-summary-grid"
+    >
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <Table2 className="h-3.5 w-3.5 text-primary/80" aria-hidden />
+          Watchlist summary ({ideas.length})
+        </div>
+        <Button
+          type="button"
+          variant={enrich ? "secondary" : "outline"}
+          size="sm"
+          className="h-7 text-[11px]"
+          onClick={() => setEnrich((v) => !v)}
+          data-testid="button-enrich-summary"
+          title={`Fetch signal, risk and Buffett scores for up to ${ENRICH_CAP} rows`}
+        >
+          {enrich ? "Hide signals & scores" : "Load signals & scores"}
+        </Button>
+      </div>
+
+      <div className="overflow-x-auto -mx-1" data-testid="summary-table-scroll">
+        <table className="w-full text-[11px] min-w-[860px]" data-testid="summary-table">
+          <thead>
+            <tr className="text-muted-foreground">
+              <SortHeader label="Ticker" sortKey="ticker" active={sort.key === "ticker"} dir={sort.dir} onSort={handleSort} align="left" />
+              <SortHeader label="Name" sortKey="name" active={sort.key === "name"} dir={sort.dir} onSort={handleSort} align="left" />
+              <SortHeader label="Section" sortKey="section" active={sort.key === "section"} dir={sort.dir} onSort={handleSort} align="left" />
+              <SortHeader label="Price" sortKey="price" active={sort.key === "price"} dir={sort.dir} onSort={handleSort} />
+              <SortHeader label="1M" sortKey="perf1m" active={sort.key === "perf1m"} dir={sort.dir} onSort={handleSort} />
+              <SortHeader label="6M" sortKey="perf6m" active={sort.key === "perf6m"} dir={sort.dir} onSort={handleSort} />
+              <SortHeader label="Breakout" sortKey="breakout" active={sort.key === "breakout"} dir={sort.dir} onSort={handleSort} />
+              <SortHeader label="Signal" sortKey="signal" active={sort.key === "signal"} dir={sort.dir} onSort={handleSort} />
+              <SortHeader label="Conf." sortKey="confidence" active={sort.key === "confidence"} dir={sort.dir} onSort={handleSort} />
+              <SortHeader label="Risk" sortKey="risk" active={sort.key === "risk"} dir={sort.dir} onSort={handleSort} />
+              <SortHeader label="Buffett" sortKey="buffett" active={sort.key === "buffett"} dir={sort.dir} onSort={handleSort} />
+              <SortHeader label="Rev growth" sortKey="revGrowth" active={sort.key === "revGrowth"} dir={sort.dir} onSort={handleSort} />
+              <SortHeader label="Status" sortKey="status" active={sort.key === "status"} dir={sort.dir} onSort={handleSort} />
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((idea) => (
+              <SummaryRow
+                key={idea.id}
+                idea={idea}
+                enrich={enrichSet.has(idea.id)}
+                selected={idea.id === selectedId}
+                onSelect={onSelect}
+              />
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="text-[10px] text-muted-foreground leading-relaxed">
+        Price, performance and revenue growth come from the loaded watchlist
+        data. Signal, confidence, risk and Buffett score are rules-based and
+        loaded on demand for up to {ENRICH_CAP} rows. Click any row to open it in
+        the detail pane above.
+      </p>
+    </div>
+  );
+}
+
+// Reads an enriched numeric sort value for a ticker straight from the React
+// Query cache (already populated by visible enriched rows). Returns -Infinity
+// when not yet cached so un-fetched rows sink to the bottom.
+function enrichedSortValue(idea: ConvictionIdea, key: SortKey): number {
+  const signal = queryClient.getQueryData<import("@shared/schema").ModelSignal>([
+    "/api/conviction-ideas/signal",
+    idea.ticker,
+  ]);
+  const buffett = queryClient.getQueryData<import("@shared/schema").BuffettIndex>([
+    "/api/conviction-ideas/buffett",
+    idea.ticker,
+  ]);
+  const chart = queryClient.getQueryData<ConvictionChartResponse>([
+    "/api/conviction-ideas/chart",
+    idea.ticker,
+  ]);
+  switch (key) {
+    case "signal": {
+      const order: Record<string, number> = {
+        "Strong Buy": 6,
+        Buy: 5,
+        Watch: 4,
+        Hold: 3,
+        Trim: 2,
+        Sell: 1,
+        "Invalid Setup": 0,
+      };
+      return signal ? order[signal.signal] ?? -Infinity : -Infinity;
+    }
+    case "confidence":
+      return signal ? signal.compositeScore : -Infinity;
+    case "risk":
+      return signal ? deriveRisk(signal).riskScore ?? -Infinity : -Infinity;
+    case "buffett":
+      return buffettScoreIsMeaningful(buffett) ? buffett?.overallScore ?? -Infinity : -Infinity;
+    case "breakout": {
+      const s = chart?.breakout?.status;
+      return s === "breakout" ? 2 : s === "recent" ? 1 : s === "none" ? 0 : -Infinity;
+    }
+    default:
+      return -Infinity;
+  }
+}
 
 // The full watchlist workspace and the Dashboard's primary content: a left
 // rail of thematic watchlist sections (Bravos + AI sections, plus synthesized
@@ -1672,6 +2135,23 @@ export function ConvictionWatchlist({
                 No idea selected.
               </div>
             )
+          )}
+
+          {/* Bottom summary grid — a sortable, full-watchlist table across all
+              loaded ideas. Clicking a row selects that ticker in the detail
+              pane above. */}
+          {!isLoading && ideas.length > 0 && (
+            <WatchlistSummaryGrid
+              ideas={ideas}
+              selectedId={selectedId}
+              onSelect={(id) => {
+                const target = ideas.find((i) => i.id === id);
+                if (target) {
+                  setActiveSection((target.sectionKey ?? "other") as string);
+                }
+                setSelectedId(id);
+              }}
+            />
           )}
         </div>
       </div>

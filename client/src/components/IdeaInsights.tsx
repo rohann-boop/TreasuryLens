@@ -27,7 +27,124 @@ import {
   TrendingUp,
   TrendingDown,
   Target,
+  Gauge,
 } from "lucide-react";
+
+// Shared React Query hooks so the detail panels and the summary grid reuse the
+// same cache entry per ticker (no duplicate provider calls). Keys match the
+// queryClient's default `queryKey.join("/")` URL convention.
+export function useIdeaSignal(ticker: string | null | undefined) {
+  return useQuery<ModelSignal>({
+    queryKey: ["/api/conviction-ideas/signal", ticker ?? ""],
+    enabled: !!ticker,
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        `/api/conviction-ideas/signal/${encodeURIComponent(ticker as string)}`,
+      );
+      return res.json();
+    },
+  });
+}
+
+export function useIdeaBuffett(ticker: string | null | undefined) {
+  return useQuery<BuffettIndex>({
+    queryKey: ["/api/conviction-ideas/buffett", ticker ?? ""],
+    enabled: !!ticker,
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        `/api/conviction-ideas/buffett/${encodeURIComponent(ticker as string)}`,
+      );
+      return res.json();
+    },
+  });
+}
+
+// A ticker's Buffett score is only meaningful for operating equities. ETFs /
+// funds / non-operating issuers have no fundamentals and degrade to a 0%
+// coverage "incomplete" state — treat that as not-meaningful for display.
+export function buffettScoreIsMeaningful(b: BuffettIndex | undefined): boolean {
+  if (!b || !b.applicable) return false;
+  if (b.overallScore == null) return false;
+  if (b.framework === "equity" && !b.fundamentals && (b.dataCoverage ?? 0) < 0.15)
+    return false;
+  return true;
+}
+
+export type DerivedRiskLevel =
+  | "Low"
+  | "Moderate"
+  | "Elevated"
+  | "High"
+  | "Unknown";
+
+export interface DerivedRisk {
+  level: DerivedRiskLevel;
+  // 0-100 where higher = riskier. Derived from the signal's risk sub-model
+  // (which itself blends volatility / drawdown / Sharpe) plus valuation and
+  // momentum penalties and any invalid-setup flags.
+  riskScore: number | null;
+  reasons: string[];
+  flags: string[];
+}
+
+// Rules-based risk derivation from the deterministic ModelSignal. The signal's
+// `risk` sub-model scores *safety* (higher = calmer), so risk = 100 - safety,
+// nudged up when valuation is stretched, momentum is weak, or the setup is
+// flagged invalid. No LLM; purely a transform of public-data-derived scores.
+export function deriveRisk(signal: ModelSignal | undefined): DerivedRisk {
+  if (!signal) {
+    return { level: "Unknown", riskScore: null, reasons: [], flags: [] };
+  }
+  const byKey = new Map(signal.models.map((m) => [m.key, m]));
+  const risk = byKey.get("risk");
+  const valuation = byKey.get("valuation");
+  const momentum = byKey.get("momentum");
+
+  const reasons: string[] = [];
+  const flags: string[] = [];
+
+  // Base: invert the risk sub-model's safety score.
+  let score = risk && risk.available ? 100 - risk.score : 55;
+  if (risk && risk.available && risk.bullets[0]) reasons.push(risk.bullets[0]);
+  if (risk && risk.bullets.slice(1).length) {
+    for (const b of risk.bullets.slice(1, 3)) reasons.push(b);
+  }
+  if (risk && !risk.available) flags.push("Limited price history — risk is approximate.");
+
+  // Valuation penalty — a stretched multiple adds drawdown risk.
+  if (valuation && valuation.available) {
+    if (valuation.score < 40) {
+      score += 12;
+      flags.push("Valuation looks stretched.");
+      if (valuation.bullets[0]) reasons.push(valuation.bullets[0]);
+    } else if (valuation.score < 55) {
+      score += 5;
+    }
+  }
+
+  // Weak momentum modestly raises near-term risk.
+  if (momentum && momentum.available && momentum.score < 40) {
+    score += 6;
+    flags.push("Momentum is weak.");
+  }
+
+  if (signal.invalidReasons.length > 0) {
+    score = Math.max(score, 80);
+    for (const r of signal.invalidReasons.slice(0, 2)) flags.push(r);
+  }
+
+  score = Math.max(0, Math.min(100, score));
+
+  let level: DerivedRiskLevel;
+  if (score >= 75) level = "High";
+  else if (score >= 55) level = "Elevated";
+  else if (score >= 35) level = "Moderate";
+  else level = "Low";
+
+  return { level, riskScore: Math.round(score), reasons: reasons.slice(0, 4), flags: flags.slice(0, 4) };
+}
 
 // =============================================================================
 // Buffett business-quality panel for the selected conviction idea. Keyed by
@@ -224,17 +341,7 @@ function ListColumn({ title, items, empty }: { title: string; items: string[]; e
 }
 
 export function BuffettConvictionPanel({ ticker }: { ticker: string }) {
-  const query = useQuery<BuffettIndex>({
-    queryKey: ["/api/conviction-ideas/buffett", ticker],
-    enabled: !!ticker,
-    queryFn: async () => {
-      const res = await apiRequest(
-        "GET",
-        `/api/conviction-ideas/buffett/${encodeURIComponent(ticker)}`,
-      );
-      return res.json();
-    },
-  });
+  const query = useIdeaBuffett(ticker);
   const data = query.data;
 
   // ETF / fund / non-operating issuer: low or zero coverage and no equity
@@ -368,17 +475,7 @@ function confidenceTone(c: ConfidenceLabel): string {
 // The composite score (0-100) doubles as the model's confidence percentage:
 // it is the weighted ensemble strength behind the signal.
 export function SignalConvictionPanel({ ticker }: { ticker: string }) {
-  const query = useQuery<ModelSignal>({
-    queryKey: ["/api/conviction-ideas/signal", ticker],
-    enabled: !!ticker,
-    queryFn: async () => {
-      const res = await apiRequest(
-        "GET",
-        `/api/conviction-ideas/signal/${encodeURIComponent(ticker)}`,
-      );
-      return res.json();
-    },
-  });
+  const query = useIdeaSignal(ticker);
   const signal = query.data;
 
   // Key reasons: the top-scoring sub-model bullets plus the most material exit
@@ -558,6 +655,156 @@ export function SignalConvictionPanel({ ticker }: { ticker: string }) {
           Model signal, not financial advice. Levels and labels are derived
           deterministically from public price data — no trade execution and no
           LLM in this calculation.
+        </span>
+      </p>
+    </div>
+  );
+}
+
+// =============================================================================
+// Risk panel for the selected conviction idea. Rules-based: it reuses the same
+// deterministic ModelSignal as the buy/sell panel (shared query cache) and
+// derives a risk level + score + reasons/flags from the signal's volatility /
+// drawdown / valuation / momentum sub-scores. No separate provider call.
+// =============================================================================
+
+function riskTone(level: DerivedRiskLevel): string {
+  switch (level) {
+    case "Low":
+      return "border-pos/30 bg-pos/10 text-pos";
+    case "Moderate":
+      return "border-primary/30 bg-primary/10 text-primary";
+    case "Elevated":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-500";
+    case "High":
+      return "border-neg/30 bg-neg/10 text-neg";
+    default:
+      return "border-border bg-muted/30 text-muted-foreground";
+  }
+}
+
+function riskMeterTone(score: number | null): string {
+  if (score == null) return "bg-muted-foreground/40";
+  if (score >= 75) return "bg-neg";
+  if (score >= 55) return "bg-amber-500";
+  if (score >= 35) return "bg-primary";
+  return "bg-pos";
+}
+
+export function RiskConvictionPanel({ ticker }: { ticker: string }) {
+  const query = useIdeaSignal(ticker);
+  const signal = query.data;
+  const risk = useMemo(() => deriveRisk(signal), [signal]);
+
+  return (
+    <div
+      className="rounded-md border border-border/70 bg-card/40 p-3 space-y-3"
+      data-testid="risk-indicator"
+    >
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <Gauge className="h-3.5 w-3.5 text-primary/80" aria-hidden />
+          Risk assessment (rules-based)
+        </div>
+        {signal && (
+          <div className="flex items-center gap-2">
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 rounded border text-[11px] font-semibold tracking-wide uppercase px-2 py-0.5",
+                riskTone(risk.level),
+              )}
+              data-testid="risk-level"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-current" />
+              {risk.level} risk
+            </span>
+            {risk.riskScore != null && (
+              <span
+                className="text-[11px] uppercase tracking-wide tabular-nums text-muted-foreground"
+                data-testid="risk-score"
+              >
+                {risk.riskScore}/100
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {query.isLoading ? (
+        <Skeleton className="h-[110px] rounded-md" data-testid="risk-loading" />
+      ) : query.isError ? (
+        <div className="text-xs text-muted-foreground" data-testid="risk-error">
+          Risk unavailable: {(query.error as Error)?.message ?? "unknown"}
+        </div>
+      ) : !signal ? null : (
+        <>
+          {/* Risk meter */}
+          <div data-testid="risk-meter">
+            <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-1">
+              <span>Downside risk (higher = riskier)</span>
+              <span className="tabular-nums font-medium text-foreground">
+                {risk.riskScore ?? "—"}/100
+              </span>
+            </div>
+            <div className="h-2 rounded-full bg-muted overflow-hidden">
+              <div
+                className={cn("h-full", riskMeterTone(risk.riskScore))}
+                style={{ width: `${Math.max(0, Math.min(100, risk.riskScore ?? 0))}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Key risk reasons */}
+          {risk.reasons.length > 0 && (
+            <div data-testid="risk-reasons">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+                Key risk notes
+              </div>
+              <ul className="space-y-1 text-[11px]">
+                {risk.reasons.map((r) => (
+                  <li key={r} className="flex items-start gap-1.5">
+                    <CircleAlert className="h-3 w-3 mt-0.5 shrink-0 text-amber-500/80" />
+                    <span className="text-foreground/90">{r}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Risk flags */}
+          {risk.flags.length > 0 && (
+            <div data-testid="risk-flags">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+                Risk flags
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {risk.flags.map((f) => (
+                  <span
+                    key={f}
+                    className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-500 text-[10px] px-2 py-0.5"
+                  >
+                    <ShieldAlert className="h-3 w-3" />
+                    {f}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {risk.reasons.length === 0 && risk.flags.length === 0 && (
+            <p className="text-[11px] text-muted-foreground" data-testid="risk-empty">
+              No material risk flags from available price data.
+            </p>
+          )}
+        </>
+      )}
+
+      <p className="text-[10px] text-muted-foreground leading-relaxed flex items-start gap-1.5">
+        <ShieldAlert className="h-3 w-3 mt-0.5 shrink-0" />
+        <span>
+          Rules-based risk view, not financial advice. Derived deterministically
+          from the signal model's volatility, drawdown, valuation and momentum
+          sub-scores — no LLM.
         </span>
       </p>
     </div>
