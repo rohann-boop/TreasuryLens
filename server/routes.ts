@@ -20,6 +20,12 @@ import {
 } from "./convictionIdeas";
 import { answerAssistant } from "./assistantEngine";
 import {
+  getTickerBuffett,
+  getTickerSignal,
+  parseTickerSignalConfig,
+  getConvictionTicker,
+} from "./convictionInsights";
+import {
   insertInstrumentSchema,
   insertTreasurySchema,
   addConvictionIdeaSchema,
@@ -428,6 +434,49 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Invalid ticker." });
       }
       res.json(await getEquityRevenue(ticker));
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // Buffett Index for a single conviction idea (by ticker). Synthesizes a
+  // snapshot via the shared market-data path and reuses the same engine as the
+  // legacy per-instrument route, including SEC EDGAR fundamentals/governance
+  // for U.S. equities. ETFs/funds degrade to low data coverage gracefully.
+  app.get("/api/conviction-ideas/buffett/:ticker", async (req, res) => {
+    try {
+      const ticker = String(req.params.ticker ?? "").trim();
+      if (!ticker || !/^[A-Za-z0-9.\-]{1,12}$/.test(ticker)) {
+        return res.status(400).json({ message: "Invalid ticker." });
+      }
+      res.json(await getTickerBuffett(ticker));
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // Deterministic buy/sell + confidence model signal for a single conviction
+  // idea (by ticker). Tunable via downside/upside/horizon/profile/threshold
+  // query params. No LLM — derived from the snapshot's technicals/valuation.
+  app.get("/api/conviction-ideas/signal/:ticker", async (req, res) => {
+    try {
+      const ticker = String(req.params.ticker ?? "").trim();
+      if (!ticker || !/^[A-Za-z0-9.\-]{1,12}$/.test(ticker)) {
+        return res.status(400).json({ message: "Invalid ticker." });
+      }
+      const cfg = parseTickerSignalConfig(req.query as Record<string, unknown>);
+      res.json(await getTickerSignal(ticker, cfg));
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // Live ticker-tape items sourced from the conviction watchlist's already
+  // enriched key metrics — no extra provider calls. Feeds the Dashboard's
+  // moving price ribbon.
+  app.get("/api/conviction-ticker", async (_req, res) => {
+    try {
+      res.json(await getConvictionTicker());
     } catch (e) {
       res.status(500).json({ message: (e as Error).message });
     }

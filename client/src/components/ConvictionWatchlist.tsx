@@ -77,6 +77,10 @@ import {
   PanelLeft,
 } from "lucide-react";
 import { fmtPrice, fmtCompactCurrency, fmtPct } from "@/lib/format";
+import {
+  BuffettConvictionPanel,
+  SignalConvictionPanel,
+} from "@/components/IdeaInsights";
 
 const ROLE_ICON: Record<ConvictionRole, typeof Anchor> = {
   "core-compounder": Anchor,
@@ -976,8 +980,14 @@ function IdeaDetail({
       {/* Price + moving-average chart */}
       <ConvictionChart ticker={idea.ticker} />
 
+      {/* Buy / sell + confidence signal (rules-based model) */}
+      <SignalConvictionPanel ticker={idea.ticker} />
+
       {/* Revenue (current + historical from SEC EDGAR) */}
       <RevenuePanel ticker={idea.ticker} />
+
+      {/* Buffett Index — business quality & valuation */}
+      <BuffettConvictionPanel ticker={idea.ticker} />
 
       {/* Scenario card */}
       {idea.scenarioModel ? (
@@ -1301,7 +1311,19 @@ const SECTION_ICON: Record<string, typeof Anchor> = {
 // / catalysts / risks / kill-criteria, and add/remove persistence via the
 // SQLite-backed API. `addSignal` is bumped by the Dashboard header's "Add idea"
 // button to open the add dialog without lifting dialog state out of here.
-export function ConvictionWatchlist({ addSignal = 0 }: { addSignal?: number }) {
+export function ConvictionWatchlist({
+  addSignal = 0,
+  selectTicker,
+  onSelectedTickerChange,
+}: {
+  addSignal?: number;
+  // A ticker the parent (e.g. the moving ribbon) wants selected. Carries a
+  // bump counter so repeat-selecting the same ticker still triggers the effect.
+  selectTicker?: { ticker: string; nonce: number } | null;
+  // Reports the currently-selected ticker symbol up to the parent so the
+  // ribbon can highlight it.
+  onSelectedTickerChange?: (ticker: string | null) => void;
+}) {
   const { toast } = useToast();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<string | null>(null);
@@ -1407,6 +1429,22 @@ export function ConvictionWatchlist({ addSignal = 0 }: { addSignal?: number }) {
     () => ideas.find((i) => i.id === selectedId) ?? null,
     [ideas, selectedId],
   );
+
+  // Report the active ticker symbol up so the moving ribbon can highlight it.
+  useEffect(() => {
+    onSelectedTickerChange?.(selected?.ticker ?? null);
+  }, [selected, onSelectedTickerChange]);
+
+  // Honour a "select this ticker" request from the parent (the ribbon). We
+  // resolve the ticker to an idea, switch to its section, and select it.
+  useEffect(() => {
+    if (!selectTicker) return;
+    const sym = selectTicker.ticker.trim().toUpperCase();
+    const match = ideas.find((i) => i.ticker.toUpperCase() === sym);
+    if (!match) return;
+    setActiveSection((match.sectionKey ?? "other") as string);
+    setSelectedId(match.id);
+  }, [selectTicker, ideas]);
 
   const handleSelectSection = (key: string) => {
     setActiveSection(key);

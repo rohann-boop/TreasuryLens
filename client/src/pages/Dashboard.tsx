@@ -7,6 +7,7 @@ import { WordMark } from "@/components/Logo";
 import { MobileNav } from "@/components/MobileNav";
 import { PrimaryNav } from "@/components/PrimaryNav";
 import { ConvictionWatchlist } from "@/components/ConvictionWatchlist";
+import { TickerRibbon } from "@/components/TickerRibbon";
 
 function useTheme() {
   const [dark, setDark] = useState(true);
@@ -34,6 +35,13 @@ export default function Dashboard() {
   // A bump counter the workspace can watch to trigger an "Add idea" flow from
   // the header button, keeping the dialog state owned by the workspace.
   const [addSignal, setAddSignal] = useState(0);
+  // The currently-selected ticker (reported up by the workspace) drives the
+  // ribbon highlight; clicking the ribbon sends a select request back down.
+  const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
+  const [selectTicker, setSelectTicker] = useState<{
+    ticker: string;
+    nonce: number;
+  } | null>(null);
 
   const refresh = async () => {
     setRefreshing(true);
@@ -45,6 +53,7 @@ export default function Dashboard() {
       await queryClient.invalidateQueries({
         queryKey: ["/api/conviction-ideas/revenue"],
       });
+      await queryClient.invalidateQueries({ queryKey: ["/api/conviction-ticker"] });
       toast({ title: "Refreshed" });
     } catch {
       toast({ title: "Refresh failed", variant: "destructive" });
@@ -104,9 +113,22 @@ export default function Dashboard() {
         </div>
       </header>
 
+      {/* Moving price ribbon — sits just below the header, sourced from the
+          watchlist's enriched key metrics. Clicking an item selects it. */}
+      <TickerRibbon
+        selectedTicker={selectedTicker}
+        onSelect={(ticker) =>
+          setSelectTicker({ ticker, nonce: Date.now() })
+        }
+      />
+
       {/* Main workspace — the watchlist takes the full content area. */}
       <main className="flex-1 min-h-0 md:overflow-hidden">
-        <ConvictionWatchlist addSignal={addSignal} />
+        <ConvictionWatchlist
+          addSignal={addSignal}
+          selectTicker={selectTicker}
+          onSelectedTickerChange={setSelectedTicker}
+        />
       </main>
 
       <MobileNav />
