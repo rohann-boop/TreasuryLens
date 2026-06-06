@@ -19,7 +19,6 @@ import type {
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  ArrowLeft,
   ArrowUpDown,
   Cpu,
   BrainCircuit,
@@ -36,6 +35,7 @@ import {
 import { fmtAgo } from "@/lib/format";
 import { WordMark } from "@/components/Logo";
 import { MobileNav } from "@/components/MobileNav";
+import { PrimaryNav } from "@/components/PrimaryNav";
 
 function useTheme() {
   const [dark, setDark] = useState(true);
@@ -2666,16 +2666,9 @@ export default function StockPicksPage() {
     >
       <header className="h-14 border-b border-border bg-background/80 backdrop-blur sticky top-0 z-20 flex items-center justify-between px-4 md:px-6">
         <div className="flex items-center gap-3 min-w-0">
-          <Link
-            href="/dashboard"
-            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-            data-testid="link-back-dashboard"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Dashboard</span>
+          <Link href="/dashboard" data-testid="link-home">
+            <WordMark />
           </Link>
-          <span className="text-muted-foreground">·</span>
-          <WordMark />
           <span className="text-muted-foreground hidden md:inline">·</span>
           <h1
             className="hidden md:inline text-base font-semibold"
@@ -2685,6 +2678,7 @@ export default function StockPicksPage() {
           </h1>
         </div>
         <div className="flex items-center gap-2">
+          <PrimaryNav className="mr-1" />
           {lastUpdated && (
             <span
               className="hidden lg:inline text-[11px] text-muted-foreground"
@@ -2693,20 +2687,6 @@ export default function StockPicksPage() {
               Updated {fmtAgo(lastUpdated)}
             </span>
           )}
-          <Link
-            href="/conviction"
-            className="hidden sm:inline-flex items-center gap-1 h-8 px-2 rounded text-[12px] text-muted-foreground hover:text-foreground"
-            data-testid="link-conviction"
-          >
-            Conviction
-          </Link>
-          <Link
-            href="/superinvestors"
-            className="hidden sm:inline-flex items-center gap-1 h-8 px-2 rounded text-[12px] text-muted-foreground hover:text-foreground"
-            data-testid="link-superinvestors"
-          >
-            SuperInvestors
-          </Link>
           <Button
             variant="ghost"
             size="icon"

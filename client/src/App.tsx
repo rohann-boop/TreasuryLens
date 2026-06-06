@@ -7,23 +7,26 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/Dashboard";
 import ThirteenF from "@/pages/ThirteenF";
-import Landing from "@/pages/Landing";
 import StockPicks from "@/pages/StockPicks";
 import ConvictionIdeas from "@/pages/ConvictionIdeas";
 import { AssistantWidget } from "@/components/AssistantWidget";
 
+// Watchlist-first app: the root route renders the Dashboard (no marketing
+// landing page). The three primary tabs are Dashboard, 13F Filings, and
+// Additional Stock Ideas (the watchlist). Legacy routes (/conviction,
+// /superinvestors, /stock-picks, /themes) remain for backward compatibility.
 function AppRouter() {
   return (
     <Switch>
-      <Route path="/" component={Landing} />
+      <Route path="/" component={Dashboard} />
       <Route path="/dashboard" component={Dashboard} />
       <Route path="/app" component={Dashboard} />
       <Route path="/13f" component={ThirteenF} />
       <Route path="/superinvestors" component={ThirteenF} />
+      <Route path="/ideas" component={ConvictionIdeas} />
+      <Route path="/conviction" component={ConvictionIdeas} />
       <Route path="/stock-picks" component={StockPicks} />
       <Route path="/themes" component={StockPicks} />
-      <Route path="/conviction" component={ConvictionIdeas} />
-      <Route path="/ideas" component={ConvictionIdeas} />
       <Route component={NotFound} />
     </Switch>
   );

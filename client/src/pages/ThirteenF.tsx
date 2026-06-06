@@ -21,7 +21,6 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ArrowDownRight,
-  ArrowLeft,
   ArrowUpDown,
   ArrowUpRight,
   ExternalLink,
@@ -35,6 +34,7 @@ import {
 import { fmtAgo, fmtCompact, fmtPct } from "@/lib/format";
 import { WordMark } from "@/components/Logo";
 import { MobileNav } from "@/components/MobileNav";
+import { PrimaryNav } from "@/components/PrimaryNav";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -931,25 +931,19 @@ export default function ThirteenFPage() {
     <div className="min-h-[100dvh] flex flex-col bg-background text-foreground">
       <header className="h-14 border-b border-border bg-background/80 backdrop-blur sticky top-0 z-20 flex items-center justify-between px-4 md:px-6">
         <div className="flex items-center gap-3 min-w-0">
-          <Link
-            href="/dashboard"
-            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-            data-testid="link-back-dashboard"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Dashboard</span>
+          <Link href="/dashboard" data-testid="link-home">
+            <WordMark />
           </Link>
-          <span className="text-muted-foreground">·</span>
-          <WordMark />
           <span className="text-muted-foreground hidden md:inline">·</span>
           <h1
             className="hidden md:inline text-base font-semibold"
             data-testid="text-page-title"
           >
-            SuperInvestors &amp; Politicians
+            13F Filings
           </h1>
         </div>
         <div className="flex items-center gap-2">
+          <PrimaryNav className="mr-1" />
           {lastUpdated && (
             <span
               className="hidden lg:inline text-[11px] text-muted-foreground"
@@ -992,7 +986,7 @@ export default function ThirteenFPage() {
         <div className="px-4 md:px-6 py-5 space-y-5 max-w-[1600px] mx-auto pb-20 md:pb-5">
           <div className="md:hidden">
             <h1 className="text-lg font-semibold">
-              SuperInvestors &amp; Politicians
+              13F Filings
             </h1>
           </div>
 

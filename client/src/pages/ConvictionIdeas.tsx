@@ -58,7 +58,6 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
-  ArrowLeft,
   Anchor,
   Scale,
   Sparkles,
@@ -81,6 +80,7 @@ import {
 import { fmtAgo, fmtPrice, fmtCompactCurrency, fmtPct } from "@/lib/format";
 import { WordMark } from "@/components/Logo";
 import { MobileNav } from "@/components/MobileNav";
+import { PrimaryNav } from "@/components/PrimaryNav";
 
 function useTheme() {
   const [dark, setDark] = useState(true);
@@ -1335,25 +1335,19 @@ export default function ConvictionIdeas() {
     <div className="min-h-screen flex flex-col bg-background text-foreground" data-testid="page-conviction">
       <header className="h-14 border-b border-border bg-background/80 backdrop-blur sticky top-0 z-20 flex items-center justify-between px-4 md:px-6">
         <div className="flex items-center gap-3 min-w-0">
-          <Link
-            href="/dashboard"
-            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-            data-testid="link-back-dashboard"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Dashboard</span>
+          <Link href="/dashboard" data-testid="link-home">
+            <WordMark />
           </Link>
-          <span className="text-muted-foreground">·</span>
-          <WordMark />
           <span className="text-muted-foreground hidden md:inline">·</span>
           <h1
             className="hidden md:inline text-base font-semibold"
             data-testid="text-page-title"
           >
-            Conviction Ideas
+            Additional Stock Ideas
           </h1>
         </div>
         <div className="flex items-center gap-2">
+          <PrimaryNav className="mr-1" />
           {data?.lastUpdated && (
             <span
               className="hidden lg:inline text-[11px] text-muted-foreground"
@@ -1362,13 +1356,6 @@ export default function ConvictionIdeas() {
               Updated {fmtAgo(data.lastUpdated)}
             </span>
           )}
-          <Link
-            href="/stock-picks"
-            className="hidden sm:inline-flex items-center gap-1 h-8 px-2 rounded text-[12px] text-muted-foreground hover:text-foreground"
-            data-testid="link-stock-picks"
-          >
-            Stock Picks
-          </Link>
           <Button
             variant="ghost"
             size="icon"
@@ -1385,7 +1372,7 @@ export default function ConvictionIdeas() {
       <main className="flex-1">
         <div className="px-4 md:px-6 py-5 space-y-5 max-w-[1600px] mx-auto pb-20 md:pb-5">
           <div className="md:hidden">
-            <h1 className="text-lg font-semibold">Conviction Ideas</h1>
+            <h1 className="text-lg font-semibold">Additional Stock Ideas</h1>
           </div>
 
           <div

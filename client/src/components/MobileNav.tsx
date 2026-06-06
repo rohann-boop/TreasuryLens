@@ -1,51 +1,19 @@
 import { Link, useLocation } from "wouter";
-import { Home, LineChart, Lightbulb, Users, Target } from "lucide-react";
+import { PRIMARY_TABS } from "@/components/PrimaryNav";
 
-type Item = {
-  href: string;
-  label: string;
-  testId: string;
-  icon: typeof Home;
-  match: (loc: string) => boolean;
+// Mobile bottom-bar navigation. Shows short labels for the three primary tabs;
+// the source of truth for the tabs themselves is PRIMARY_TABS in PrimaryNav.
+const MOBILE_LABELS: Record<string, string> = {
+  "nav-dashboard": "Dashboard",
+  "nav-13f": "13F",
+  "nav-ideas": "Ideas",
 };
 
-const ITEMS: Item[] = [
-  {
-    href: "/",
-    label: "Home",
-    testId: "mobile-nav-home",
-    icon: Home,
-    match: (loc) => loc === "/" || loc === "",
-  },
-  {
-    href: "/dashboard",
-    label: "Dashboard",
-    testId: "mobile-nav-dashboard",
-    icon: LineChart,
-    match: (loc) => loc === "/dashboard" || loc === "/app",
-  },
-  {
-    href: "/stock-picks",
-    label: "Picks",
-    testId: "mobile-nav-picks",
-    icon: Lightbulb,
-    match: (loc) => loc === "/stock-picks" || loc === "/themes",
-  },
-  {
-    href: "/conviction",
-    label: "Ideas",
-    testId: "mobile-nav-conviction",
-    icon: Target,
-    match: (loc) => loc === "/conviction" || loc === "/ideas",
-  },
-  {
-    href: "/superinvestors",
-    label: "Investors",
-    testId: "mobile-nav-superinvestors",
-    icon: Users,
-    match: (loc) => loc === "/superinvestors" || loc === "/13f",
-  },
-];
+const ITEMS = PRIMARY_TABS.map((tab) => ({
+  ...tab,
+  testId: `mobile-${tab.testId}`,
+  label: MOBILE_LABELS[tab.testId] ?? tab.label,
+}));
 
 export function MobileNav() {
   const [location] = useLocation();
@@ -55,7 +23,7 @@ export function MobileNav() {
       data-testid="mobile-nav"
       className="md:hidden fixed bottom-0 inset-x-0 z-40 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 pb-[env(safe-area-inset-bottom)]"
     >
-      <ul className="grid grid-cols-5">
+      <ul className="grid grid-cols-3">
         {ITEMS.map((item) => {
           const Icon = item.icon;
           const active = item.match(location);

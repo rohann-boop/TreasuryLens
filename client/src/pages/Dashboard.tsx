@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import type { Instrument, InstrumentSnapshot } from "@shared/schema";
 import { Sidebar } from "@/components/Sidebar";
@@ -32,9 +31,6 @@ import {
   BarChart3,
   PanelLeftClose,
   PanelLeftOpen,
-  Users,
-  Lightbulb,
-  Target,
 } from "lucide-react";
 import { fmtAgo, fmtCompact, fmtNum, fmtPrice } from "@/lib/format";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -42,6 +38,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { WordMark } from "@/components/Logo";
 import { MobileNav } from "@/components/MobileNav";
+import { PrimaryNav } from "@/components/PrimaryNav";
 
 function useTheme() {
   const [dark, setDark] = useState(true);
@@ -182,33 +179,7 @@ export default function Dashboard() {
           <span className="hidden lg:inline text-[11px] text-muted-foreground" data-testid="text-last-updated">
             {lastUpdated ? `Updated ${fmtAgo(lastUpdated)}` : "—"}
           </span>
-          <Link
-            href="/13f"
-            className="hidden sm:inline-flex items-center gap-1 h-8 px-2 rounded text-[12px] text-muted-foreground hover:text-foreground hover-elevate"
-            data-testid="link-13f"
-            title="13F Tracker — superinvestor holdings"
-          >
-            <Users className="h-3.5 w-3.5" />
-            <span>13F</span>
-          </Link>
-          <Link
-            href="/stock-picks"
-            className="hidden sm:inline-flex items-center gap-1 h-8 px-2 rounded text-[12px] text-muted-foreground hover:text-foreground hover-elevate"
-            data-testid="link-stock-picks"
-            title="Stock Picks — themed research watchlists"
-          >
-            <Lightbulb className="h-3.5 w-3.5" />
-            <span>Picks</span>
-          </Link>
-          <Link
-            href="/conviction"
-            className="hidden sm:inline-flex items-center gap-1 h-8 px-2 rounded text-[12px] text-muted-foreground hover:text-foreground hover-elevate"
-            data-testid="link-conviction"
-            title="Conviction Ideas — focused high-conviction research book"
-          >
-            <Target className="h-3.5 w-3.5" />
-            <span>Ideas</span>
-          </Link>
+          <PrimaryNav className="mr-1" />
           <AutoRefreshControl
             interval={interval}
             onChange={setInterval}
