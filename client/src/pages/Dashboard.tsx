@@ -115,7 +115,7 @@ export default function Dashboard() {
   const errorCount = snaps.filter((s) => s.status === "error").length;
 
   return (
-    <div className="h-[100dvh] grid grid-cols-[auto_minmax(0,1fr)] grid-rows-[auto_auto_1fr] overflow-hidden bg-background text-foreground">
+    <div className="min-h-[100dvh] md:h-[100dvh] grid grid-cols-[auto_minmax(0,1fr)] grid-rows-[auto_auto_1fr] md:overflow-hidden bg-background text-foreground">
       {/* Sidebar (desktop) — collapsible. Hidden on mobile; mobile uses Sheet. */}
       <div className="row-span-3 hidden md:flex h-full overflow-hidden">
         {sidebarCollapsed ? (
@@ -264,7 +264,7 @@ export default function Dashboard() {
       </div>
 
       {/* Main */}
-      <main className="col-start-2 min-w-0 overflow-y-auto" style={{ overscrollBehavior: "contain" }}>
+      <main className="col-start-2 min-w-0 md:overflow-y-auto md:[overscroll-behavior:contain]">
         <div className="px-4 md:px-6 py-5 space-y-5 max-w-[1600px] mx-auto pb-20 md:pb-5">
           {/* Live/demo data status note */}
           <div

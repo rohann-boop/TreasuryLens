@@ -180,7 +180,17 @@
   }
 
   html, body, #root {
-    height: 100%;
+    min-height: 100%;
+  }
+
+  /* Let the document itself scroll vertically. Embedded webviews (e.g. Comet /
+     Perplexity preview) don't always propagate touch/wheel scroll into nested
+     overflow panes the way Safari does, so we keep the page scrollable. */
+  html, body {
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: auto;
   }
 
   body {

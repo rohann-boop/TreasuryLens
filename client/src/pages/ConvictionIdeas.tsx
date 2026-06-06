@@ -560,10 +560,7 @@ export default function ConvictionIdeas() {
         </div>
       </header>
 
-      <main
-        className="flex-1 overflow-y-auto"
-        style={{ overscrollBehavior: "contain" }}
-      >
+      <main className="flex-1">
         <div className="px-4 md:px-6 py-5 space-y-5 max-w-[1600px] mx-auto pb-20 md:pb-5">
           <div className="md:hidden">
             <h1 className="text-lg font-semibold">Conviction Ideas</h1>
