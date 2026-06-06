@@ -10,6 +10,35 @@ import type {
 } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   ArrowLeft,
   Anchor,
@@ -23,6 +52,8 @@ import {
   AlertTriangle,
   ListChecks,
   CheckCircle2,
+  Plus,
+  Trash2,
 } from "lucide-react";
 import { fmtAgo, fmtPrice, fmtCompactCurrency, fmtPct } from "@/lib/format";
 import { WordMark } from "@/components/Logo";
@@ -260,7 +291,13 @@ function IdeaSelectorGroup({
   );
 }
 
-function IdeaDetail({ idea }: { idea: ConvictionIdea }) {
+function IdeaDetail({
+  idea,
+  onRemove,
+}: {
+  idea: ConvictionIdea;
+  onRemove: () => void;
+}) {
   const km = idea.keyMetrics;
   const perf = km?.performance ?? null;
   return (
@@ -277,17 +314,38 @@ function IdeaDetail({ idea }: { idea: ConvictionIdea }) {
             </h2>
             <p className="text-sm text-muted-foreground">{idea.companyName}</p>
           </div>
-          <div className="text-right">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              Conviction
+          <div className="flex items-start gap-3">
+            <div className="text-right">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                Conviction
+              </div>
+              <div className="text-xl font-bold text-primary">
+                {idea.convictionScore}
+                <span className="text-sm text-muted-foreground">/100</span>
+              </div>
             </div>
-            <div className="text-xl font-bold text-primary">
-              {idea.convictionScore}
-              <span className="text-sm text-muted-foreground">/100</span>
-            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-muted-foreground hover:text-neg"
+              onClick={onRemove}
+              aria-label={`Remove ${idea.ticker}`}
+              data-testid="button-remove-idea"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
           </div>
         </div>
         <div className="flex flex-wrap gap-1.5 text-[11px]">
+          {idea.custom && (
+            <span
+              className="rounded-full bg-amber-500/15 text-amber-500 px-2 py-0.5"
+              data-testid="idea-custom-badge"
+            >
+              Custom
+            </span>
+          )}
           <span className="rounded-full bg-primary/10 text-primary px-2 py-0.5">
             {idea.roleLabel}
           </span>
@@ -473,9 +531,201 @@ function IdeaDetail({ idea }: { idea: ConvictionIdea }) {
   );
 }
 
+const ROLE_OPTIONS: { value: ConvictionRole; label: string }[] = [
+  { value: "core-compounder", label: "Core compounder" },
+  { value: "asymmetric-candidate", label: "Asymmetric 2x/3x" },
+  { value: "high-variance-optionality", label: "High-variance optionality" },
+];
+
+const emptyForm = {
+  ticker: "",
+  companyName: "",
+  theme: "",
+  role: "asymmetric-candidate" as ConvictionRole,
+  convictionScore: "50",
+};
+
+function AddIdeaDialog({
+  open,
+  onOpenChange,
+  onAdded,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onAdded: (data: ConvictionIdeasResponse, ticker: string) => void;
+}) {
+  const [form, setForm] = useState(emptyForm);
+  const [submitting, setSubmitting] = useState(false);
+  const { toast } = useToast();
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.ticker.trim() || !form.companyName.trim() || !form.theme.trim()) {
+      toast({
+        title: "Ticker, name and theme are required",
+        variant: "destructive",
+      });
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await apiRequest("POST", "/api/conviction-ideas", {
+        ticker: form.ticker.trim(),
+        companyName: form.companyName.trim(),
+        theme: form.theme.trim(),
+        role: form.role,
+        convictionScore: Number(form.convictionScore) || 50,
+      });
+      const data = (await res.json()) as ConvictionIdeasResponse;
+      const ticker = form.ticker.trim().toUpperCase();
+      onAdded(data, ticker);
+      toast({ title: `Added ${ticker}` });
+      setForm(emptyForm);
+      onOpenChange(false);
+    } catch (err) {
+      toast({
+        title: "Failed to add idea",
+        description: (err as Error).message,
+        variant: "destructive",
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md" data-testid="dialog-add-idea">
+        <DialogHeader>
+          <DialogTitle>Add conviction idea</DialogTitle>
+          <DialogDescription>
+            Add your own research idea by ticker, name and theme. Live pricing
+            and a scenario model are attached automatically where available. You
+            can flesh out thesis, catalysts and kill criteria afterward.
+          </DialogDescription>
+        </DialogHeader>
+
+        <form onSubmit={submit} className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="idea-ticker" className="text-xs">
+                Ticker
+              </Label>
+              <Input
+                id="idea-ticker"
+                value={form.ticker}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, ticker: e.target.value.toUpperCase() }))
+                }
+                placeholder="e.g. ASML, RKLB"
+                className="mono mt-1"
+                data-testid="input-idea-ticker"
+                autoFocus
+              />
+            </div>
+            <div>
+              <Label htmlFor="idea-name" className="text-xs">
+                Company / fund name
+              </Label>
+              <Input
+                id="idea-name"
+                value={form.companyName}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, companyName: e.target.value }))
+                }
+                placeholder="e.g. ASML Holding N.V."
+                className="mt-1"
+                data-testid="input-idea-name"
+              />
+            </div>
+          </div>
+
+          <div>
+            <Label htmlFor="idea-theme" className="text-xs">
+              Theme
+            </Label>
+            <Input
+              id="idea-theme"
+              value={form.theme}
+              onChange={(e) => setForm((f) => ({ ...f, theme: e.target.value }))}
+              placeholder="e.g. Semiconductors / AI capex"
+              className="mt-1"
+              data-testid="input-idea-theme"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs">Role</Label>
+              <Select
+                value={form.role}
+                onValueChange={(v) =>
+                  setForm((f) => ({ ...f, role: v as ConvictionRole }))
+                }
+              >
+                <SelectTrigger className="mt-1" data-testid="select-idea-role">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ROLE_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="idea-score" className="text-xs">
+                Conviction (0–100)
+              </Label>
+              <Input
+                id="idea-score"
+                type="number"
+                min={0}
+                max={100}
+                value={form.convictionScore}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, convictionScore: e.target.value }))
+                }
+                className="mt-1 mono"
+                data-testid="input-idea-score"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => onOpenChange(false)}
+              data-testid="button-cancel-idea"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={submitting}
+              data-testid="button-submit-idea"
+            >
+              {submitting ? "Adding…" : "Add idea"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function ConvictionIdeas() {
   const { dark, setDark } = useTheme();
+  const { toast } = useToast();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [pendingRemove, setPendingRemove] = useState<ConvictionIdea | null>(
+    null,
+  );
+  const [removing, setRemoving] = useState(false);
 
   const query = useQuery<ConvictionIdeasResponse>({
     queryKey: ["/api/conviction-ideas"],
@@ -508,6 +758,44 @@ export default function ConvictionIdeas() {
     }
     return map;
   }, [ideas]);
+
+  // Both add and remove endpoints return the full refreshed response, so we
+  // write it straight into the query cache for an immediate update.
+  const applyResponse = (next: ConvictionIdeasResponse) => {
+    queryClient.setQueryData(["/api/conviction-ideas"], next);
+  };
+
+  const handleAdded = (next: ConvictionIdeasResponse, ticker: string) => {
+    applyResponse(next);
+    const added = next.ideas.find((i) => i.ticker === ticker);
+    if (added) setSelectedId(added.id);
+  };
+
+  const confirmRemove = async () => {
+    if (!pendingRemove) return;
+    setRemoving(true);
+    try {
+      const res = await apiRequest(
+        "DELETE",
+        `/api/conviction-ideas/${encodeURIComponent(pendingRemove.id)}`,
+      );
+      const next = (await res.json()) as ConvictionIdeasResponse;
+      applyResponse(next);
+      if (selectedId === pendingRemove.id) {
+        setSelectedId(next.ideas[0]?.id ?? null);
+      }
+      toast({ title: `Removed ${pendingRemove.ticker}` });
+      setPendingRemove(null);
+    } catch (err) {
+      toast({
+        title: "Failed to remove idea",
+        description: (err as Error).message,
+        variant: "destructive",
+      });
+    } finally {
+      setRemoving(false);
+    }
+  };
 
   return (
     <div className="min-h-screen flex flex-col bg-background text-foreground" data-testid="page-conviction">
@@ -599,6 +887,16 @@ export default function ConvictionIdeas() {
               className="md:sticky md:top-[72px] md:self-start space-y-4"
               data-testid="conviction-selector"
             >
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full justify-center gap-1.5 h-9"
+                onClick={() => setAddOpen(true)}
+                data-testid="button-add-idea"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Add idea
+              </Button>
               {isLoading && ideas.length === 0 ? (
                 <div className="space-y-2">
                   {Array.from({ length: 5 }).map((_, i) => (
@@ -626,7 +924,10 @@ export default function ConvictionIdeas() {
                   <Skeleton className="h-40 rounded-md" />
                 </div>
               ) : selected ? (
-                <IdeaDetail idea={selected} />
+                <IdeaDetail
+                  idea={selected}
+                  onRemove={() => setPendingRemove(selected)}
+                />
               ) : (
                 !isError && (
                   <div className="text-sm text-muted-foreground">
@@ -638,6 +939,48 @@ export default function ConvictionIdeas() {
           </div>
         </div>
       </main>
+
+      <AddIdeaDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        onAdded={handleAdded}
+      />
+
+      <AlertDialog
+        open={pendingRemove != null}
+        onOpenChange={(v) => {
+          if (!v) setPendingRemove(null);
+        }}
+      >
+        <AlertDialogContent data-testid="dialog-remove-idea">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Remove {pendingRemove?.ticker}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes {pendingRemove?.companyName} from your conviction
+              book. {pendingRemove?.custom
+                ? "Custom ideas are deleted permanently."
+                : "You can re-add this curated idea later by its ticker."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-remove">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmRemove();
+              }}
+              disabled={removing}
+              data-testid="button-confirm-remove"
+            >
+              {removing ? "Removing…" : "Remove"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <MobileNav />
     </div>

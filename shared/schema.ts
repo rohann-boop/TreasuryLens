@@ -937,6 +937,9 @@ export interface ConvictionIdea {
   reviewStatus: ConvictionReviewStatus;
   sourceNote: string;
   checklist: ConvictionChecklistItem[];
+  // True for user-added ideas (vs. curated defaults). User-added ideas carry
+  // lighter curated content. All ideas are removable.
+  custom?: boolean;
   // Enrichment, attached server-side. Null when providers are unavailable.
   keyMetrics?: StockPickKeyMetrics | null;
   scenarioModel?: ScenarioModel | null;
@@ -960,3 +963,25 @@ export interface ConvictionIdeasResponse {
     note: string;
   };
 }
+
+// Payload to add a user-defined conviction idea. Kept intentionally small —
+// ticker, name, theme, role, and an optional conviction score.
+export const addConvictionIdeaSchema = z.object({
+  ticker: z
+    .string()
+    .trim()
+    .min(1, "Ticker is required")
+    .max(12, "Ticker too long")
+    .regex(/^[A-Za-z0-9.\-]+$/, "Use letters, numbers, '.' or '-' only"),
+  companyName: z.string().trim().min(1, "Name is required").max(120),
+  theme: z.string().trim().min(1, "Theme is required").max(120),
+  role: z
+    .enum([
+      "core-compounder",
+      "asymmetric-candidate",
+      "high-variance-optionality",
+    ])
+    .default("asymmetric-candidate"),
+  convictionScore: z.coerce.number().int().min(0).max(100).default(50),
+});
+export type AddConvictionIdeaInput = z.infer<typeof addConvictionIdeaSchema>;

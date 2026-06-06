@@ -12,11 +12,17 @@ import { getThirteenFSummary } from "./sec13f";
 import { getPoliticiansSummary } from "./politicians";
 import { getStockPicks } from "./stockPicks";
 import { getStockPicksBacktest } from "./backtest";
-import { getConvictionIdeas } from "./convictionIdeas";
+import {
+  getConvictionIdeas,
+  addConvictionIdea,
+  removeConvictionIdea,
+  ConvictionConflictError,
+} from "./convictionIdeas";
 import { answerAssistant } from "./assistantEngine";
 import {
   insertInstrumentSchema,
   insertTreasurySchema,
+  addConvictionIdeaSchema,
   type Instrument,
   type InstrumentSnapshot,
   type TreasurySnapshot,
@@ -391,6 +397,38 @@ export async function registerRoutes(
   app.get("/api/conviction-ideas", async (_req, res) => {
     try {
       res.json(await getConvictionIdeas());
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // Add a user-defined conviction idea. Persisted in SQLite so it survives
+  // navigation and restarts. Returns the full refreshed response.
+  app.post("/api/conviction-ideas", async (req, res) => {
+    try {
+      const parsed = addConvictionIdeaSchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        return res.status(400).json({
+          message:
+            parsed.error.issues[0]?.message ?? "Invalid conviction idea input.",
+        });
+      }
+      res.json(await addConvictionIdea(parsed.data));
+    } catch (e) {
+      if (e instanceof ConvictionConflictError) {
+        return res.status(409).json({ message: e.message });
+      }
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // Remove a conviction idea (custom or curated default) by id. Returns the
+  // full refreshed response so the client can update in one round-trip.
+  app.delete("/api/conviction-ideas/:id", async (req, res) => {
+    try {
+      const id = String(req.params.id ?? "").trim();
+      if (!id) return res.status(400).json({ message: "Idea id is required." });
+      res.json(await removeConvictionIdea(id));
     } catch (e) {
       res.status(500).json({ message: (e as Error).message });
     }

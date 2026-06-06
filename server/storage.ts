@@ -47,7 +47,91 @@ CREATE TABLE IF NOT EXISTS treasury_history (
 );
 CREATE INDEX IF NOT EXISTS idx_treasury_history_instrument
   ON treasury_history(instrument_id, captured_at);
+CREATE TABLE IF NOT EXISTS conviction_custom (
+  id TEXT PRIMARY KEY,
+  ticker TEXT NOT NULL,
+  company_name TEXT NOT NULL,
+  role TEXT NOT NULL,
+  theme TEXT NOT NULL,
+  conviction_score INTEGER NOT NULL DEFAULT 50,
+  created_at INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS conviction_removed (
+  id TEXT PRIMARY KEY,
+  removed_at INTEGER NOT NULL DEFAULT 0
+);
 `);
+
+export interface CustomConvictionRow {
+  id: string;
+  ticker: string;
+  companyName: string;
+  role: string;
+  theme: string;
+  convictionScore: number;
+  createdAt: number;
+}
+
+// Conviction Ideas user-customization store. Defaults live in code
+// (server/convictionIdeas.ts); this table records user *additions*, and a
+// companion table records *removals* of any idea id (default or custom) so the
+// user's edits survive page navigation and server restarts.
+export const convictionStore = {
+  listCustom(): CustomConvictionRow[] {
+    return sqlite
+      .prepare(
+        `SELECT id, ticker, company_name AS companyName, role, theme,
+                conviction_score AS convictionScore, created_at AS createdAt
+         FROM conviction_custom ORDER BY created_at ASC`,
+      )
+      .all() as CustomConvictionRow[];
+  },
+  addCustom(row: CustomConvictionRow): void {
+    sqlite
+      .prepare(
+        `INSERT OR REPLACE INTO conviction_custom
+           (id, ticker, company_name, role, theme, conviction_score, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        row.id,
+        row.ticker,
+        row.companyName,
+        row.role,
+        row.theme,
+        row.convictionScore,
+        row.createdAt,
+      );
+    // Adding an id un-removes it (e.g. re-adding a previously removed default).
+    sqlite.prepare(`DELETE FROM conviction_removed WHERE id = ?`).run(row.id);
+  },
+  getCustom(id: string): CustomConvictionRow | undefined {
+    return sqlite
+      .prepare(
+        `SELECT id, ticker, company_name AS companyName, role, theme,
+                conviction_score AS convictionScore, created_at AS createdAt
+         FROM conviction_custom WHERE id = ?`,
+      )
+      .get(id) as CustomConvictionRow | undefined;
+  },
+  deleteCustom(id: string): boolean {
+    const r = sqlite.prepare(`DELETE FROM conviction_custom WHERE id = ?`).run(id);
+    return r.changes > 0;
+  },
+  listRemoved(): string[] {
+    const rows = sqlite
+      .prepare(`SELECT id FROM conviction_removed`)
+      .all() as { id: string }[];
+    return rows.map((r) => r.id);
+  },
+  markRemoved(id: string): void {
+    sqlite
+      .prepare(
+        `INSERT OR REPLACE INTO conviction_removed (id, removed_at) VALUES (?, ?)`,
+      )
+      .run(id, Date.now());
+  },
+};
 
 export interface IStorage {
   listInstruments(): Promise<Instrument[]>;
