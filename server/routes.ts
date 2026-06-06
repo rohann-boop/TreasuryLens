@@ -10,7 +10,7 @@ import { getEquityFundamentals } from "./secEdgar";
 import { getManagementGovernance } from "./secGovernance";
 import { getThirteenFSummary } from "./sec13f";
 import { getPoliticiansSummary } from "./politicians";
-import { getStockPicks } from "./stockPicks";
+import { getStockPicks, getTickerChart } from "./stockPicks";
 import { getStockPicksBacktest } from "./backtest";
 import {
   getConvictionIdeas,
@@ -397,6 +397,21 @@ export async function registerRoutes(
   app.get("/api/conviction-ideas", async (_req, res) => {
     try {
       res.json(await getConvictionIdeas());
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // Compact price + moving-average chart for a single conviction idea.
+  // Reuses the same Massive → Yahoo bars path as the metrics enrichment and
+  // is cached server-side (30 min). Returns price plus 50-/200-day SMAs.
+  app.get("/api/conviction-ideas/chart/:ticker", async (req, res) => {
+    try {
+      const ticker = String(req.params.ticker ?? "").trim();
+      if (!ticker || !/^[A-Za-z0-9.\-]{1,12}$/.test(ticker)) {
+        return res.status(400).json({ message: "Invalid ticker." });
+      }
+      res.json(await getTickerChart(ticker));
     } catch (e) {
       res.status(500).json({ message: (e as Error).message });
     }

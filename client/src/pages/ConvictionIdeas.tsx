@@ -1,11 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import {
+  Area,
+  CartesianGrid,
+  ComposedChart,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import type {
+  ConvictionChartResponse,
   ConvictionIdea,
   ConvictionIdeasResponse,
   ConvictionRole,
   ConvictionRoleInfo,
+  ConvictionSectionInfo,
+  ConvictionSectionKey,
   ScenarioModel,
 } from "@shared/schema";
 import { Button } from "@/components/ui/button";
@@ -54,6 +67,7 @@ import {
   CheckCircle2,
   Plus,
   Trash2,
+  LineChart as LineChartIcon,
 } from "lucide-react";
 import { fmtAgo, fmtPrice, fmtCompactCurrency, fmtPct } from "@/lib/format";
 import { WordMark } from "@/components/Logo";
@@ -142,6 +156,161 @@ function BulletSection({
           <li key={i}>{it}</li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+// Compact price + moving-average chart for the selected idea. Fetches a
+// downsampled close series plus 50-/200-day SMAs from the server (deployment-
+// safe via the shared query client). Mobile-friendly height + responsive.
+function ConvictionChart({ ticker }: { ticker: string }) {
+  const query = useQuery<ConvictionChartResponse>({
+    queryKey: ["/api/conviction-ideas/chart", ticker],
+    enabled: !!ticker,
+  });
+
+  const data = query.data;
+  const points = data?.points ?? [];
+  const hasData = points.length > 0;
+  const showMa50 = (data?.availableMaWindows ?? []).includes(50);
+  const showMa200 = (data?.availableMaWindows ?? []).includes(200);
+  const currency = data?.currency ?? "USD";
+  const fmt = (v: number) => fmtPrice(v, currency);
+
+  return (
+    <div
+      className="rounded-md border border-border/70 bg-card/40 p-3 space-y-2"
+      data-testid="idea-chart-card"
+    >
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <LineChartIcon className="h-3.5 w-3.5 text-primary/80" aria-hidden />
+          Price &amp; moving averages
+        </div>
+        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block w-2.5 h-0.5 rounded" style={{ background: "hsl(var(--chart-1))" }} />
+            Price
+          </span>
+          {showMa50 && (
+            <span className="inline-flex items-center gap-1" data-testid="chart-legend-ma50">
+              <span className="inline-block w-2.5 h-0.5 rounded" style={{ background: "hsl(var(--chart-3))" }} />
+              50-day
+            </span>
+          )}
+          {showMa200 && (
+            <span className="inline-flex items-center gap-1" data-testid="chart-legend-ma200">
+              <span className="inline-block w-2.5 h-0.5 rounded" style={{ background: "hsl(var(--chart-5))" }} />
+              200-day
+            </span>
+          )}
+        </div>
+      </div>
+
+      {query.isLoading ? (
+        <Skeleton className="h-[200px] sm:h-[240px] rounded-md" data-testid="chart-loading" />
+      ) : query.isError ? (
+        <div className="h-[200px] sm:h-[240px] flex items-center justify-center text-xs text-muted-foreground" data-testid="chart-error">
+          Chart unavailable: {(query.error as Error)?.message ?? "unknown"}
+        </div>
+      ) : !hasData ? (
+        <div className="h-[200px] sm:h-[240px] flex items-center justify-center text-xs text-muted-foreground" data-testid="chart-empty">
+          {data?.note ?? "No price history available for this ticker."}
+        </div>
+      ) : (
+        <div className="h-[200px] sm:h-[240px]" data-testid="idea-chart">
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={points} margin={{ top: 6, right: 8, left: 4, bottom: 0 }}>
+              <defs>
+                <linearGradient id="convictionPriceFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="hsl(var(--chart-1))" stopOpacity={0.3} />
+                  <stop offset="100%" stopColor="hsl(var(--chart-1))" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid stroke="hsl(var(--border))" strokeOpacity={0.4} vertical={false} />
+              <XAxis
+                dataKey="t"
+                type="number"
+                domain={["dataMin", "dataMax"]}
+                tickFormatter={(t) =>
+                  new Date(t).toLocaleDateString(undefined, { month: "short", year: "2-digit" })
+                }
+                stroke="hsl(var(--muted-foreground))"
+                fontSize={10}
+                tickLine={false}
+                minTickGap={48}
+              />
+              <YAxis
+                stroke="hsl(var(--muted-foreground))"
+                fontSize={10}
+                tickFormatter={(v) => fmt(v)}
+                domain={["auto", "auto"]}
+                tickLine={false}
+                width={58}
+                orientation="right"
+              />
+              <Tooltip
+                contentStyle={{
+                  background: "hsl(var(--popover))",
+                  border: "1px solid hsl(var(--popover-border))",
+                  borderRadius: 6,
+                  fontSize: 12,
+                }}
+                labelFormatter={(t) =>
+                  new Date(t as number).toLocaleDateString(undefined, {
+                    year: "numeric",
+                    month: "short",
+                    day: "numeric",
+                  })
+                }
+                formatter={(v: number, name: string) => [fmt(v), name]}
+              />
+              <Area
+                type="monotone"
+                dataKey="c"
+                name="Price"
+                stroke="hsl(var(--chart-1))"
+                strokeWidth={1.5}
+                fill="url(#convictionPriceFill)"
+                isAnimationActive={false}
+                dot={false}
+              />
+              {showMa50 && (
+                <Line
+                  type="monotone"
+                  dataKey="ma50"
+                  name="50-day MA"
+                  stroke="hsl(var(--chart-3))"
+                  strokeWidth={1}
+                  dot={false}
+                  isAnimationActive={false}
+                  connectNulls
+                />
+              )}
+              {showMa200 && (
+                <Line
+                  type="monotone"
+                  dataKey="ma200"
+                  name="200-day MA"
+                  stroke="hsl(var(--chart-5))"
+                  strokeWidth={1}
+                  dot={false}
+                  isAnimationActive={false}
+                  strokeDasharray="3 3"
+                  connectNulls
+                />
+              )}
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {data?.note && hasData && (
+        <p className="text-[10px] text-muted-foreground" data-testid="chart-note">
+          {data.note}
+          {data.source && data.source !== "unavailable" ? ` · source: ${data.source}` : ""}
+        </p>
+      )}
     </div>
   );
 }
@@ -236,56 +405,86 @@ function ChecklistRow({
   );
 }
 
-function IdeaSelectorGroup({
-  role,
-  ideas,
+function SelectorItem({
+  idea,
   selectedId,
   onSelect,
 }: {
-  role: ConvictionRoleInfo;
+  idea: ConvictionIdea;
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}) {
+  const active = idea.id === selectedId;
+  return (
+    <li>
+      <button
+        type="button"
+        data-testid={`selector-item-${idea.id}`}
+        aria-current={active ? "true" : undefined}
+        onClick={() => onSelect(idea.id)}
+        className={`w-full text-left rounded-md border px-3 py-2 transition-colors ${
+          active
+            ? "border-primary bg-primary/10"
+            : "border-border/70 bg-card/40 hover:bg-muted"
+        }`}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-semibold text-sm text-foreground">
+            {idea.ticker}
+          </span>
+          <span className="text-[11px] text-muted-foreground">
+            {idea.convictionScore}/100
+          </span>
+        </div>
+        <div className="text-[11px] text-muted-foreground truncate">
+          {idea.companyName}
+        </div>
+      </button>
+    </li>
+  );
+}
+
+// A thematic section in the selector. Ideas within a section are sub-grouped
+// by role so the role context (compounder / asymmetric / optionality) is
+// preserved while the primary grouping is the theme.
+function IdeaSelectorSection({
+  section,
+  ideas,
+  roles,
+  selectedId,
+  onSelect,
+}: {
+  section: ConvictionSectionInfo;
   ideas: ConvictionIdea[];
+  roles: ConvictionRoleInfo[];
   selectedId: string | null;
   onSelect: (id: string) => void;
 }) {
   if (ideas.length === 0) return null;
-  const Icon = ROLE_ICON[role.key];
+  // Order ideas by role for a stable, readable list.
+  const roleOrder = roles.map((r) => r.key);
+  const sorted = [...ideas].sort(
+    (a, b) => roleOrder.indexOf(a.role) - roleOrder.indexOf(b.role),
+  );
   return (
-    <div className="space-y-1.5" data-testid={`selector-group-${role.key}`}>
-      <div className="flex items-center gap-1.5 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        <Icon className="h-3.5 w-3.5 text-primary/80" aria-hidden />
-        {role.label}
+    <div className="space-y-1.5" data-testid={`selector-section-${section.key}`}>
+      <div className="flex items-center justify-between gap-2 px-1">
+        <span className="text-xs font-bold uppercase tracking-wide text-foreground">
+          {section.label}
+        </span>
+        <span className="text-[10px] text-muted-foreground" data-testid={`selector-section-count-${section.key}`}>
+          {ideas.length}
+        </span>
       </div>
       <ul className="space-y-1">
-        {ideas.map((idea) => {
-          const active = idea.id === selectedId;
-          return (
-            <li key={idea.id}>
-              <button
-                type="button"
-                data-testid={`selector-item-${idea.id}`}
-                aria-current={active ? "true" : undefined}
-                onClick={() => onSelect(idea.id)}
-                className={`w-full text-left rounded-md border px-3 py-2 transition-colors ${
-                  active
-                    ? "border-primary bg-primary/10"
-                    : "border-border/70 bg-card/40 hover:bg-muted"
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-semibold text-sm text-foreground">
-                    {idea.ticker}
-                  </span>
-                  <span className="text-[11px] text-muted-foreground">
-                    {idea.convictionScore}/100
-                  </span>
-                </div>
-                <div className="text-[11px] text-muted-foreground truncate">
-                  {idea.companyName}
-                </div>
-              </button>
-            </li>
-          );
-        })}
+        {sorted.map((idea) => (
+          <SelectorItem
+            key={idea.id}
+            idea={idea}
+            selectedId={selectedId}
+            onSelect={onSelect}
+          />
+        ))}
       </ul>
     </div>
   );
@@ -344,6 +543,14 @@ function IdeaDetail({
               data-testid="idea-custom-badge"
             >
               Custom
+            </span>
+          )}
+          {idea.sectionLabel && (
+            <span
+              className="rounded-full bg-primary/15 text-primary px-2 py-0.5 font-medium"
+              data-testid="idea-section-badge"
+            >
+              {idea.sectionLabel}
             </span>
           )}
           <span className="rounded-full bg-primary/10 text-primary px-2 py-0.5">
@@ -418,6 +625,9 @@ function IdeaDetail({
           ))}
         </ul>
       )}
+
+      {/* Price + moving-average chart */}
+      <ConvictionChart ticker={idea.ticker} />
 
       {/* Scenario card */}
       {idea.scenarioModel ? (
@@ -734,6 +944,7 @@ export default function ConvictionIdeas() {
   const data = query.data;
   const ideas = data?.ideas ?? [];
   const roles = data?.roles ?? [];
+  const sections = data?.sections ?? [];
   const isLoading = query.isLoading;
   const isError = query.isError;
 
@@ -749,12 +960,13 @@ export default function ConvictionIdeas() {
     [ideas, selectedId],
   );
 
-  const ideasByRole = useMemo(() => {
-    const map = new Map<ConvictionRole, ConvictionIdea[]>();
+  const ideasBySection = useMemo(() => {
+    const map = new Map<ConvictionSectionKey, ConvictionIdea[]>();
     for (const idea of ideas) {
-      const arr = map.get(idea.role) ?? [];
+      const key = (idea.sectionKey ?? "other") as ConvictionSectionKey;
+      const arr = map.get(key) ?? [];
       arr.push(idea);
-      map.set(idea.role, arr);
+      map.set(key, arr);
     }
     return map;
   }, [ideas]);
@@ -904,11 +1116,12 @@ export default function ConvictionIdeas() {
                   ))}
                 </div>
               ) : (
-                roles.map((role) => (
-                  <IdeaSelectorGroup
-                    key={role.key}
-                    role={role}
-                    ideas={ideasByRole.get(role.key) ?? []}
+                sections.map((section) => (
+                  <IdeaSelectorSection
+                    key={section.key}
+                    section={section}
+                    ideas={ideasBySection.get(section.key) ?? []}
+                    roles={roles}
                     selectedId={selectedId}
                     onSelect={setSelectedId}
                   />

@@ -1,4 +1,6 @@
 import type {
+  ConvictionChartPoint,
+  ConvictionChartResponse,
   DataConfidence,
   MarketCapBucket,
   RiskLevel,
@@ -14,6 +16,7 @@ import type {
   StockPicksResponse,
 } from "@shared/schema";
 import type { Bar } from "./indicators";
+import { sma } from "./indicators";
 import {
   fetchMassiveChart,
   fetchMassiveTickerDetails,
@@ -4573,5 +4576,111 @@ export async function getStockPicks(): Promise<StockPicksResponse> {
   if (cached && now - cached.at < METRICS_TTL_MS) return cached.data;
   const data = await buildResponse();
   cached = { at: now, data };
+  return data;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Conviction Ideas — compact price + moving-average chart
+//
+// Reuses the same Massive → Yahoo bars path as enrichOne. Returns a
+// downsampled close series plus 50-/200-day SMAs aligned to the same points.
+// Cached per-ticker (30 min) so repeated selections in the UI are cheap.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const chartCache = new Map<string, { at: number; data: ConvictionChartResponse }>();
+const CHART_TTL_MS = 30 * 60 * 1000;
+const MAX_CHART_POINTS = 180; // keep payload small + mobile-friendly
+
+function downsampleIndices(length: number, target: number): number[] {
+  if (length <= target) return Array.from({ length }, (_, i) => i);
+  const out: number[] = [];
+  const step = (length - 1) / (target - 1);
+  for (let i = 0; i < target; i++) out.push(Math.round(i * step));
+  // Always include the very last bar.
+  if (out[out.length - 1] !== length - 1) out[out.length - 1] = length - 1;
+  return Array.from(new Set(out)).sort((a, b) => a - b);
+}
+
+export async function getTickerChart(
+  rawTicker: string,
+): Promise<ConvictionChartResponse> {
+  const ticker = rawTicker.trim().toUpperCase();
+  const now = Date.now();
+  const hit = chartCache.get(ticker);
+  if (hit && now - hit.at < CHART_TTL_MS) return hit.data;
+
+  const warnings: string[] = [];
+  const { bars, source } = await fetchBars(ticker);
+
+  if (!bars || bars.length === 0) {
+    const empty: ConvictionChartResponse = {
+      ticker,
+      points: [],
+      source: "unavailable",
+      currency: null,
+      availableMaWindows: [],
+      lastClose: null,
+      changePct: null,
+      note: "No historical price series available for this ticker.",
+      warnings: ["Historical price series unavailable for this ticker."],
+    };
+    chartCache.set(ticker, { at: now, data: empty });
+    return empty;
+  }
+
+  // Compute MAs on the FULL series (so the 200-day window is correct), then
+  // downsample the close + MA arrays together to keep the payload small.
+  const closes = bars.map((b) => b.c);
+  const ma50Full = sma(closes, 50);
+  const ma200Full = sma(closes, 200);
+
+  const idxs = downsampleIndices(bars.length, MAX_CHART_POINTS);
+  const points: ConvictionChartPoint[] = idxs.map((i) => ({
+    t: bars[i].t,
+    c: bars[i].c,
+    ma50: ma50Full[i],
+    ma200: ma200Full[i],
+  }));
+
+  const availableMaWindows: number[] = [];
+  if (closes.length >= 50) availableMaWindows.push(50);
+  if (closes.length >= 200) availableMaWindows.push(200);
+
+  if (closes.length < 50) {
+    warnings.push(
+      `Only ${closes.length} trading days available — no moving average shown.`,
+    );
+  } else if (closes.length < 200) {
+    warnings.push(
+      `Only ${closes.length} trading days available — 200-day moving average not shown.`,
+    );
+  }
+
+  const first = points[0]?.c ?? null;
+  const lastClose = points[points.length - 1]?.c ?? null;
+  const changePct =
+    first != null && first > 0 && lastClose != null
+      ? ((lastClose - first) / first) * 100
+      : null;
+
+  const note =
+    availableMaWindows.length === 2
+      ? "Price with 50-day and 200-day moving averages."
+      : availableMaWindows.length === 1
+        ? "Price with 50-day moving average (insufficient history for 200-day)."
+        : "Price only — insufficient history for moving averages.";
+
+  const data: ConvictionChartResponse = {
+    ticker,
+    points,
+    source,
+    currency: source === "unavailable" ? null : "USD",
+    availableMaWindows,
+    lastClose,
+    changePct,
+    note,
+    warnings,
+  };
+  chartCache.set(ticker, { at: now, data });
   return data;
 }

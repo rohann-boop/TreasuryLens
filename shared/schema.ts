@@ -914,12 +914,34 @@ export interface ConvictionChecklistItem {
   note: string;
 }
 
+// Thematic section an idea belongs to. Sections are the primary grouping in
+// the UI selector (e.g. "Bravos", "Core AI compounders"). An idea has exactly
+// one primary section to avoid duplicate cards, but may carry extra theme tags.
+export type ConvictionSectionKey =
+  | "bravos"
+  | "core-ai-compounders"
+  | "speculative-ai-infra"
+  | "ai-power-grid"
+  | "ai-software-data"
+  | "frontier-high-upside"
+  | "other";
+
+export interface ConvictionSectionInfo {
+  key: ConvictionSectionKey;
+  label: string;
+  blurb: string;
+}
+
 export interface ConvictionIdea {
   id: string; // stable slug e.g. "tsla"
   ticker: string; // canonical ticker used by app conventions
   companyName: string;
   role: ConvictionRole;
   roleLabel: string; // human label e.g. "High-variance optionality"
+  // Primary thematic section for selector grouping. Optional for backward
+  // compatibility with user-added ideas, which default to "other".
+  sectionKey?: ConvictionSectionKey;
+  sectionLabel?: string;
   themes: string[]; // free-form theme tags (autonomy, robotics, ...)
   timeHorizon: string; // e.g. "Long-term (5y+)"
   targetOutcome: string; // e.g. "Optionality — 3x/5x on success"
@@ -953,6 +975,8 @@ export interface ConvictionRoleInfo {
 
 export interface ConvictionIdeasResponse {
   roles: ConvictionRoleInfo[];
+  // Thematic sections, in display order. The UI groups the selector by these.
+  sections: ConvictionSectionInfo[];
   ideas: ConvictionIdea[];
   lastUpdated: number;
   disclaimer: string;
@@ -962,6 +986,29 @@ export interface ConvictionIdeasResponse {
     fundamentals: boolean;
     note: string;
   };
+}
+
+// Compact price + moving-average chart series for a single conviction idea.
+// Points are downsampled daily closes; ma50/ma200 are simple moving averages
+// aligned to the same points (null until enough history exists).
+export interface ConvictionChartPoint {
+  t: number; // epoch ms (trading day)
+  c: number; // close
+  ma50: number | null;
+  ma200: number | null;
+}
+
+export interface ConvictionChartResponse {
+  ticker: string;
+  points: ConvictionChartPoint[];
+  source: string; // "massive" | "yahoo" | "unavailable"
+  currency: string | null;
+  // Which MA windows had enough data to compute at the latest bar.
+  availableMaWindows: number[]; // e.g. [50, 200] or [50] or []
+  lastClose: number | null;
+  changePct: number | null; // over the returned window
+  note: string;
+  warnings: string[];
 }
 
 // Payload to add a user-defined conviction idea. Kept intentionally small —
