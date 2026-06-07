@@ -20,7 +20,6 @@ import type {
   ConvictionIdeasResponse,
   ConvictionRole,
   ConvictionRoleInfo,
-  ConvictionSectionKey,
   EquityRevenueResponse,
   ScenarioModel,
 } from "@shared/schema";
@@ -79,6 +78,11 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
+  Search,
+  ChevronRight,
+  ChevronDown,
+  TrendingUp,
+  TrendingDown,
 } from "lucide-react";
 import { fmtPrice, fmtCompactCurrency, fmtPct } from "@/lib/format";
 import {
@@ -690,7 +694,54 @@ function ChecklistRow({
   );
 }
 
-function SelectorItem({
+// Lightweight, derived-only badges for a watchlist ticker row. Everything here
+// comes from already-loaded idea fields (custom flag, review status, and the
+// short-term performance already attached to keyMetrics), so rendering a row
+// never triggers a per-ticker provider call.
+function RowBadges({ idea }: { idea: ConvictionIdea }) {
+  const change1m = idea.keyMetrics?.performance?.change1mPct;
+  const hasPerf = change1m != null && Number.isFinite(change1m);
+  return (
+    <div className="flex items-center gap-1 shrink-0" data-testid={`row-badges-${idea.id}`}>
+      {idea.custom && (
+        <span
+          className="rounded-sm bg-amber-500/15 text-amber-500 px-1 py-px text-[9px] font-semibold uppercase tracking-wide"
+          title="Custom idea you added"
+          data-testid={`row-badge-custom-${idea.id}`}
+        >
+          Custom
+        </span>
+      )}
+      {idea.reviewStatus === "needs-review" && (
+        <span
+          className="rounded-sm bg-amber-500/15 text-amber-500 px-1 py-px text-[9px] font-semibold uppercase tracking-wide"
+          title="Flagged for review"
+          data-testid={`row-badge-review-${idea.id}`}
+        >
+          Review
+        </span>
+      )}
+      {hasPerf && (
+        <span
+          className={`inline-flex items-center gap-0.5 text-[10px] font-medium tabular-nums ${perfTone(change1m)}`}
+          title="1-month return"
+          data-testid={`row-perf-${idea.id}`}
+        >
+          {(change1m as number) >= 0 ? (
+            <TrendingUp className="h-3 w-3" aria-hidden />
+          ) : (
+            <TrendingDown className="h-3 w-3" aria-hidden />
+          )}
+          {fmtPct(change1m, 0)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// A single ticker row in the grouped watchlist. Shows symbol, short name and
+// the derived badges; clicking selects it and drives the detail pane.
+function TickerRow({
   idea,
   selectedId,
   onSelect,
@@ -704,22 +755,21 @@ function SelectorItem({
     <li>
       <button
         type="button"
-        data-testid={`selector-item-${idea.id}`}
+        data-testid={`watchlist-row-${idea.id}`}
+        data-selected={active ? "true" : "false"}
         aria-current={active ? "true" : undefined}
         onClick={() => onSelect(idea.id)}
-        className={`w-full text-left rounded-md border px-3 py-2 transition-colors ${
+        className={`w-full text-left rounded-md border px-2.5 py-1.5 transition-colors ${
           active
             ? "border-primary bg-primary/10"
-            : "border-border/70 bg-card/40 hover:bg-muted"
+            : "border-transparent hover:bg-muted/60"
         }`}
       >
         <div className="flex items-center justify-between gap-2">
-          <span className="font-semibold text-sm text-foreground">
+          <span className="font-semibold text-sm text-foreground shrink-0">
             {idea.ticker}
           </span>
-          <span className="text-[11px] text-muted-foreground">
-            {idea.convictionScore}/100
-          </span>
+          <RowBadges idea={idea} />
         </div>
         <div className="text-[11px] text-muted-foreground truncate">
           {idea.companyName}
@@ -729,112 +779,84 @@ function SelectorItem({
   );
 }
 
-// A view in the section rail: either a curated thematic section or a
-// synthesized cross-cutting view ("Custom / personal", "Needs review").
-// `key` is used for testids and active-state; `count` is the number of ideas
-// that resolve to this view.
-interface RailView {
-  key: string;
-  label: string;
-  blurb: string;
-  icon: typeof Anchor;
-  count: number;
-  synthetic?: boolean;
-}
-
-// The left rail of watchlist sections. The active section drives which ticker
-// list is shown. Renders as a vertical list of section buttons with counts.
-function SectionRail({
-  views,
-  activeKey,
-  onSelect,
-}: {
-  views: RailView[];
-  activeKey: string;
-  onSelect: (key: string) => void;
-}) {
-  return (
-    <nav
-      className="space-y-1"
-      aria-label="Watchlist sections"
-      data-testid="section-rail"
-    >
-      {views.map((v) => {
-        const active = v.key === activeKey;
-        const Icon = v.icon;
-        return (
-          <button
-            key={v.key}
-            type="button"
-            onClick={() => onSelect(v.key)}
-            aria-current={active ? "true" : undefined}
-            title={v.blurb}
-            data-testid={`section-rail-item-${v.key}`}
-            className={`w-full flex items-center gap-2 rounded-md border px-2.5 py-2 text-left transition-colors ${
-              active
-                ? "border-primary bg-primary/10 text-foreground"
-                : "border-transparent hover:bg-muted/60 text-foreground/90"
-            }`}
-          >
-            <Icon
-              className={`h-4 w-4 shrink-0 ${active ? "text-primary" : "text-muted-foreground"}`}
-              aria-hidden
-            />
-            <span className="text-xs font-semibold truncate flex-1 min-w-0">
-              {v.label}
-            </span>
-            <span
-              className="text-[10px] text-muted-foreground shrink-0 tabular-nums"
-              data-testid={`section-rail-count-${v.key}`}
-            >
-              {v.count}
-            </span>
-          </button>
-        );
-      })}
-    </nav>
-  );
-}
-
-// The ticker list for the active section. Ideas are ordered by role so the
-// role context (compounder / asymmetric / optionality) reads top-to-bottom.
-function TickerList({
+// A collapsible section group inside the grouped watchlist. Renders a heading
+// with the section label, a count, and a chevron toggle, then the ticker rows.
+// Collapse state is owned by the parent (React state only; not persisted).
+function WatchlistGroup({
+  groupKey,
+  label,
+  icon: Icon,
   ideas,
   roles,
+  collapsed,
+  onToggle,
   selectedId,
   onSelect,
 }: {
+  groupKey: string;
+  label: string;
+  icon: typeof Anchor;
   ideas: ConvictionIdea[];
   roles: ConvictionRoleInfo[];
+  collapsed: boolean;
+  onToggle: (key: string) => void;
   selectedId: string | null;
   onSelect: (id: string) => void;
 }) {
-  if (ideas.length === 0) {
-    return (
-      <div
-        className="rounded-md border border-dashed border-border/60 px-3 py-6 text-center text-xs text-muted-foreground"
-        data-testid="ticker-list-empty"
-      >
-        No ideas in this section yet.
-      </div>
-    );
-  }
   const roleOrder = roles.map((r) => r.key);
   const sorted = [...ideas].sort(
     (a, b) => roleOrder.indexOf(a.role) - roleOrder.indexOf(b.role),
   );
+  const regionId = `watchlist-group-body-${groupKey}`;
   return (
-    <ul className="space-y-1" data-testid="ticker-list">
-      {sorted.map((idea) => (
-        <SelectorItem
-          key={idea.id}
-          idea={idea}
-          selectedId={selectedId}
-          onSelect={onSelect}
-        />
-      ))}
-    </ul>
+    <div data-testid={`watchlist-group-${groupKey}`} className="space-y-1">
+      <button
+        type="button"
+        onClick={() => onToggle(groupKey)}
+        aria-expanded={!collapsed}
+        aria-controls={regionId}
+        data-testid={`watchlist-group-toggle-${groupKey}`}
+        className="w-full flex items-center gap-1.5 rounded-md px-1.5 py-1 text-left hover:bg-muted/50 transition-colors"
+      >
+        {collapsed ? (
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        ) : (
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        )}
+        <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground truncate flex-1 min-w-0">
+          {label}
+        </span>
+        <span
+          className="text-[10px] text-muted-foreground shrink-0 tabular-nums"
+          data-testid={`watchlist-group-count-${groupKey}`}
+        >
+          {ideas.length}
+        </span>
+      </button>
+      {!collapsed && (
+        <ul className="space-y-0.5 pl-1" id={regionId} data-testid={`watchlist-group-list-${groupKey}`}>
+          {sorted.map((idea) => (
+            <TickerRow
+              key={idea.id}
+              idea={idea}
+              selectedId={selectedId}
+              onSelect={onSelect}
+            />
+          ))}
+        </ul>
+      )}
+    </div>
   );
+}
+
+// A resolved group for the grouped watchlist: a thematic section (or "Other")
+// with its label, icon and the ideas that fall under it after search/filter.
+interface WatchlistGroupData {
+  key: string;
+  label: string;
+  icon: typeof Anchor;
+  ideas: ConvictionIdea[];
 }
 
 function IdeaDetail({
@@ -1303,9 +1325,16 @@ function AddIdeaDialog({
   );
 }
 
-// Synthetic cross-cutting rail views appended after the curated sections.
-const CUSTOM_VIEW_KEY = "custom";
-const REVIEW_VIEW_KEY = "needs-review";
+// Top-of-watchlist filter scopes. The default is the grouped "All" view; the
+// other two narrow the whole watchlist to a cross-cutting slice while keeping
+// the section grouping intact.
+type WatchlistFilter = "all" | "needs-review" | "custom";
+
+const WATCHLIST_FILTERS: { key: WatchlistFilter; label: string; icon: typeof Anchor }[] = [
+  { key: "all", label: "All", icon: LayoutGrid },
+  { key: "needs-review", label: "Needs Review", icon: Eye },
+  { key: "custom", label: "Custom", icon: Plus },
+];
 
 const SECTION_ICON: Record<string, typeof Anchor> = {
   bravos: Star,
@@ -1315,8 +1344,6 @@ const SECTION_ICON: Record<string, typeof Anchor> = {
   "ai-software-data": LayoutGrid,
   "frontier-high-upside": Target,
   other: ListChecks,
-  [CUSTOM_VIEW_KEY]: Plus,
-  [REVIEW_VIEW_KEY]: Eye,
 };
 
 // =============================================================================
@@ -1767,13 +1794,15 @@ function enrichedSortValue(idea: ConvictionIdea, key: SortKey): number {
 }
 
 // The full watchlist workspace and the Dashboard's primary content: a left
-// rail of thematic watchlist sections (Bravos + AI sections, plus synthesized
-// "Custom / personal" and "Needs review" views) that drives a ticker list,
-// alongside a rich detail pane with quote/market-cap/PE + performance KPIs,
-// price/MA charts, breakout status, revenue, scenario model, thesis / bull-bear
-// / catalysts / risks / kill-criteria, and add/remove persistence via the
-// SQLite-backed API. `addSignal` is bumped by the Dashboard header's "Add idea"
-// button to open the add dialog without lifting dialog state out of here.
+// rail that *is* the grouped Watchlist — a search box, All/Needs-review/Custom
+// filter chips, and the visible ideas grouped under collapsible section
+// headings (Bravos + AI sections, plus an Other bucket for custom ideas).
+// Selecting a ticker drives a rich detail pane with quote/market-cap/PE +
+// performance KPIs, price/MA charts, breakout status, revenue, scenario model,
+// thesis / catalysts / risks / kill-criteria, and add/remove persistence via
+// the SQLite-backed API. `addSignal` is bumped by the Dashboard header's
+// "Add to Watchlist" button to open the add dialog without lifting dialog
+// state out of here.
 export function ConvictionWatchlist({
   addSignal = 0,
   selectTicker,
@@ -1789,7 +1818,9 @@ export function ConvictionWatchlist({
 }) {
   const { toast } = useToast();
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [activeSection, setActiveSection] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<WatchlistFilter>("all");
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [addOpen, setAddOpen] = useState(false);
   const [mobileRailOpen, setMobileRailOpen] = useState(false);
   const [pendingRemove, setPendingRemove] = useState<ConvictionIdea | null>(
@@ -1813,80 +1844,88 @@ export function ConvictionWatchlist({
     if (addSignal > 0) setAddOpen(true);
   }, [addSignal]);
 
-  const ideasBySection = useMemo(() => {
-    const map = new Map<string, ConvictionIdea[]>();
-    for (const idea of ideas) {
-      const key = (idea.sectionKey ?? "other") as ConvictionSectionKey;
-      const arr = map.get(key) ?? [];
-      arr.push(idea);
-      map.set(key, arr);
+  // Section display order + labels, driven by the server's section list with a
+  // trailing "Other" bucket for anything uncategorized (including custom ideas
+  // that default to "other").
+  const sectionMeta = useMemo(() => {
+    const map = new Map<string, { label: string; icon: typeof Anchor }>();
+    for (const s of sections) {
+      map.set(s.key as string, {
+        label: s.label,
+        icon: SECTION_ICON[s.key] ?? ListChecks,
+      });
+    }
+    if (!map.has("other")) {
+      map.set("other", { label: "Custom / Other", icon: ListChecks });
     }
     return map;
-  }, [ideas]);
+  }, [sections]);
 
-  const customIdeas = useMemo(() => ideas.filter((i) => i.custom), [ideas]);
-  const reviewIdeas = useMemo(
-    () => ideas.filter((i) => i.reviewStatus === "needs-review"),
-    [ideas],
-  );
+  const sectionOrder = useMemo(() => {
+    const order = sections.map((s) => s.key as string);
+    if (!order.includes("other")) order.push("other");
+    return order;
+  }, [sections]);
 
-  // Rail views = curated sections that actually have ideas, then the synthetic
-  // Custom / Needs-review views (only when non-empty).
-  const railViews = useMemo<RailView[]>(() => {
-    const views: RailView[] = sections
-      .map((s) => ({
-        key: s.key as string,
-        label: s.label,
-        blurb: s.blurb,
-        icon: SECTION_ICON[s.key] ?? ListChecks,
-        count: ideasBySection.get(s.key)?.length ?? 0,
-      }))
-      .filter((v) => v.count > 0);
-    if (customIdeas.length > 0) {
-      views.push({
-        key: CUSTOM_VIEW_KEY,
-        label: "Custom / personal",
-        blurb: "Your own ideas added to the watchlist.",
-        icon: SECTION_ICON[CUSTOM_VIEW_KEY],
-        count: customIdeas.length,
-        synthetic: true,
+  // Apply the active scope filter (All / Needs review / Custom) and the search
+  // query across ticker, company name and section label. Search filters across
+  // all groups; the result still groups by section below.
+  const visibleIdeas = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return ideas.filter((idea) => {
+      if (filter === "needs-review" && idea.reviewStatus !== "needs-review")
+        return false;
+      if (filter === "custom" && !idea.custom) return false;
+      if (!q) return true;
+      const hay = `${idea.ticker} ${idea.companyName} ${idea.sectionLabel ?? ""}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [ideas, filter, search]);
+
+  // Build the grouped watchlist: one group per section that has visible ideas,
+  // in the server's section order. This is the default "All Watchlist" view —
+  // sections are groupings here, not the primary navigation object.
+  const groups = useMemo<WatchlistGroupData[]>(() => {
+    const bySection = new Map<string, ConvictionIdea[]>();
+    for (const idea of visibleIdeas) {
+      const key = (idea.sectionKey ?? "other") as string;
+      const arr = bySection.get(key) ?? [];
+      arr.push(idea);
+      bySection.set(key, arr);
+    }
+    const result: WatchlistGroupData[] = [];
+    for (const key of sectionOrder) {
+      const groupIdeas = bySection.get(key);
+      if (!groupIdeas || groupIdeas.length === 0) continue;
+      const meta = sectionMeta.get(key);
+      result.push({
+        key,
+        label: meta?.label ?? key,
+        icon: meta?.icon ?? ListChecks,
+        ideas: groupIdeas,
       });
     }
-    if (reviewIdeas.length > 0) {
-      views.push({
-        key: REVIEW_VIEW_KEY,
-        label: "Needs review",
-        blurb: "Ideas flagged for a fresh look against their kill criteria.",
-        icon: SECTION_ICON[REVIEW_VIEW_KEY],
-        count: reviewIdeas.length,
-        synthetic: true,
+    // Any section keys not present in the configured order (defensive).
+    Array.from(bySection.entries()).forEach(([key, groupIdeas]) => {
+      if (sectionOrder.includes(key)) return;
+      result.push({
+        key,
+        label: sectionMeta.get(key)?.label ?? key,
+        icon: sectionMeta.get(key)?.icon ?? ListChecks,
+        ideas: groupIdeas,
       });
-    }
-    return views;
-  }, [sections, ideasBySection, customIdeas, reviewIdeas]);
+    });
+    return result;
+  }, [visibleIdeas, sectionOrder, sectionMeta]);
 
-  // Default-select the first available section + idea once data loads.
+  // Default-select the first visible idea once data loads, and keep the
+  // selection valid as the list (or filter) changes.
   useEffect(() => {
-    if (railViews.length === 0) return;
-    if (!activeSection || !railViews.some((v) => v.key === activeSection)) {
-      setActiveSection(railViews[0].key);
+    if (ideas.length === 0) return;
+    if (!selectedId || !ideas.some((i) => i.id === selectedId)) {
+      setSelectedId(visibleIdeas[0]?.id ?? ideas[0].id);
     }
-  }, [railViews, activeSection]);
-
-  const sectionIdeas = useMemo(() => {
-    if (activeSection === CUSTOM_VIEW_KEY) return customIdeas;
-    if (activeSection === REVIEW_VIEW_KEY) return reviewIdeas;
-    if (activeSection) return ideasBySection.get(activeSection) ?? [];
-    return [];
-  }, [activeSection, customIdeas, reviewIdeas, ideasBySection]);
-
-  // Keep a valid selection scoped to the active section.
-  useEffect(() => {
-    if (sectionIdeas.length === 0) return;
-    if (!selectedId || !sectionIdeas.some((i) => i.id === selectedId)) {
-      setSelectedId(sectionIdeas[0].id);
-    }
-  }, [sectionIdeas, selectedId]);
+  }, [ideas, visibleIdeas, selectedId]);
 
   const selected = useMemo(
     () => ideas.find((i) => i.id === selectedId) ?? null,
@@ -1899,26 +1938,24 @@ export function ConvictionWatchlist({
   }, [selected, onSelectedTickerChange]);
 
   // Honour a "select this ticker" request from the parent (the ribbon). We
-  // resolve the ticker to an idea, switch to its section, and select it.
+  // resolve the ticker to an idea and select it; the grouped list keeps its
+  // section expanded so the row is visible.
   useEffect(() => {
     if (!selectTicker) return;
     const sym = selectTicker.ticker.trim().toUpperCase();
     const match = ideas.find((i) => i.ticker.toUpperCase() === sym);
     if (!match) return;
-    setActiveSection((match.sectionKey ?? "other") as string);
     setSelectedId(match.id);
+    const key = (match.sectionKey ?? "other") as string;
+    setCollapsed((c) => ({ ...c, [key]: false }));
   }, [selectTicker, ideas]);
 
-  const handleSelectSection = (key: string) => {
-    setActiveSection(key);
+  const toggleGroup = (key: string) =>
+    setCollapsed((c) => ({ ...c, [key]: !c[key] }));
+
+  const handleSelectIdea = (id: string) => {
+    setSelectedId(id);
     setMobileRailOpen(false);
-    const first =
-      key === CUSTOM_VIEW_KEY
-        ? customIdeas[0]
-        : key === REVIEW_VIEW_KEY
-          ? reviewIdeas[0]
-          : ideasBySection.get(key)?.[0];
-    if (first) setSelectedId(first.id);
   };
 
   // Both add and remove endpoints return the full refreshed response, so we
@@ -1931,8 +1968,11 @@ export function ConvictionWatchlist({
     applyResponse(next);
     const added = next.ideas.find((i) => i.ticker === ticker);
     if (added) {
-      setActiveSection((added.sectionKey ?? "other") as string);
+      setFilter("all");
+      setSearch("");
       setSelectedId(added.id);
+      const key = (added.sectionKey ?? "other") as string;
+      setCollapsed((c) => ({ ...c, [key]: false }));
     }
   };
 
@@ -1962,15 +2002,61 @@ export function ConvictionWatchlist({
     }
   };
 
-  const activeLabel =
-    railViews.find((v) => v.key === activeSection)?.label ?? "Sections";
-
-  // Shared rail body — reused by the desktop column and the mobile drawer.
+  // Shared grouped-watchlist body — reused by the desktop rail and the mobile
+  // drawer. Header + search + filter chips + "Add to Watchlist" + the grouped,
+  // collapsible section list.
   const railBody = (
-    <div className="space-y-4" data-testid="conviction-selector">
+    <div className="space-y-3" data-testid="conviction-selector">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold text-foreground" data-testid="watchlist-heading">
+          Watchlist
+        </h2>
+        <span className="text-[11px] text-muted-foreground tabular-nums">
+          {visibleIdeas.length}
+        </span>
+      </div>
+
+      <div className="relative">
+        <Search
+          className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none"
+          aria-hidden
+        />
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search ticker or name…"
+          className="h-9 pl-8 text-sm"
+          aria-label="Search watchlist"
+          data-testid="input-watchlist-search"
+        />
+      </div>
+
+      <div className="flex items-center gap-1.5" data-testid="watchlist-filters">
+        {WATCHLIST_FILTERS.map((f) => {
+          const active = f.key === filter;
+          const FIcon = f.icon;
+          return (
+            <button
+              key={f.key}
+              type="button"
+              onClick={() => setFilter(f.key)}
+              aria-pressed={active}
+              data-testid={`watchlist-filter-${f.key}`}
+              className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                active
+                  ? "border-primary bg-primary/10 text-foreground"
+                  : "border-border/70 bg-card/40 text-muted-foreground hover:bg-muted/60"
+              }`}
+            >
+              <FIcon className="h-3 w-3" aria-hidden />
+              {f.label}
+            </button>
+          );
+        })}
+      </div>
+
       <Button
         type="button"
-        variant="outline"
         className="w-full justify-center gap-1.5 h-9"
         onClick={() => {
           setMobileRailOpen(false);
@@ -1979,36 +2065,41 @@ export function ConvictionWatchlist({
         data-testid="button-add-idea"
       >
         <Plus className="h-3.5 w-3.5" />
-        Add idea
+        Add to Watchlist
       </Button>
+
       {isLoading && ideas.length === 0 ? (
         <div className="space-y-2">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-9 rounded-md" />
           ))}
         </div>
+      ) : groups.length === 0 ? (
+        <div
+          className="rounded-md border border-dashed border-border/60 px-3 py-6 text-center text-xs text-muted-foreground"
+          data-testid="watchlist-empty"
+        >
+          {search.trim() || filter !== "all"
+            ? "No matching tickers."
+            : "Your watchlist is empty. Add an idea to get started."}
+        </div>
       ) : (
-        <>
-          <SectionRail
-            views={railViews}
-            activeKey={activeSection ?? ""}
-            onSelect={handleSelectSection}
-          />
-          <div className="pt-2 border-t border-border/60 space-y-2">
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground px-1">
-              {activeLabel}
-            </div>
-            <TickerList
-              ideas={sectionIdeas}
+        <div className="space-y-2" data-testid="watchlist-groups">
+          {groups.map((g) => (
+            <WatchlistGroup
+              key={g.key}
+              groupKey={g.key}
+              label={g.label}
+              icon={g.icon}
+              ideas={g.ideas}
               roles={roles}
+              collapsed={!!collapsed[g.key]}
+              onToggle={toggleGroup}
               selectedId={selectedId}
-              onSelect={(id) => {
-                setSelectedId(id);
-                setMobileRailOpen(false);
-              }}
+              onSelect={handleSelectIdea}
             />
-          </div>
-        </>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -2018,7 +2109,7 @@ export function ConvictionWatchlist({
       className="flex flex-col md:h-full md:min-h-0 md:flex-row"
       data-testid="conviction-watchlist"
     >
-      {/* Desktop section rail + ticker list */}
+      {/* Desktop grouped watchlist rail */}
       <aside
         className="hidden md:flex md:w-[280px] md:shrink-0 md:flex-col md:border-r md:border-border md:overflow-y-auto md:[overscroll-behavior:contain] p-4"
         data-testid="watchlist-rail"
@@ -2032,7 +2123,8 @@ export function ConvictionWatchlist({
         data-testid="conviction-pane"
       >
         <div className="px-4 md:px-6 py-4 space-y-4 max-w-[1400px] mx-auto pb-24 md:pb-8">
-          {/* Mobile: section selector trigger + active section label */}
+          {/* Mobile: grouped watchlist opens in a left drawer; the selected
+              ticker is shown alongside the trigger. */}
           <div className="md:hidden flex items-center gap-2">
             <Sheet open={mobileRailOpen} onOpenChange={setMobileRailOpen}>
               <SheetTrigger asChild>
@@ -2040,51 +2132,20 @@ export function ConvictionWatchlist({
                   variant="outline"
                   size="sm"
                   className="h-9 gap-1.5"
-                  data-testid="button-mobile-sections"
+                  data-testid="button-mobile-watchlist"
                 >
                   <PanelLeft className="h-4 w-4" />
-                  Sections
+                  Watchlist
                 </Button>
               </SheetTrigger>
-              <SheetContent side="left" className="p-4 w-[300px] overflow-y-auto">
+              <SheetContent side="left" className="p-4 w-[320px] overflow-y-auto">
                 {railBody}
               </SheetContent>
             </Sheet>
             <span className="text-xs font-semibold text-foreground truncate">
-              {activeLabel}
+              {selected ? `${selected.ticker} · ${selected.companyName}` : "Select a ticker"}
             </span>
           </div>
-
-          {/* Mobile: horizontal section chips for quick switching */}
-          {!isLoading && railViews.length > 0 && (
-            <div
-              className="md:hidden -mx-4 px-4 overflow-x-auto"
-              data-testid="section-chips"
-            >
-              <div className="flex gap-1.5 w-max">
-                {railViews.map((v) => {
-                  const active = v.key === activeSection;
-                  return (
-                    <button
-                      key={v.key}
-                      type="button"
-                      onClick={() => handleSelectSection(v.key)}
-                      data-testid={`section-chip-${v.key}`}
-                      aria-current={active ? "true" : undefined}
-                      className={`whitespace-nowrap rounded-full border px-3 py-1 text-[11px] font-medium transition-colors ${
-                        active
-                          ? "border-primary bg-primary/10 text-foreground"
-                          : "border-border/70 bg-card/40 text-muted-foreground"
-                      }`}
-                    >
-                      {v.label}{" "}
-                      <span className="opacity-60">{v.count}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
 
           <div
             className="flex items-start gap-2 rounded-md border border-border/70 bg-card/40 px-3 py-2 text-[11px] text-muted-foreground"
@@ -2147,7 +2208,8 @@ export function ConvictionWatchlist({
               onSelect={(id) => {
                 const target = ideas.find((i) => i.id === id);
                 if (target) {
-                  setActiveSection((target.sectionKey ?? "other") as string);
+                  const key = (target.sectionKey ?? "other") as string;
+                  setCollapsed((c) => ({ ...c, [key]: false }));
                 }
                 setSelectedId(id);
               }}

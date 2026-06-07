@@ -108,7 +108,7 @@ export default function Dashboard() {
             data-testid="button-header-add"
           >
             <Plus className="h-3.5 w-3.5 mr-1" />
-            Add idea
+            Add to Watchlist
           </Button>
         </div>
       </header>
