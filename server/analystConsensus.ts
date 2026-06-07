@@ -98,26 +98,42 @@ function getProxyUrl(): string {
   }
 }
 
-// Resolve the API base. CUSTOM_CRED_FINNHUB_IO_URL / FINNHUB_BASE_URL may be a
-// bare host (https://finnhub.io) or a full API base (https://finnhub.io/api/v1).
-// We normalise either to a `/api/v1` base so the endpoint path always resolves
-// and we never hit /stock/recommendation at the host root.
-function getBaseUrl(): string {
-  const raw = (
-    process.env.CUSTOM_CRED_FINNHUB_IO_URL ||
-    process.env.FINNHUB_BASE_URL ||
-    ""
-  ).trim();
-  if (!raw) return DEFAULT_BASE;
-  const cleaned = raw.replace(/\/+$/, "");
-  if (/\/api\/v\d+$/i.test(cleaned)) return cleaned;
-  // Bare host or unexpected path → append the known free-tier API base path.
+// A base URL is only usable for the Finnhub REST API if it actually points at
+// finnhub.io. The custom-credential machinery injects CUSTOM_CRED_FINNHUB_IO_URL
+// as a Perplexity pass-through (e.g. https://agent-proxy.perplexity.ai/
+// agent_pass_through) — that is NOT the API base and must be ignored, otherwise
+// we'd request /stock/recommendation against the proxy host and get a 404.
+function isFinnhubHost(host: string): boolean {
+  const h = host.toLowerCase();
+  return h === "finnhub.io" || h.endsWith(".finnhub.io");
+}
+
+// Normalise a candidate to a `/api/v1` base, or return "" if it is not a usable
+// finnhub.io base. Accepts a bare host (https://finnhub.io) or a full API base.
+function normaliseFinnhubBase(raw: string): string {
+  const cleaned = raw.trim().replace(/\/+$/, "");
+  if (!cleaned) return "";
+  let u: URL;
   try {
-    const u = new URL(cleaned);
-    return `${u.protocol}//${u.host}/api/v1`;
+    u = new URL(cleaned);
   } catch {
-    return DEFAULT_BASE;
+    return "";
   }
+  if (!isFinnhubHost(u.hostname)) return "";
+  if (/\/api\/v\d+$/i.test(u.pathname)) return `${u.protocol}//${u.host}${u.pathname}`;
+  return `${u.protocol}//${u.host}/api/v1`;
+}
+
+// Resolve the API base. Prefer an explicit FINNHUB_BASE_URL, then a
+// CUSTOM_CRED_FINNHUB_IO_URL but ONLY when it genuinely points at finnhub.io
+// (the credential proxy supplies a non-Finnhub pass-through URL we must skip).
+// Falls back to the known free-tier base so the endpoint path always resolves.
+function getBaseUrl(): string {
+  const explicit = normaliseFinnhubBase(process.env.FINNHUB_BASE_URL || "");
+  if (explicit) return explicit;
+  const custom = normaliseFinnhubBase(process.env.CUSTOM_CRED_FINNHUB_IO_URL || "");
+  if (custom) return custom;
+  return DEFAULT_BASE;
 }
 
 interface HttpResult {
