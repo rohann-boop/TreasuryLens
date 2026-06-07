@@ -40,9 +40,14 @@ async function main() {
   const tickers = process.argv.slice(2).filter(Boolean);
   const symbols = tickers.length ? tickers : ["NVDA", "AAPL"];
 
+  const transport = tokenConfigured
+    ? "native fetch (explicit token)"
+    : "system curl (credential injection)";
+
   console.log("[analyst-consensus check]");
   console.log(`  token env present: ${tokenConfigured}`);
   console.log(`  proxy env present: ${proxyConfigured}`);
+  console.log(`  transport:         ${transport}`);
   console.log("");
 
   let hadError = false;

@@ -27,6 +27,7 @@
 // fabricated verdict. Results are cached in-memory (6h TTL) to stay well under
 // free-tier limits. No secret is ever logged.
 
+import { execFile } from "node:child_process";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest, type RequestOptions } from "node:https";
 import { connect as tlsConnect } from "node:tls";
@@ -125,30 +126,97 @@ interface HttpResult {
   body: string;
 }
 
-// Perform a GET, tunnelling through an HTTP CONNECT proxy when one is
-// configured. Node's native fetch ignores HTTPS_PROXY, so when relying on a
-// custom-credential injection proxy we must build the request by hand. When no
-// proxy is set we fall back to native fetch. Either way we time out and never
-// log the URL (it may carry a token query param).
+// Native-fetch GET. Used when we hold an explicit token (the request is
+// self-contained and needs no proxy). Times out and never logs the URL.
+async function fetchGetJson(targetUrl: string): Promise<HttpResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(targetUrl, {
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    });
+    const body = await res.text();
+    return { status: res.status, ok: res.ok, body };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// GET via the system `curl`, used when relying on credential injection (the
+// custom-credential proxy/CA the harness configures for the process). The
+// reference `curl` to finnhub.io works because curl honours that proxy/CA,
+// whereas Node's native fetch ignores HTTPS_PROXY and a hand-rolled CONNECT
+// tunnel makes the TLS opaque so a MITM injector cannot add the token. Shelling
+// out to curl makes our request behave exactly like the working reference call.
+//
+// Safety: execFile with a fixed argv array (no shell) — the URL is built by us
+// from a validated base + URL-encoded symbol, so there is no injection surface.
+// We send no token (the proxy injects it) and never log the command or URL.
+function curlGetJson(targetUrl: string): Promise<HttpResult> {
+  return new Promise((resolve, reject) => {
+    const args = [
+      "--silent",
+      "--show-error",
+      "--max-time",
+      String(Math.ceil(FETCH_TIMEOUT_MS / 1000)),
+      "-H",
+      "Accept: application/json",
+      // Emit the HTTP status on its own trailing line so we can split it off.
+      "--write-out",
+      "\n%{http_code}",
+      "--",
+      targetUrl,
+    ];
+    execFile(
+      "curl",
+      args,
+      { timeout: FETCH_TIMEOUT_MS + 2000, maxBuffer: 4 * 1024 * 1024 },
+      (err, stdout) => {
+        if (err && !stdout) {
+          reject(err);
+          return;
+        }
+        const out = String(stdout);
+        const nl = out.lastIndexOf("\n");
+        const statusStr = nl >= 0 ? out.slice(nl + 1).trim() : "";
+        const body = nl >= 0 ? out.slice(0, nl) : out;
+        const status = Number(statusStr) || 0;
+        if (!status) {
+          reject(err || new Error("curl produced no HTTP status"));
+          return;
+        }
+        resolve({ status, ok: status >= 200 && status < 300, body });
+      },
+    );
+  });
+}
+
+// Probe whether `curl` is callable, so we can degrade gracefully if it is not.
+let curlAvailable: boolean | null = null;
+function hasCurl(): Promise<boolean> {
+  if (curlAvailable !== null) return Promise.resolve(curlAvailable);
+  return new Promise((resolve) => {
+    execFile("curl", ["--version"], { timeout: 4000 }, (err) => {
+      curlAvailable = !err;
+      resolve(curlAvailable);
+    });
+  });
+}
+
+// Choose the transport. With an explicit token we use native fetch. Otherwise we
+// rely on credential injection: prefer curl (it honours the harness proxy/CA),
+// then a CONNECT tunnel if an HTTPS_PROXY is explicitly set, and finally a bare
+// fetch as a last resort.
 async function httpGetJson(
   targetUrl: string,
   proxyUrl: string,
+  haveToken: boolean,
 ): Promise<HttpResult> {
-  if (!proxyUrl) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    try {
-      const res = await fetch(targetUrl, {
-        headers: { Accept: "application/json" },
-        signal: controller.signal,
-      });
-      const body = await res.text();
-      return { status: res.status, ok: res.ok, body };
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  return proxyGetJson(targetUrl, proxyUrl);
+  if (haveToken) return fetchGetJson(targetUrl);
+  if (await hasCurl()) return curlGetJson(targetUrl);
+  if (proxyUrl) return proxyGetJson(targetUrl, proxyUrl);
+  return fetchGetJson(targetUrl);
 }
 
 // HTTPS-over-proxy via CONNECT tunnel. Opens a plaintext connection to the
@@ -349,9 +417,12 @@ export async function getAnalystConsensus(
   const token = getToken();
   const proxyUrl = getProxyUrl();
 
-  // Need one of: an explicit token, or a proxy that can inject the credential
-  // on the wire. With neither, there is no way to authenticate to Finnhub.
-  if (!token && !proxyUrl) {
+  // We can authenticate if we have an explicit token, OR if credential injection
+  // is possible: the harness custom-credential proxy works at the network layer
+  // and is reached via the system `curl` (or an explicit HTTPS_PROXY). Only when
+  // there is truly no path — no token, no curl, no proxy — do we bail early.
+  const injectionPossible = (await hasCurl()) || !!proxyUrl;
+  if (!token && !injectionPossible) {
     const data = unavailable(
       symbol,
       "Analyst consensus needs a Finnhub credential. Set CUSTOM_CRED_FINNHUB_IO_TOKEN (or FINNHUB_API_KEY), or run behind the finnhub.io custom-credential proxy.",
@@ -363,16 +434,16 @@ export async function getAnalystConsensus(
 
   const base = getBaseUrl();
   // Build the URL. Only append the token param when we actually have one — when
-  // relying on proxy injection we send no token and never produce token=.
+  // relying on credential injection we send no token and never produce token=.
   const params = new URLSearchParams({ symbol });
   if (token) params.set("token", token);
   const url = `${base}/stock/recommendation?${params.toString()}`;
 
-  const usingProxyOnly = !token && !!proxyUrl;
+  const usingInjection = !token;
 
   let json: unknown;
   try {
-    const res = await httpGetJson(url, proxyUrl);
+    const res = await httpGetJson(url, proxyUrl, !!token);
     if (res.status === 401 || res.status === 403) {
       const data = errored(
         symbol,
@@ -409,7 +480,7 @@ export async function getAnalystConsensus(
     } catch {
       const data = errored(
         symbol,
-        usingProxyOnly
+        usingInjection
           ? "Finnhub returned a non-JSON response via the credential proxy."
           : "Finnhub returned a non-JSON response.",
       );
