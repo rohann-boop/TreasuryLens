@@ -2,15 +2,35 @@
 // from Finnhub's free-tier `/stock/recommendation` endpoint and reduces them to
 // a typed AnalystConsensus the UI can render directly.
 //
-// Credential: token is read from CUSTOM_CRED_FINNHUB_IO_TOKEN (secure custom
-// credential injected at runtime) or FINNHUB_API_KEY. The base URL defaults to
-// https://finnhub.io/api/v1 but honours CUSTOM_CRED_FINNHUB_IO_URL when it
-// looks like a usable API base. Nothing is hardcoded or committed.
+// Credential resolution is deliberately flexible so the service works in two
+// deployment modes without any secret being committed:
 //
-// Behaviour is graceful by design: a missing token, an uncovered ticker
-// (ETFs / funds / ambiguous symbols return an empty array), or a provider error
-// each map to an explicit status + message rather than a fabricated verdict.
-// Results are cached in-memory (6h TTL) to stay well under free-tier limits.
+//   1. Explicit token — CUSTOM_CRED_FINNHUB_IO_TOKEN (secure custom credential
+//      injected at runtime) or FINNHUB_API_KEY. The token is appended as the
+//      `token` query param. Placeholder values (your_key, changeme, …) are
+//      rejected so we never send `token=undefined` or a dummy.
+//
+//   2. HTTPS proxy injection — when no real token is present but an outbound
+//      proxy is configured (HTTPS_PROXY / HTTP_PROXY / ALL_PROXY, e.g. the
+//      Perplexity custom-credential proxy that injects auth on the wire), we
+//      call the endpoint WITHOUT a token param and let the proxy add it. Node's
+//      native fetch ignores these proxy env vars, so we tunnel the request
+//      through the proxy via an HTTP CONNECT helper built on node:http/https.
+//
+// The base URL defaults to https://finnhub.io/api/v1 but honours
+// CUSTOM_CRED_FINNHUB_IO_URL / FINNHUB_BASE_URL when set, normalising a bare
+// host to the /api/v1 API base so the endpoint path always resolves.
+//
+// Behaviour is graceful by design: no credential, an uncovered ticker
+// (ETFs / funds / ambiguous symbols return an empty array), an invalid token,
+// or a provider error each map to an explicit status + message rather than a
+// fabricated verdict. Results are cached in-memory (6h TTL) to stay well under
+// free-tier limits. No secret is ever logged.
+
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest, type RequestOptions } from "node:https";
+import { connect as tlsConnect } from "node:tls";
+import { URL } from "node:url";
 
 import type {
   AnalystConsensus,
@@ -26,21 +46,69 @@ const MAX_HISTORY = 6;
 
 const cache = new Map<string, { at: number; data: AnalystConsensus }>();
 
-function getToken(): string {
-  return (
-    process.env.CUSTOM_CRED_FINNHUB_IO_TOKEN ||
-    process.env.FINNHUB_API_KEY ||
-    ""
-  ).trim();
+// Reject obvious placeholders so we never send token=undefined/null/empty or a
+// committed dummy value. A real Finnhub token is an alphanumeric string; the
+// common placeholder shapes below are treated as "no token".
+const PLACEHOLDER_RE =
+  /^(undefined|null|none|n\/a|na|true|false|0|changeme|change_me|your[-_]?(api[-_]?)?(key|token)|finnhub[-_]?(api[-_]?)?(key|token)|placeholder|example|test|dummy|xxx+|\*+|<.*>)$/i;
+
+function looksLikeRealToken(value: string): boolean {
+  const v = value.trim();
+  if (v.length < 8) return false; // Finnhub tokens are well over 8 chars
+  if (PLACEHOLDER_RE.test(v)) return false;
+  return true;
 }
 
-// Resolve the API base. CUSTOM_CRED_FINNHUB_IO_URL may be a bare host
-// (https://finnhub.io) or a full API base (https://finnhub.io/api/v1). We
-// normalise either to a `/api/v1` base so the endpoint path always resolves.
+// Resolve an explicit token, or "" when none is configured / it's a placeholder.
+function getToken(): string {
+  const candidates = [
+    process.env.CUSTOM_CRED_FINNHUB_IO_TOKEN,
+    process.env.FINNHUB_API_KEY,
+    process.env.FINNHUB_TOKEN,
+  ];
+  for (const raw of candidates) {
+    const v = (raw || "").trim();
+    if (v && looksLikeRealToken(v)) return v;
+  }
+  return "";
+}
+
+// Detect an outbound HTTPS proxy (e.g. the custom-credential injection proxy).
+// Honours the conventional env vars in both upper- and lower-case. NO_PROXY is
+// intentionally ignored here: this service only ever talks to finnhub.io, so if
+// a proxy is configured we always want to route through it.
+function getProxyUrl(): string {
+  const raw = (
+    process.env.HTTPS_PROXY ||
+    process.env.https_proxy ||
+    process.env.HTTP_PROXY ||
+    process.env.http_proxy ||
+    process.env.ALL_PROXY ||
+    process.env.all_proxy ||
+    ""
+  ).trim();
+  if (!raw) return "";
+  try {
+    // Validate it parses as a URL; tolerate a bare host:port by prefixing http.
+    new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`);
+    return /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`;
+  } catch {
+    return "";
+  }
+}
+
+// Resolve the API base. CUSTOM_CRED_FINNHUB_IO_URL / FINNHUB_BASE_URL may be a
+// bare host (https://finnhub.io) or a full API base (https://finnhub.io/api/v1).
+// We normalise either to a `/api/v1` base so the endpoint path always resolves
+// and we never hit /stock/recommendation at the host root.
 function getBaseUrl(): string {
-  const raw = (process.env.CUSTOM_CRED_FINNHUB_IO_URL || "").trim();
+  const raw = (
+    process.env.CUSTOM_CRED_FINNHUB_IO_URL ||
+    process.env.FINNHUB_BASE_URL ||
+    ""
+  ).trim();
   if (!raw) return DEFAULT_BASE;
-  let cleaned = raw.replace(/\/+$/, "");
+  const cleaned = raw.replace(/\/+$/, "");
   if (/\/api\/v\d+$/i.test(cleaned)) return cleaned;
   // Bare host or unexpected path → append the known free-tier API base path.
   try {
@@ -49,6 +117,150 @@ function getBaseUrl(): string {
   } catch {
     return DEFAULT_BASE;
   }
+}
+
+interface HttpResult {
+  status: number;
+  ok: boolean;
+  body: string;
+}
+
+// Perform a GET, tunnelling through an HTTP CONNECT proxy when one is
+// configured. Node's native fetch ignores HTTPS_PROXY, so when relying on a
+// custom-credential injection proxy we must build the request by hand. When no
+// proxy is set we fall back to native fetch. Either way we time out and never
+// log the URL (it may carry a token query param).
+async function httpGetJson(
+  targetUrl: string,
+  proxyUrl: string,
+): Promise<HttpResult> {
+  if (!proxyUrl) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const res = await fetch(targetUrl, {
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      });
+      const body = await res.text();
+      return { status: res.status, ok: res.ok, body };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return proxyGetJson(targetUrl, proxyUrl);
+}
+
+// HTTPS-over-proxy via CONNECT tunnel. Opens a plaintext connection to the
+// proxy, issues CONNECT host:443, then makes the TLS GET over the tunnel. This
+// lets a credential-injecting proxy observe/modify the request as configured.
+function proxyGetJson(
+  targetUrl: string,
+  proxyUrl: string,
+): Promise<HttpResult> {
+  return new Promise((resolve, reject) => {
+    const target = new URL(targetUrl);
+    const proxy = new URL(proxyUrl);
+    const isHttpsTarget = target.protocol === "https:";
+    const targetPort = target.port || (isHttpsTarget ? "443" : "80");
+
+    const settle = (() => {
+      let done = false;
+      return {
+        ok: (r: HttpResult) => {
+          if (!done) {
+            done = true;
+            resolve(r);
+          }
+        },
+        err: (e: Error) => {
+          if (!done) {
+            done = true;
+            reject(e);
+          }
+        },
+      };
+    })();
+
+    const timer = setTimeout(
+      () => settle.err(new Error("timeout")),
+      FETCH_TIMEOUT_MS,
+    );
+    const clearTimer = () => clearTimeout(timer);
+
+    const sendOverSocket = (tunnel: import("node:net").Socket) => {
+      // For an https target, layer TLS over the raw CONNECT tunnel. For http,
+      // use the tunnel socket as-is.
+      const socket = isHttpsTarget
+        ? tlsConnect({ socket: tunnel, servername: target.hostname })
+        : tunnel;
+      socket.on("error", (e) => {
+        clearTimer();
+        settle.err(e);
+      });
+      const reqOpts: RequestOptions = {
+        method: "GET",
+        host: target.hostname,
+        port: Number(targetPort),
+        path: `${target.pathname}${target.search}`,
+        headers: { Accept: "application/json", Host: target.host },
+        agent: false,
+        // Reuse the (TLS-wrapped) tunnel socket rather than dialling again.
+        createConnection: () => socket as import("node:net").Socket,
+        servername: target.hostname,
+      };
+      const reqFn = isHttpsTarget ? httpsRequest : httpRequest;
+      const req = reqFn(reqOpts, (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c) => chunks.push(c as Buffer));
+        res.on("end", () => {
+          clearTimer();
+          const status = res.statusCode ?? 0;
+          settle.ok({
+            status,
+            ok: status >= 200 && status < 300,
+            body: Buffer.concat(chunks).toString("utf8"),
+          });
+        });
+      });
+      req.on("error", (e) => {
+        clearTimer();
+        settle.err(e);
+      });
+      req.end();
+    };
+
+    // Establish the CONNECT tunnel through the proxy.
+    const connectHeaders: Record<string, string> = {
+      Host: `${target.hostname}:${targetPort}`,
+    };
+    if (proxy.username) {
+      connectHeaders["Proxy-Authorization"] = `Basic ${Buffer.from(
+        `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`,
+      ).toString("base64")}`;
+    }
+    const connectReq = httpRequest({
+      host: proxy.hostname,
+      port: Number(proxy.port || (proxy.protocol === "https:" ? 443 : 80)),
+      method: "CONNECT",
+      path: `${target.hostname}:${targetPort}`,
+      headers: connectHeaders,
+    });
+    connectReq.on("connect", (res, socket) => {
+      if (res.statusCode !== 200) {
+        clearTimer();
+        settle.err(new Error(`proxy CONNECT failed (${res.statusCode})`));
+        socket.destroy();
+        return;
+      }
+      sendOverSocket(socket);
+    });
+    connectReq.on("error", (e) => {
+      clearTimer();
+      settle.err(e);
+    });
+    connectReq.end();
+  });
 }
 
 function labelForMean(mean: number | null): AnalystConsensusLabel | null {
@@ -135,36 +347,38 @@ export async function getAnalystConsensus(
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.data;
 
   const token = getToken();
-  if (!token) {
+  const proxyUrl = getProxyUrl();
+
+  // Need one of: an explicit token, or a proxy that can inject the credential
+  // on the wire. With neither, there is no way to authenticate to Finnhub.
+  if (!token && !proxyUrl) {
     const data = unavailable(
       symbol,
-      "Analyst consensus needs a Finnhub API token. Set CUSTOM_CRED_FINNHUB_IO_TOKEN (or FINNHUB_API_KEY) — start the server with the finnhub.io credential to enable it.",
+      "Analyst consensus needs a Finnhub credential. Set CUSTOM_CRED_FINNHUB_IO_TOKEN (or FINNHUB_API_KEY), or run behind the finnhub.io custom-credential proxy.",
     );
-    // Cache the no-token state briefly so we don't re-check on every request.
+    // Cache the no-credential state briefly so we don't re-check every request.
     cache.set(symbol, { at: Date.now() - (CACHE_TTL_MS - NEG_CACHE_TTL_MS), data });
     return data;
   }
 
   const base = getBaseUrl();
-  const url = `${base}/stock/recommendation?symbol=${encodeURIComponent(symbol)}&token=${encodeURIComponent(token)}`;
+  // Build the URL. Only append the token param when we actually have one — when
+  // relying on proxy injection we send no token and never produce token=.
+  const params = new URLSearchParams({ symbol });
+  if (token) params.set("token", token);
+  const url = `${base}/stock/recommendation?${params.toString()}`;
+
+  const usingProxyOnly = !token && !!proxyUrl;
 
   let json: unknown;
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    let res: Response;
-    try {
-      res = await fetch(url, {
-        headers: { Accept: "application/json" },
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
+    const res = await httpGetJson(url, proxyUrl);
     if (res.status === 401 || res.status === 403) {
       const data = errored(
         symbol,
-        "Finnhub rejected the API token (401/403). Check the finnhub.io credential.",
+        token
+          ? "Finnhub rejected the API token (401/403). Verify the finnhub.io credential value."
+          : "Finnhub rejected the request (401/403). The credential proxy did not inject a valid finnhub.io token.",
       );
       cache.set(symbol, { at: Date.now() - (CACHE_TTL_MS - NEG_CACHE_TTL_MS), data });
       return data;
@@ -177,17 +391,39 @@ export async function getAnalystConsensus(
       cache.set(symbol, { at: Date.now() - (CACHE_TTL_MS - NEG_CACHE_TTL_MS), data });
       return data;
     }
-    if (!res.ok) {
-      const data = errored(symbol, `Finnhub error ${res.status}.`);
+    if (res.status === 404) {
+      const data = errored(
+        symbol,
+        "Finnhub endpoint not found (404). Check the API base URL resolves to /api/v1.",
+      );
       cache.set(symbol, { at: Date.now() - (CACHE_TTL_MS - NEG_CACHE_TTL_MS), data });
       return data;
     }
-    json = await res.json();
+    if (!res.ok) {
+      const data = errored(symbol, `Finnhub endpoint unavailable (HTTP ${res.status}).`);
+      cache.set(symbol, { at: Date.now() - (CACHE_TTL_MS - NEG_CACHE_TTL_MS), data });
+      return data;
+    }
+    try {
+      json = JSON.parse(res.body);
+    } catch {
+      const data = errored(
+        symbol,
+        usingProxyOnly
+          ? "Finnhub returned a non-JSON response via the credential proxy."
+          : "Finnhub returned a non-JSON response.",
+      );
+      cache.set(symbol, { at: Date.now() - (CACHE_TTL_MS - NEG_CACHE_TTL_MS), data });
+      return data;
+    }
   } catch (e) {
-    const aborted = (e as Error)?.name === "AbortError";
+    const msg = (e as Error)?.message || "";
+    const timedOut = msg === "timeout" || (e as Error)?.name === "AbortError";
     const data = errored(
       symbol,
-      aborted ? "Finnhub request timed out." : `Finnhub request failed: ${(e as Error).message}`,
+      timedOut
+        ? "Finnhub request timed out."
+        : `Finnhub request failed: ${msg || "network error"}`,
     );
     cache.set(symbol, { at: Date.now() - (CACHE_TTL_MS - NEG_CACHE_TTL_MS), data });
     return data;
