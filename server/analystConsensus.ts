@@ -490,10 +490,11 @@ export async function getAnalystConsensus(
     selfContained = true;
     mode = "apikey";
   } else if (passThroughBase && passThroughToken) {
-    // Custom-credential pass-through: call the proxy URL with the target Finnhub
-    // URL appended, authenticating with x-api-key. The proxy injects the real
-    // Finnhub key and forwards the request.
-    url = `${passThroughBase}/${finnhubBase}${finnhubPath}`;
+    // Custom-credential pass-through: call the proxy URL with the Finnhub API
+    // path appended (/api/v1/...), authenticating with x-api-key. The proxy
+    // injects the real Finnhub key and forwards the request. The full target
+    // URL is NOT appended — the proxy maps the /api/v1 path to finnhub.io.
+    url = `${passThroughBase}/api/v1${finnhubPath}`;
     extraHeaders = { "x-api-key": passThroughToken };
     selfContained = true;
     mode = "passthrough";
