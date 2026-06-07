@@ -1123,3 +1123,140 @@ export const addConvictionIdeaSchema = z.object({
   convictionScore: z.coerce.number().int().min(0).max(100).default(50),
 });
 export type AddConvictionIdeaInput = z.infer<typeof addConvictionIdeaSchema>;
+
+// =============================================================================
+// Analyst consensus — Wall-Street recommendation trends sourced from Finnhub's
+// free-tier `/stock/recommendation` endpoint. Counts of strongBuy/buy/hold/
+// sell/strongSell per monthly period. We surface the latest period as a verdict
+// plus a short trend history. Degrades gracefully: no token, no coverage
+// (ETFs / uncovered names), or provider error each map to an explicit status so
+// the UI never fabricates a verdict.
+// =============================================================================
+
+export type AnalystConsensusStatus = "available" | "unavailable" | "error";
+
+export type AnalystConsensusLabel =
+  | "Strong Buy"
+  | "Buy"
+  | "Hold"
+  | "Sell"
+  | "Strong Sell";
+
+export interface AnalystRecommendationPeriod {
+  period: string; // "YYYY-MM-DD" — first of the month per Finnhub
+  strongBuy: number;
+  buy: number;
+  hold: number;
+  sell: number;
+  strongSell: number;
+  total: number;
+  // Weighted 1..5 mean (1 = Strong Buy, 5 = Strong Sell). Lower is more bullish.
+  meanScore: number | null;
+  label: AnalystConsensusLabel | null;
+  bullishPercent: number | null; // (strongBuy + buy) / total * 100
+  bearishPercent: number | null; // (sell + strongSell) / total * 100
+}
+
+export interface AnalystConsensus {
+  status: AnalystConsensusStatus;
+  symbol: string;
+  source: "finnhub";
+  asOf: number; // ms epoch the response was assembled
+  lastUpdated: string | null; // latest period date "YYYY-MM-DD"
+  // Latest-period roll-up (null when unavailable / error).
+  latestPeriod: string | null;
+  totalAnalysts: number | null;
+  strongBuy: number | null;
+  buy: number | null;
+  hold: number | null;
+  sell: number | null;
+  strongSell: number | null;
+  consensusLabel: AnalystConsensusLabel | null;
+  meanScore: number | null; // 1..5; lower = more bullish
+  bullishPercent: number | null;
+  bearishPercent: number | null;
+  // Direction of the latest period vs. the prior one ("more bullish" etc.).
+  trendDirection: "improving" | "stable" | "deteriorating" | null;
+  // Last few months of recommendation trends (newest first), for the mini-trend.
+  history: AnalystRecommendationPeriod[];
+  // Human-readable message — always present, especially for non-available cases.
+  message: string;
+}
+
+// =============================================================================
+// Action Signal — an explainable, rules-based research verdict that augments the
+// legacy Buy/Sell ModelSignal. It folds the existing deterministic engines
+// (momentum/trend, valuation/Buffett, growth/revenue, risk/volatility, thesis
+// review status) together with the optional Finnhub analyst consensus into one
+// of six plain-English action labels. Every factor carries a score, a label and
+// a one-line rationale so the call is auditable. NOT financial advice.
+// =============================================================================
+
+export type ActionLabel =
+  | "Avoid"
+  | "Watch"
+  | "Starter"
+  | "Add"
+  | "Hold"
+  | "Trim";
+
+export type ActionFactorKey =
+  | "momentum"
+  | "valuation"
+  | "quality"
+  | "growth"
+  | "risk"
+  | "analyst";
+
+export type FactorVerdict =
+  | "strong"
+  | "favorable"
+  | "neutral"
+  | "caution"
+  | "weak"
+  | "unavailable";
+
+export interface ActionFactor {
+  key: ActionFactorKey;
+  name: string; // "Momentum", "Valuation", ...
+  // 0-100, higher = more constructive for owning the name. null = no data.
+  score: number | null;
+  verdict: FactorVerdict;
+  // Short uppercase chip label, e.g. "Strong", "Stretched", "Improving".
+  label: string;
+  rationale: string; // one plain-English sentence
+  weight: number; // 0-1 contribution to the composite (0 when unavailable)
+  available: boolean;
+}
+
+export interface ActionAgreement {
+  // Internal action mapped to a coarse bullishness rank for comparison.
+  internalStance: "bullish" | "neutral" | "bearish";
+  analystStance: "bullish" | "neutral" | "bearish" | null;
+  // "aligned" | "analysts-more-bullish" | "analysts-more-bearish" | "no-coverage"
+  agreement:
+    | "aligned"
+    | "analysts-more-bullish"
+    | "analysts-more-bearish"
+    | "no-coverage";
+  note: string;
+}
+
+export interface ActionSignal {
+  symbol: string;
+  asOf: number;
+  // The new primary label and a 0-100 composite behind it.
+  action: ActionLabel;
+  compositeScore: number;
+  confidence: ConfidenceLabel;
+  summary: string; // one-line plain-English verdict
+  factors: ActionFactor[];
+  // What would move the call up / down a notch.
+  upgradeTriggers: string[];
+  downgradeTriggers: string[];
+  agreement: ActionAgreement;
+  // The legacy timing label is preserved so existing consumers keep working.
+  legacySignal: SignalLabel;
+  analystConsensus: AnalystConsensus | null;
+  notes: string[];
+}

@@ -12,7 +12,9 @@
 // A short in-memory cache keeps rapid panel switches from re-hitting providers.
 
 import type {
+  ActionSignal,
   BuffettIndex,
+  ConvictionIdea,
   Instrument,
   InstrumentSnapshot,
   ModelSignal,
@@ -25,6 +27,8 @@ import { computeBuffettIndex } from "./buffett";
 import { getEquityFundamentals } from "./secEdgar";
 import { getManagementGovernance } from "./secGovernance";
 import { getConvictionIdeas } from "./convictionIdeas";
+import { getAnalystConsensus } from "./analystConsensus";
+import { buildActionSignal } from "./actionSignal";
 
 const SNAP_TTL_MS = 60_000;
 const snapCache = new Map<string, { at: number; snap: InstrumentSnapshot }>();
@@ -111,6 +115,37 @@ export async function getTickerSignal(
 ): Promise<ModelSignal> {
   const snap = await getTickerSnapshot(ticker);
   return computeSignal(snap, cfg);
+}
+
+async function findConvictionIdea(
+  ticker: string,
+): Promise<ConvictionIdea | null> {
+  const sym = ticker.trim().toUpperCase();
+  try {
+    const data = await getConvictionIdeas();
+    return data.ideas.find((i) => i.ticker.toUpperCase() === sym) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Compose the explainable Action Signal for a ticker. Gathers the deterministic
+// ModelSignal + BuffettIndex, the conviction idea (for growth/thesis context)
+// and the optional Finnhub analyst consensus, then folds them via the pure
+// buildActionSignal engine. Each input is independently fault-tolerant so the
+// action signal still renders when any single provider is down.
+export async function getTickerActionSignal(
+  ticker: string,
+  cfg: SignalConfig = DEFAULT_CONFIG,
+): Promise<ActionSignal> {
+  const sym = ticker.trim().toUpperCase();
+  const [signal, buffett, idea, analyst] = await Promise.all([
+    getTickerSignal(sym, cfg).catch(() => null),
+    getTickerBuffett(sym).catch(() => null),
+    findConvictionIdea(sym),
+    getAnalystConsensus(sym).catch(() => null),
+  ]);
+  return buildActionSignal({ symbol: sym, signal, buffett, idea, analyst });
 }
 
 // Ticker-tape items sourced from the conviction watchlist. Reuses the

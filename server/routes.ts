@@ -22,9 +22,11 @@ import { answerAssistant } from "./assistantEngine";
 import {
   getTickerBuffett,
   getTickerSignal,
+  getTickerActionSignal,
   parseTickerSignalConfig,
   getConvictionTicker,
 } from "./convictionInsights";
+import { getAnalystConsensus } from "./analystConsensus";
 import {
   insertInstrumentSchema,
   insertTreasurySchema,
@@ -466,6 +468,39 @@ export async function registerRoutes(
       }
       const cfg = parseTickerSignalConfig(req.query as Record<string, unknown>);
       res.json(await getTickerSignal(ticker, cfg));
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // Analyst recommendation consensus for a single conviction idea (by ticker),
+  // sourced from Finnhub's free-tier endpoint. Returns an explicit
+  // available/unavailable/error status with a graceful message when the token
+  // is absent or the ticker is uncovered (ETFs / funds). Cached server-side.
+  app.get("/api/conviction-ideas/analyst-consensus/:ticker", async (req, res) => {
+    try {
+      const ticker = String(req.params.ticker ?? "").trim();
+      if (!ticker || !/^[A-Za-z0-9.\-]{1,12}$/.test(ticker)) {
+        return res.status(400).json({ message: "Invalid ticker." });
+      }
+      res.json(await getAnalystConsensus(ticker));
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // Explainable Action Signal for a single conviction idea (by ticker). Folds
+  // the rules-based momentum/valuation/quality/growth/risk sub-scores together
+  // with the optional analyst consensus into one of six action labels plus a
+  // factor scorecard and upgrade/downgrade triggers. Rules-based, no LLM.
+  app.get("/api/conviction-ideas/action-signal/:ticker", async (req, res) => {
+    try {
+      const ticker = String(req.params.ticker ?? "").trim();
+      if (!ticker || !/^[A-Za-z0-9.\-]{1,12}$/.test(ticker)) {
+        return res.status(400).json({ message: "Invalid ticker." });
+      }
+      const cfg = parseTickerSignalConfig(req.query as Record<string, unknown>);
+      res.json(await getTickerActionSignal(ticker, cfg));
     } catch (e) {
       res.status(500).json({ message: (e as Error).message });
     }

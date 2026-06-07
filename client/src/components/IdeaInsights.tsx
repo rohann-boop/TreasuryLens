@@ -1,9 +1,14 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type {
+  ActionFactor,
+  ActionLabel,
+  ActionSignal,
+  AnalystConsensus,
   BuffettCategory,
   BuffettIndex,
   EquityFundamentals,
+  FactorVerdict,
   ModelSignal,
   ManagementGovernance,
   SignalLabel,
@@ -28,6 +33,11 @@ import {
   TrendingDown,
   Target,
   Gauge,
+  Users2,
+  ArrowUpCircle,
+  ArrowDownCircle,
+  Sparkles,
+  Scale as ScaleIcon,
 } from "lucide-react";
 
 // Shared React Query hooks so the detail panels and the summary grid reuse the
@@ -55,6 +65,34 @@ export function useIdeaBuffett(ticker: string | null | undefined) {
       const res = await apiRequest(
         "GET",
         `/api/conviction-ideas/buffett/${encodeURIComponent(ticker as string)}`,
+      );
+      return res.json();
+    },
+  });
+}
+
+export function useIdeaActionSignal(ticker: string | null | undefined) {
+  return useQuery<ActionSignal>({
+    queryKey: ["/api/conviction-ideas/action-signal", ticker ?? ""],
+    enabled: !!ticker,
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        `/api/conviction-ideas/action-signal/${encodeURIComponent(ticker as string)}`,
+      );
+      return res.json();
+    },
+  });
+}
+
+export function useIdeaAnalystConsensus(ticker: string | null | undefined) {
+  return useQuery<AnalystConsensus>({
+    queryKey: ["/api/conviction-ideas/analyst-consensus", ticker ?? ""],
+    enabled: !!ticker,
+    queryFn: async () => {
+      const res = await apiRequest(
+        "GET",
+        `/api/conviction-ideas/analyst-consensus/${encodeURIComponent(ticker as string)}`,
       );
       return res.json();
     },
@@ -805,6 +843,440 @@ export function RiskConvictionPanel({ ticker }: { ticker: string }) {
           Rules-based risk view, not financial advice. Derived deterministically
           from the signal model's volatility, drawdown, valuation and momentum
           sub-scores — no LLM.
+        </span>
+      </p>
+    </div>
+  );
+}
+
+// =============================================================================
+// Analyst Consensus panel — Wall-Street recommendation trends from Finnhub.
+// Keyed by ticker via /api/conviction-ideas/analyst-consensus/:ticker. Renders
+// the latest consensus verdict, the bull/bear split, a count breakdown and a
+// short trend history. Degrades to an explicit message when the token is
+// missing or the ticker is uncovered (ETFs / funds).
+// =============================================================================
+
+function consensusTone(label: AnalystConsensus["consensusLabel"]): string {
+  switch (label) {
+    case "Strong Buy":
+      return "border-pos/40 bg-pos/15 text-pos";
+    case "Buy":
+      return "border-pos/30 bg-pos/10 text-pos";
+    case "Hold":
+      return "border-primary/30 bg-primary/10 text-primary";
+    case "Sell":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-500";
+    case "Strong Sell":
+      return "border-neg/30 bg-neg/10 text-neg";
+    default:
+      return "border-border bg-muted/30 text-muted-foreground";
+  }
+}
+
+const REC_BANDS: {
+  key: keyof Pick<AnalystConsensus, "strongBuy" | "buy" | "hold" | "sell" | "strongSell">;
+  label: string;
+  tone: string;
+}[] = [
+  { key: "strongBuy", label: "Strong Buy", tone: "bg-pos" },
+  { key: "buy", label: "Buy", tone: "bg-pos/60" },
+  { key: "hold", label: "Hold", tone: "bg-primary/60" },
+  { key: "sell", label: "Sell", tone: "bg-amber-500/70" },
+  { key: "strongSell", label: "Strong Sell", tone: "bg-neg" },
+];
+
+export function AnalystConsensusPanel({ ticker }: { ticker: string }) {
+  const query = useIdeaAnalystConsensus(ticker);
+  const data = query.data;
+  const available = data?.status === "available";
+
+  return (
+    <div
+      className="rounded-md border border-border/70 bg-card/40 p-3 space-y-3"
+      data-testid="analyst-consensus-panel"
+    >
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <Users2 className="h-3.5 w-3.5 text-primary/80" aria-hidden />
+          Analyst consensus (Finnhub)
+        </div>
+        {available && (
+          <div className="flex items-center gap-2">
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 rounded border text-[11px] font-semibold tracking-wide uppercase px-2 py-0.5",
+                consensusTone(data!.consensusLabel),
+              )}
+              data-testid="analyst-consensus-label"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-current" />
+              {data!.consensusLabel ?? "—"}
+            </span>
+            <span
+              className="text-[11px] uppercase tracking-wide tabular-nums text-muted-foreground"
+              data-testid="analyst-consensus-count"
+            >
+              {data!.totalAnalysts} analysts
+            </span>
+          </div>
+        )}
+      </div>
+
+      {query.isLoading ? (
+        <Skeleton className="h-[120px] rounded-md" data-testid="analyst-consensus-loading" />
+      ) : query.isError ? (
+        <div className="text-xs text-muted-foreground" data-testid="analyst-consensus-error">
+          Analyst consensus unavailable: {(query.error as Error)?.message ?? "unknown"}
+        </div>
+      ) : !data ? null : !available ? (
+        <div
+          className="rounded border border-border/60 bg-background/40 px-3 py-3 text-xs text-muted-foreground"
+          data-testid="analyst-consensus-unavailable"
+        >
+          <span className="font-semibold text-foreground/90">
+            {data.status === "error" ? "Could not load analyst consensus." : "No analyst consensus available."}
+          </span>
+          <p className="mt-1 leading-relaxed">{data.message}</p>
+        </div>
+      ) : (
+        <>
+          {/* Bull / bear split bar */}
+          <div data-testid="analyst-consensus-split">
+            <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-1">
+              <span className="text-pos">Bullish {data.bullishPercent ?? 0}%</span>
+              <span className="text-muted-foreground">as of {data.lastUpdated}</span>
+              <span className="text-neg">Bearish {data.bearishPercent ?? 0}%</span>
+            </div>
+            <div className="flex h-2.5 rounded-full overflow-hidden bg-muted">
+              {REC_BANDS.map((b) => {
+                const v = (data[b.key] as number | null) ?? 0;
+                const pct = data.totalAnalysts ? (v / data.totalAnalysts) * 100 : 0;
+                if (pct <= 0) return null;
+                return (
+                  <div
+                    key={b.key}
+                    className={cn("h-full", b.tone)}
+                    style={{ width: `${pct}%` }}
+                    title={`${b.label}: ${v}`}
+                  />
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Count breakdown */}
+          <div className="grid grid-cols-5 gap-1.5" data-testid="analyst-consensus-breakdown">
+            {REC_BANDS.map((b) => (
+              <div
+                key={b.key}
+                className="rounded border border-border/60 bg-background/40 px-1.5 py-1.5 text-center"
+                data-testid={`analyst-band-${b.key}`}
+              >
+                <div className="text-sm font-semibold tabular-nums text-foreground">
+                  {(data[b.key] as number | null) ?? 0}
+                </div>
+                <div className="text-[9px] uppercase tracking-wide text-muted-foreground leading-tight mt-0.5">
+                  {b.label}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Trend history */}
+          {data.history.length > 1 && (
+            <div data-testid="analyst-consensus-trend">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1 flex items-center justify-between">
+                <span>Recent trend</span>
+                {data.trendDirection && (
+                  <span
+                    className={cn(
+                      "tabular-nums",
+                      data.trendDirection === "improving"
+                        ? "text-pos"
+                        : data.trendDirection === "deteriorating"
+                          ? "text-neg"
+                          : "text-muted-foreground",
+                    )}
+                  >
+                    {data.trendDirection}
+                  </span>
+                )}
+              </div>
+              <ul className="space-y-0.5 text-[11px]">
+                {data.history.slice(0, 4).map((p) => (
+                  <li key={p.period} className="flex items-center justify-between gap-2">
+                    <span className="text-muted-foreground tabular-nums">{p.period}</span>
+                    <span className="text-foreground/90">{p.label ?? "—"}</span>
+                    <span className="text-muted-foreground tabular-nums">
+                      {p.bullishPercent ?? 0}% bull · {p.total}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
+
+      <p className="text-[10px] text-muted-foreground leading-relaxed flex items-start gap-1.5">
+        <ShieldAlert className="h-3 w-3 mt-0.5 shrink-0" />
+        <span>
+          Sell-side recommendation counts from Finnhub, shown for research
+          context — not an endorsement and not financial advice.
+        </span>
+      </p>
+    </div>
+  );
+}
+
+// =============================================================================
+// Action Signal panel — the primary, explainable verdict that augments the
+// legacy buy/sell signal. Shows the action label, a factor scorecard with
+// plain-English rationale per factor, agreement vs. analysts, and what would
+// upgrade / downgrade the call. Keyed by ticker via the action-signal endpoint.
+// =============================================================================
+
+function actionTone(label: ActionLabel): string {
+  switch (label) {
+    case "Add":
+      return "border-pos/40 bg-pos/15 text-pos";
+    case "Starter":
+      return "border-pos/30 bg-pos/10 text-pos";
+    case "Hold":
+      return "border-primary/30 bg-primary/10 text-primary";
+    case "Watch":
+      return "border-border bg-muted/40 text-muted-foreground";
+    case "Trim":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-500";
+    case "Avoid":
+      return "border-neg/30 bg-neg/10 text-neg";
+    default:
+      return "border-border bg-muted/30 text-muted-foreground";
+  }
+}
+
+function factorTone(v: FactorVerdict): string {
+  switch (v) {
+    case "strong":
+      return "text-pos";
+    case "favorable":
+      return "text-pos/80";
+    case "neutral":
+      return "text-primary";
+    case "caution":
+      return "text-amber-500";
+    case "weak":
+      return "text-neg";
+    default:
+      return "text-muted-foreground";
+  }
+}
+
+function factorBar(v: FactorVerdict): string {
+  switch (v) {
+    case "strong":
+      return "bg-pos";
+    case "favorable":
+      return "bg-pos/70";
+    case "neutral":
+      return "bg-primary";
+    case "caution":
+      return "bg-amber-500";
+    case "weak":
+      return "bg-neg";
+    default:
+      return "bg-muted-foreground/40";
+  }
+}
+
+function agreementTone(a: ActionSignal["agreement"]["agreement"]): string {
+  switch (a) {
+    case "aligned":
+      return "text-pos";
+    case "analysts-more-bullish":
+      return "text-primary";
+    case "analysts-more-bearish":
+      return "text-amber-500";
+    default:
+      return "text-muted-foreground";
+  }
+}
+
+function FactorRow({ f }: { f: ActionFactor }) {
+  return (
+    <div
+      className="rounded border border-border/60 bg-background/40 px-2.5 py-2"
+      data-testid={`action-factor-${f.key}`}
+      data-unavailable={!f.available ? "true" : undefined}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] font-medium text-foreground">{f.name}</span>
+        <span className="flex items-center gap-1.5">
+          <span className={cn("text-[10px] uppercase tracking-wide", factorTone(f.verdict))}>
+            {f.label}
+          </span>
+          <span className={cn("text-xs font-semibold tabular-nums", factorTone(f.verdict))}>
+            {f.score == null ? "N/A" : f.score}
+          </span>
+        </span>
+      </div>
+      <div className="mt-1 h-1.5 rounded-full bg-muted overflow-hidden">
+        <div
+          className={cn("h-full", factorBar(f.verdict))}
+          style={{ width: `${Math.max(0, Math.min(100, f.score ?? 0))}%` }}
+        />
+      </div>
+      <p
+        className="mt-1 text-[10px] text-muted-foreground leading-relaxed"
+        data-testid={`action-factor-rationale-${f.key}`}
+      >
+        {f.rationale}
+      </p>
+    </div>
+  );
+}
+
+export function ActionSignalPanel({ ticker }: { ticker: string }) {
+  const query = useIdeaActionSignal(ticker);
+  const data = query.data;
+
+  return (
+    <div
+      className="rounded-md border border-border/70 bg-card/40 p-3 space-y-3"
+      data-testid="action-signal-panel"
+    >
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <Sparkles className="h-3.5 w-3.5 text-primary/80" aria-hidden />
+          Action signal (rules-based research)
+        </div>
+        {data && (
+          <div className="flex items-center gap-2">
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 rounded border text-[11px] font-semibold tracking-wide uppercase px-2 py-0.5",
+                actionTone(data.action),
+              )}
+              data-testid="action-signal-label"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-current" />
+              {data.action}
+            </span>
+            <span
+              className={cn("text-[11px] uppercase tracking-wide tabular-nums", confidenceTone(data.confidence))}
+              data-testid="action-signal-confidence"
+            >
+              {data.confidence} · {data.compositeScore}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {query.isLoading ? (
+        <Skeleton className="h-[200px] rounded-md" data-testid="action-signal-loading" />
+      ) : query.isError ? (
+        <div className="text-xs text-muted-foreground" data-testid="action-signal-error">
+          Action signal unavailable: {(query.error as Error)?.message ?? "unknown"}
+        </div>
+      ) : !data ? null : (
+        <>
+          <p className="text-[12px] text-foreground/90 leading-relaxed" data-testid="action-signal-summary">
+            {data.summary}
+          </p>
+
+          {data.notes.length > 0 && (
+            <ul className="space-y-0.5 text-[10px] text-amber-500" data-testid="action-signal-notes">
+              {data.notes.map((n) => (
+                <li key={n} className="flex items-start gap-1.5">
+                  <ShieldAlert className="h-3 w-3 mt-0.5 shrink-0" />
+                  <span>{n}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {/* Factor scorecard */}
+          <div data-testid="action-signal-scorecard">
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">
+              Factor scorecard
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {data.factors.map((f) => (
+                <FactorRow key={f.key} f={f} />
+              ))}
+            </div>
+          </div>
+
+          {/* Agreement vs analysts */}
+          <div
+            className="rounded border border-border/60 bg-background/40 px-3 py-2 text-[11px] flex items-start gap-2"
+            data-testid="action-signal-agreement"
+          >
+            <ScaleIcon className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
+            <div className="space-y-0.5">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                <span className="text-muted-foreground">
+                  Internal: <span className="text-foreground font-medium">{data.action}</span>
+                </span>
+                <span className="text-muted-foreground">
+                  Analysts:{" "}
+                  <span className="text-foreground font-medium">
+                    {data.agreement.analystStance
+                      ? data.analystConsensus?.consensusLabel ?? data.agreement.analystStance
+                      : "no coverage"}
+                  </span>
+                </span>
+                <span className={cn("font-medium", agreementTone(data.agreement.agreement))}>
+                  {data.agreement.agreement.replace(/-/g, " ")}
+                </span>
+              </div>
+              <p className="text-muted-foreground leading-relaxed">{data.agreement.note}</p>
+            </div>
+          </div>
+
+          {/* Upgrade / downgrade triggers */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div data-testid="action-signal-upgrade">
+              <div className="text-[10px] uppercase tracking-wide text-pos mb-1 flex items-center gap-1">
+                <ArrowUpCircle className="h-3 w-3" /> What would upgrade this
+              </div>
+              <ul className="space-y-1 text-[11px]">
+                {data.upgradeTriggers.map((t) => (
+                  <li key={t} className="flex items-start gap-1.5" data-testid="action-upgrade-trigger">
+                    <ArrowUpCircle className="h-3 w-3 mt-0.5 shrink-0 text-pos/70" />
+                    <span className="text-foreground/90">{t}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div data-testid="action-signal-downgrade">
+              <div className="text-[10px] uppercase tracking-wide text-neg mb-1 flex items-center gap-1">
+                <ArrowDownCircle className="h-3 w-3" /> What would downgrade this
+              </div>
+              <ul className="space-y-1 text-[11px]">
+                {data.downgradeTriggers.map((t) => (
+                  <li key={t} className="flex items-start gap-1.5" data-testid="action-downgrade-trigger">
+                    <ArrowDownCircle className="h-3 w-3 mt-0.5 shrink-0 text-neg/70" />
+                    <span className="text-foreground/90">{t}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+
+          <div className="text-[10px] text-muted-foreground" data-testid="action-signal-legacy">
+            Legacy timing signal: <span className="font-medium text-foreground/80">{data.legacySignal}</span>
+          </div>
+        </>
+      )}
+
+      <p className="text-[10px] text-muted-foreground leading-relaxed flex items-start gap-1.5">
+        <ShieldAlert className="h-3 w-3 mt-0.5 shrink-0" />
+        <span>
+          Rules-based research that blends momentum, valuation, quality, growth,
+          risk and analyst consensus into one explainable label. Not financial
+          advice and no LLM in this calculation.
         </span>
       </p>
     </div>

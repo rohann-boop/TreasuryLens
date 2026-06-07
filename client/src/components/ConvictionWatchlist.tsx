@@ -89,8 +89,12 @@ import {
   BuffettConvictionPanel,
   SignalConvictionPanel,
   RiskConvictionPanel,
+  ActionSignalPanel,
+  AnalystConsensusPanel,
   useIdeaSignal,
   useIdeaBuffett,
+  useIdeaActionSignal,
+  useIdeaAnalystConsensus,
   deriveRisk,
   buffettScoreIsMeaningful,
   type DerivedRiskLevel,
@@ -1013,7 +1017,12 @@ function IdeaDetail({
           score, buy/sell signal and risk read are visible without scrolling
           past the chart and revenue panels. */}
       <div className="space-y-4" data-testid="idea-insight-cards">
-        {/* Buy / sell + confidence signal (rules-based model) */}
+        {/* Primary, explainable Action Signal — folds the rules-based factors
+            plus analyst consensus into one auditable verdict. */}
+        <ActionSignalPanel ticker={idea.ticker} />
+        {/* Analyst consensus (Finnhub) — sits next to the action/risk cards. */}
+        <AnalystConsensusPanel ticker={idea.ticker} />
+        {/* Legacy buy / sell + confidence timing signal (kept available). */}
         <SignalConvictionPanel ticker={idea.ticker} />
         {/* Risk assessment (rules-based, derived from the signal model) */}
         <RiskConvictionPanel ticker={idea.ticker} />
@@ -1386,28 +1395,53 @@ type SortKey =
   | "perf1m"
   | "perf6m"
   | "breakout"
+  | "action"
   | "signal"
   | "confidence"
   | "risk"
   | "buffett"
+  | "analyst"
   | "revGrowth"
   | "status";
 
 interface EnrichedRow {
+  actionLabel: string | null;
+  actionScore: number | null;
   signalLabel: string | null;
   confidence: number | null;
   riskLevel: DerivedRiskLevel;
   riskScore: number | null;
   buffettScore: number | null;
+  analystLabel: string | null;
   breakout: string | null;
   loading: boolean;
 }
+
+const ACTION_TONE: Record<string, string> = {
+  Add: "text-pos",
+  Starter: "text-pos",
+  Hold: "text-primary",
+  Watch: "text-muted-foreground",
+  Trim: "text-amber-500",
+  Avoid: "text-neg",
+};
+
+const ANALYST_TONE: Record<string, string> = {
+  "Strong Buy": "text-pos",
+  Buy: "text-pos",
+  Hold: "text-primary",
+  Sell: "text-amber-500",
+  "Strong Sell": "text-neg",
+};
 
 // A single enriched row. Uses the shared per-ticker query hooks so the cells
 // reuse the same cache as the detail pane. `enabled` gates the network call.
 function useEnrichedRow(ticker: string, enabled: boolean): EnrichedRow {
   const signalQ = useIdeaSignal(enabled ? ticker : null);
   const buffettQ = useIdeaBuffett(enabled ? ticker : null);
+  // The action-signal endpoint already folds in the analyst consensus, so a
+  // single fetch backs both the Action and Analyst columns.
+  const actionQ = useIdeaActionSignal(enabled ? ticker : null);
   const chartQ = useQuery<ConvictionChartResponse>({
     queryKey: ["/api/conviction-ideas/chart", ticker],
     enabled: enabled && !!ticker,
@@ -1415,6 +1449,7 @@ function useEnrichedRow(ticker: string, enabled: boolean): EnrichedRow {
 
   const signal = signalQ.data;
   const buffett = buffettQ.data;
+  const action = actionQ.data;
   const risk = deriveRisk(signal);
   const breakoutStatus = chartQ.data?.breakout?.status;
   const breakout =
@@ -1427,6 +1462,8 @@ function useEnrichedRow(ticker: string, enabled: boolean): EnrichedRow {
           : "Recent";
 
   return {
+    actionLabel: action?.action ?? null,
+    actionScore: action ? action.compositeScore : null,
     signalLabel: signal?.signal ?? null,
     confidence: signal ? Math.round(signal.compositeScore) : null,
     riskLevel: risk.level,
@@ -1434,8 +1471,14 @@ function useEnrichedRow(ticker: string, enabled: boolean): EnrichedRow {
     buffettScore: buffettScoreIsMeaningful(buffett)
       ? (buffett?.overallScore ?? null)
       : null,
+    analystLabel:
+      action?.analystConsensus?.status === "available"
+        ? action.analystConsensus.consensusLabel ?? null
+        : null,
     breakout,
-    loading: enabled && (signalQ.isLoading || buffettQ.isLoading || chartQ.isLoading),
+    loading:
+      enabled &&
+      (signalQ.isLoading || buffettQ.isLoading || actionQ.isLoading || chartQ.isLoading),
   };
 }
 
@@ -1506,6 +1549,22 @@ function SummaryRow({
           <span className="text-muted-foreground">·</span>
         ) : row.loading ? (
           "…"
+        ) : row.actionLabel ? (
+          <span
+            className={`font-medium ${ACTION_TONE[row.actionLabel] ?? "text-foreground"}`}
+            data-testid={`summary-action-${idea.id}`}
+          >
+            {row.actionLabel}
+          </span>
+        ) : (
+          "—"
+        )}
+      </td>
+      <td className="px-2 py-1.5 text-right whitespace-nowrap">
+        {!enrich ? (
+          <span className="text-muted-foreground">·</span>
+        ) : row.loading ? (
+          "…"
         ) : row.signalLabel ? (
           <span
             className={`font-medium ${SIGNAL_TONE[row.signalLabel] ?? "text-foreground"}`}
@@ -1544,6 +1603,22 @@ function SummaryRow({
           : "·",
         buffettMeaningful ? scoreToneClass(row.buffettScore) : "text-muted-foreground",
       )}
+      <td className="px-2 py-1.5 text-right whitespace-nowrap">
+        {!enrich ? (
+          <span className="text-muted-foreground">·</span>
+        ) : row.loading ? (
+          "…"
+        ) : row.analystLabel ? (
+          <span
+            className={`font-medium ${ANALYST_TONE[row.analystLabel] ?? "text-foreground"}`}
+            data-testid={`summary-analyst-${idea.id}`}
+          >
+            {row.analystLabel}
+          </span>
+        ) : (
+          <span className="text-muted-foreground">N/A</span>
+        )}
+      </td>
       {cell(fmtPct(km?.revenueGrowth, 1), perfTone(km?.revenueGrowth))}
       <td className="px-2 py-1.5 text-right whitespace-nowrap">
         <span
@@ -1700,14 +1775,14 @@ export function WatchlistSummaryGrid({
           className="h-7 text-[11px]"
           onClick={() => setEnrich((v) => !v)}
           data-testid="button-enrich-summary"
-          title={`Fetch signal, risk and Buffett scores for up to ${ENRICH_CAP} rows`}
+          title={`Fetch action signal, analyst consensus, risk and Buffett scores for up to ${ENRICH_CAP} rows`}
         >
           {enrich ? "Hide signals & scores" : "Load signals & scores"}
         </Button>
       </div>
 
       <div className="overflow-x-auto -mx-1" data-testid="summary-table-scroll">
-        <table className="w-full text-[11px] min-w-[860px]" data-testid="summary-table">
+        <table className="w-full text-[11px] min-w-[1000px]" data-testid="summary-table">
           <thead>
             <tr className="text-muted-foreground">
               <SortHeader label="Ticker" sortKey="ticker" active={sort.key === "ticker"} dir={sort.dir} onSort={handleSort} align="left" />
@@ -1717,10 +1792,12 @@ export function WatchlistSummaryGrid({
               <SortHeader label="1M" sortKey="perf1m" active={sort.key === "perf1m"} dir={sort.dir} onSort={handleSort} />
               <SortHeader label="6M" sortKey="perf6m" active={sort.key === "perf6m"} dir={sort.dir} onSort={handleSort} />
               <SortHeader label="Breakout" sortKey="breakout" active={sort.key === "breakout"} dir={sort.dir} onSort={handleSort} />
+              <SortHeader label="Action" sortKey="action" active={sort.key === "action"} dir={sort.dir} onSort={handleSort} />
               <SortHeader label="Signal" sortKey="signal" active={sort.key === "signal"} dir={sort.dir} onSort={handleSort} />
               <SortHeader label="Conf." sortKey="confidence" active={sort.key === "confidence"} dir={sort.dir} onSort={handleSort} />
               <SortHeader label="Risk" sortKey="risk" active={sort.key === "risk"} dir={sort.dir} onSort={handleSort} />
               <SortHeader label="Buffett" sortKey="buffett" active={sort.key === "buffett"} dir={sort.dir} onSort={handleSort} />
+              <SortHeader label="Analyst" sortKey="analyst" active={sort.key === "analyst"} dir={sort.dir} onSort={handleSort} />
               <SortHeader label="Rev growth" sortKey="revGrowth" active={sort.key === "revGrowth"} dir={sort.dir} onSort={handleSort} />
               <SortHeader label="Status" sortKey="status" active={sort.key === "status"} dir={sort.dir} onSort={handleSort} />
             </tr>
@@ -1741,9 +1818,10 @@ export function WatchlistSummaryGrid({
 
       <p className="text-[10px] text-muted-foreground leading-relaxed">
         Price, performance and revenue growth come from the loaded watchlist
-        data. Signal, confidence, risk and Buffett score are rules-based and
-        loaded on demand for up to {ENRICH_CAP} rows. Click any row to open it in
-        the detail pane above.
+        data. Action signal, analyst consensus, timing signal, confidence, risk
+        and Buffett score are rules-based / research data and loaded on demand
+        for up to {ENRICH_CAP} rows. Click any row to open it in the detail pane
+        above.
       </p>
     </div>
   );
@@ -1765,7 +1843,36 @@ function enrichedSortValue(idea: ConvictionIdea, key: SortKey): number {
     "/api/conviction-ideas/chart",
     idea.ticker,
   ]);
+  const action = queryClient.getQueryData<import("@shared/schema").ActionSignal>([
+    "/api/conviction-ideas/action-signal",
+    idea.ticker,
+  ]);
   switch (key) {
+    case "action": {
+      const order: Record<string, number> = {
+        Add: 6,
+        Starter: 5,
+        Hold: 4,
+        Watch: 3,
+        Trim: 2,
+        Avoid: 1,
+      };
+      return action ? order[action.action] ?? -Infinity : -Infinity;
+    }
+    case "analyst": {
+      const order: Record<string, number> = {
+        "Strong Buy": 5,
+        Buy: 4,
+        Hold: 3,
+        Sell: 2,
+        "Strong Sell": 1,
+      };
+      const label =
+        action?.analystConsensus?.status === "available"
+          ? action.analystConsensus.consensusLabel
+          : null;
+      return label ? order[label] ?? -Infinity : -Infinity;
+    }
     case "signal": {
       const order: Record<string, number> = {
         "Strong Buy": 6,
