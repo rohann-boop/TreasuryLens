@@ -60,18 +60,41 @@ function looksLikeRealToken(value: string): boolean {
   return true;
 }
 
-// Resolve an explicit token, or "" when none is configured / it's a placeholder.
-function getToken(): string {
-  const candidates = [
-    process.env.CUSTOM_CRED_FINNHUB_IO_TOKEN,
-    process.env.FINNHUB_API_KEY,
-    process.env.FINNHUB_TOKEN,
-  ];
+// A real Finnhub API key (used directly against finnhub.io as ?token=). This is
+// NOT CUSTOM_CRED_FINNHUB_IO_TOKEN — under the custom-credential pass-through
+// that env var is the proxy session token sent as x-api-key, not a Finnhub key.
+function getFinnhubApiKey(): string {
+  const candidates = [process.env.FINNHUB_API_KEY, process.env.FINNHUB_TOKEN];
   for (const raw of candidates) {
     const v = (raw || "").trim();
     if (v && looksLikeRealToken(v)) return v;
   }
   return "";
+}
+
+// The custom-credential pass-through session token, sent to the proxy as the
+// `x-api-key` header. The proxy validates it and injects the real Finnhub key.
+function getPassThroughToken(): string {
+  const v = (process.env.CUSTOM_CRED_FINNHUB_IO_TOKEN || "").trim();
+  return v && looksLikeRealToken(v) ? v : "";
+}
+
+// The custom-credential pass-through base URL (e.g.
+// https://agent-proxy.perplexity.ai/agent_pass_through). Recognised by being a
+// valid URL whose host is NOT finnhub.io. Returns "" if absent/invalid or if it
+// actually points at finnhub.io (in which case it's a normal base, not a proxy).
+function getPassThroughBase(): string {
+  const raw = (process.env.CUSTOM_CRED_FINNHUB_IO_URL || "").trim();
+  if (!raw) return "";
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return "";
+  }
+  if (u.protocol !== "https:" && u.protocol !== "http:") return "";
+  if (isFinnhubHost(u.hostname)) return ""; // a real finnhub base, handled elsewhere
+  return raw.replace(/\/+$/, "");
 }
 
 // Detect an outbound HTTPS proxy (e.g. the custom-credential injection proxy).
@@ -142,14 +165,17 @@ interface HttpResult {
   body: string;
 }
 
-// Native-fetch GET. Used when we hold an explicit token (the request is
-// self-contained and needs no proxy). Times out and never logs the URL.
-async function fetchGetJson(targetUrl: string): Promise<HttpResult> {
+// Native-fetch GET with optional extra headers (e.g. the pass-through
+// x-api-key). Times out and never logs the URL or headers.
+async function fetchGetJson(
+  targetUrl: string,
+  extraHeaders: Record<string, string> = {},
+): Promise<HttpResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(targetUrl, {
-      headers: { Accept: "application/json" },
+      headers: { Accept: "application/json", ...extraHeaders },
       signal: controller.signal,
     });
     const body = await res.text();
@@ -168,8 +194,12 @@ async function fetchGetJson(targetUrl: string): Promise<HttpResult> {
 //
 // Safety: execFile with a fixed argv array (no shell) — the URL is built by us
 // from a validated base + URL-encoded symbol, so there is no injection surface.
-// We send no token (the proxy injects it) and never log the command or URL.
-function curlGetJson(targetUrl: string): Promise<HttpResult> {
+// Extra headers (e.g. x-api-key) are passed as separate argv entries; their
+// values are never interpolated into a shell and never logged.
+function curlGetJson(
+  targetUrl: string,
+  extraHeaders: Record<string, string> = {},
+): Promise<HttpResult> {
   return new Promise((resolve, reject) => {
     const args = [
       "--silent",
@@ -178,12 +208,17 @@ function curlGetJson(targetUrl: string): Promise<HttpResult> {
       String(Math.ceil(FETCH_TIMEOUT_MS / 1000)),
       "-H",
       "Accept: application/json",
+    ];
+    for (const [k, v] of Object.entries(extraHeaders)) {
+      args.push("-H", `${k}: ${v}`);
+    }
+    args.push(
       // Emit the HTTP status on its own trailing line so we can split it off.
       "--write-out",
       "\n%{http_code}",
       "--",
       targetUrl,
-    ];
+    );
     execFile(
       "curl",
       args,
@@ -220,19 +255,23 @@ function hasCurl(): Promise<boolean> {
   });
 }
 
-// Choose the transport. With an explicit token we use native fetch. Otherwise we
-// rely on credential injection: prefer curl (it honours the harness proxy/CA),
-// then a CONNECT tunnel if an HTTPS_PROXY is explicitly set, and finally a bare
-// fetch as a last resort.
+// Choose the transport.
+//   selfContained=true → the request carries its own auth (explicit Finnhub key
+//     as ?token=, or the pass-through x-api-key header) and goes out unmodified
+//     via native fetch.
+//   selfContained=false → we rely on the harness HTTPS_PROXY credential
+//     injection: prefer curl (honours the proxy/CA), then a CONNECT tunnel if an
+//     explicit HTTPS_PROXY is set, then a bare fetch as last resort.
 async function httpGetJson(
   targetUrl: string,
   proxyUrl: string,
-  haveToken: boolean,
+  selfContained: boolean,
+  extraHeaders: Record<string, string> = {},
 ): Promise<HttpResult> {
-  if (haveToken) return fetchGetJson(targetUrl);
-  if (await hasCurl()) return curlGetJson(targetUrl);
+  if (selfContained) return fetchGetJson(targetUrl, extraHeaders);
+  if (await hasCurl()) return curlGetJson(targetUrl, extraHeaders);
   if (proxyUrl) return proxyGetJson(targetUrl, proxyUrl);
-  return fetchGetJson(targetUrl);
+  return fetchGetJson(targetUrl, extraHeaders);
 }
 
 // HTTPS-over-proxy via CONNECT tunnel. Opens a plaintext connection to the
@@ -430,42 +469,61 @@ export async function getAnalystConsensus(
   const cached = cache.get(symbol);
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.data;
 
-  const token = getToken();
+  const apiKey = getFinnhubApiKey();
+  const passThroughBase = getPassThroughBase();
+  const passThroughToken = getPassThroughToken();
   const proxyUrl = getProxyUrl();
 
-  // We can authenticate if we have an explicit token, OR if credential injection
-  // is possible: the harness custom-credential proxy works at the network layer
-  // and is reached via the system `curl` (or an explicit HTTPS_PROXY). Only when
-  // there is truly no path — no token, no curl, no proxy — do we bail early.
-  const injectionPossible = (await hasCurl()) || !!proxyUrl;
-  if (!token && !injectionPossible) {
+  // The Finnhub endpoint we ultimately want, sans any auth.
+  const finnhubBase = getBaseUrl();
+  const finnhubPath = `/stock/recommendation?symbol=${encodeURIComponent(symbol)}`;
+
+  // Resolve the request plan across the supported credential modes.
+  let url: string;
+  let extraHeaders: Record<string, string> = {};
+  let selfContained: boolean;
+  let mode: "apikey" | "passthrough" | "injection";
+
+  if (apiKey) {
+    // Explicit Finnhub key → call finnhub.io directly with ?token=.
+    url = `${finnhubBase}${finnhubPath}&token=${encodeURIComponent(apiKey)}`;
+    selfContained = true;
+    mode = "apikey";
+  } else if (passThroughBase && passThroughToken) {
+    // Custom-credential pass-through: call the proxy URL with the target Finnhub
+    // URL appended, authenticating with x-api-key. The proxy injects the real
+    // Finnhub key and forwards the request.
+    url = `${passThroughBase}/${finnhubBase}${finnhubPath}`;
+    extraHeaders = { "x-api-key": passThroughToken };
+    selfContained = true;
+    mode = "passthrough";
+  } else if ((await hasCurl()) || proxyUrl) {
+    // Fall back to network-layer credential injection (HTTPS_PROXY) via curl or
+    // a CONNECT tunnel — no token in the request; the proxy adds it.
+    url = `${finnhubBase}${finnhubPath}`;
+    selfContained = false;
+    mode = "injection";
+  } else {
     const data = unavailable(
       symbol,
-      "Analyst consensus needs a Finnhub credential. Set CUSTOM_CRED_FINNHUB_IO_TOKEN (or FINNHUB_API_KEY), or run behind the finnhub.io custom-credential proxy.",
+      "Analyst consensus needs a Finnhub credential. Provide the finnhub.io custom credential, or set FINNHUB_API_KEY.",
     );
     // Cache the no-credential state briefly so we don't re-check every request.
     cache.set(symbol, { at: Date.now() - (CACHE_TTL_MS - NEG_CACHE_TTL_MS), data });
     return data;
   }
 
-  const base = getBaseUrl();
-  // Build the URL. Only append the token param when we actually have one — when
-  // relying on credential injection we send no token and never produce token=.
-  const params = new URLSearchParams({ symbol });
-  if (token) params.set("token", token);
-  const url = `${base}/stock/recommendation?${params.toString()}`;
-
-  const usingInjection = !token;
-
   let json: unknown;
   try {
-    const res = await httpGetJson(url, proxyUrl, !!token);
+    const res = await httpGetJson(url, proxyUrl, selfContained, extraHeaders);
     if (res.status === 401 || res.status === 403) {
       const data = errored(
         symbol,
-        token
-          ? "Finnhub rejected the API token (401/403). Verify the finnhub.io credential value."
-          : "Finnhub rejected the request (401/403). The credential proxy did not inject a valid finnhub.io token.",
+        mode === "apikey"
+          ? "Finnhub rejected the API key (401/403). Verify FINNHUB_API_KEY."
+          : mode === "passthrough"
+            ? "Credential pass-through rejected the request (401/403). The finnhub.io custom credential is missing or invalid."
+            : "Finnhub rejected the request (401/403). The credential proxy did not inject a valid finnhub.io token.",
       );
       cache.set(symbol, { at: Date.now() - (CACHE_TTL_MS - NEG_CACHE_TTL_MS), data });
       return data;
@@ -496,9 +554,9 @@ export async function getAnalystConsensus(
     } catch {
       const data = errored(
         symbol,
-        usingInjection
-          ? "Finnhub returned a non-JSON response via the credential proxy."
-          : "Finnhub returned a non-JSON response.",
+        mode === "apikey"
+          ? "Finnhub returned a non-JSON response."
+          : "Finnhub returned a non-JSON response via the credential pass-through.",
       );
       cache.set(symbol, { at: Date.now() - (CACHE_TTL_MS - NEG_CACHE_TTL_MS), data });
       return data;
