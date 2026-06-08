@@ -962,6 +962,10 @@ export interface ConvictionIdea {
   // True for user-added ideas (vs. curated defaults). User-added ideas carry
   // lighter curated content. All ideas are removable.
   custom?: boolean;
+  // True when no real thesis/catalysts/risks have been authored yet (e.g. a
+  // freshly added custom ticker). The detail pane renders a "Thesis pending"
+  // state instead of placeholder bullets. Market data still loads normally.
+  thesisPending?: boolean;
   // Enrichment, attached server-side. Null when providers are unavailable.
   keyMetrics?: StockPickKeyMetrics | null;
   scenarioModel?: ScenarioModel | null;
@@ -1112,7 +1116,15 @@ export const addConvictionIdeaSchema = z.object({
     .max(12, "Ticker too long")
     .regex(/^[A-Za-z0-9.\-]+$/, "Use letters, numbers, '.' or '-' only"),
   companyName: z.string().trim().min(1, "Name is required").max(120),
-  theme: z.string().trim().min(1, "Theme is required").max(120),
+  // Theme / grouping is optional — a ticker can be added with just symbol +
+  // name and slotted into the generic "other" section. Empty/whitespace
+  // collapses to undefined so the server applies its default label.
+  theme: z
+    .string()
+    .trim()
+    .max(120)
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : undefined)),
   role: z
     .enum([
       "core-compounder",

@@ -67,6 +67,7 @@ export interface CustomConvictionRow {
   ticker: string;
   companyName: string;
   role: string;
+  // Empty string when the user added a ticker without a theme/grouping.
   theme: string;
   convictionScore: number;
   createdAt: number;

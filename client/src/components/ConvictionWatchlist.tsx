@@ -872,10 +872,30 @@ function IdeaDetail({
 }) {
   const km = idea.keyMetrics;
   const perf = km?.performance ?? null;
+
+  // Derive a one-day change from the chart series so the top snapshot can show
+  // a daily move when intraday/daily history is available. React Query dedupes
+  // this against the ConvictionChart fetch (same queryKey), so it is free.
+  const chartQuery = useQuery<ConvictionChartResponse>({
+    queryKey: ["/api/conviction-ideas/chart", idea.ticker],
+    enabled: !!idea.ticker,
+  });
+  const pts = chartQuery.data?.points ?? [];
+  const last = pts.length ? pts[pts.length - 1] : null;
+  const prev = pts.length > 1 ? pts[pts.length - 2] : null;
+  const dailyChangePct =
+    last && prev && prev.c ? ((last.c - prev.c) / prev.c) * 100 : null;
+  const chartCurrency = chartQuery.data?.currency ?? km?.priceCurrency ?? "USD";
+
   return (
     <div className="space-y-4" data-testid="idea-detail">
-      {/* Summary header */}
-      <div className="rounded-md border border-border/70 bg-card/40 p-4 space-y-2">
+      {/* Ticker snapshot — symbol, name, live price + daily change, status
+          badges and a compact quick-stats strip. Kept at the very top so the
+          market context for the clicked ticker is the first thing visible. */}
+      <div
+        className="rounded-md border border-border/70 bg-card/40 p-4 space-y-3"
+        data-testid="idea-snapshot"
+      >
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="min-w-0">
             <h2
@@ -887,6 +907,25 @@ function IdeaDetail({
             <p className="text-sm text-muted-foreground">{idea.companyName}</p>
           </div>
           <div className="flex items-start gap-3">
+            <div className="text-right" data-testid="snapshot-price">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                Price
+              </div>
+              <div className="text-xl font-bold text-foreground">
+                {km?.price != null
+                  ? fmtPrice(km.price, km.priceCurrency ?? chartCurrency)
+                  : "N/A"}
+              </div>
+              {dailyChangePct != null && (
+                <div
+                  className={`text-[11px] font-medium ${perfTone(dailyChangePct)}`}
+                  data-testid="snapshot-daily-change"
+                >
+                  {dailyChangePct >= 0 ? "+" : ""}
+                  {dailyChangePct.toFixed(2)}% 1d
+                </div>
+              )}
+            </div>
             <div className="text-right">
               <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
                 Conviction
@@ -918,6 +957,14 @@ function IdeaDetail({
               Custom
             </span>
           )}
+          {idea.thesisPending && (
+            <span
+              className="rounded-full bg-sky-500/15 text-sky-500 px-2 py-0.5 font-medium"
+              data-testid="idea-thesis-pending-badge"
+            >
+              Thesis pending
+            </span>
+          )}
           {idea.sectionLabel && (
             <span
               className="rounded-full bg-primary/15 text-primary px-2 py-0.5 font-medium"
@@ -939,83 +986,90 @@ function IdeaDetail({
             {REVIEW_LABEL[idea.reviewStatus] ?? idea.reviewStatus}
           </span>
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          {idea.themes.map((t) => (
-            <span
-              key={t}
-              className="rounded border border-border/60 px-1.5 py-0.5 text-[10px] text-muted-foreground"
-            >
-              {t}
-            </span>
-          ))}
+        {idea.themes.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {idea.themes.map((t) => (
+              <span
+                key={t}
+                className="rounded border border-border/60 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+              >
+                {t}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Quick stats strip — the most-glanced numbers, kept in the snapshot
+            so the market read is immediate. Each value degrades to "N/A". */}
+        <div
+          className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-2"
+          data-testid="idea-quick-stats"
+        >
+          <MetricCard
+            label="Price"
+            value={km?.price != null ? fmtPrice(km.price, km.priceCurrency ?? chartCurrency) : "N/A"}
+            testId="metric-price"
+          />
+          <MetricCard
+            label="Market cap"
+            value={km?.marketCap != null ? fmtCompactCurrency(km.marketCap) : "N/A"}
+            testId="metric-marketcap"
+          />
+          <MetricCard
+            label="P/E (TTM)"
+            value={km?.peRatio != null ? km.peRatio.toFixed(1) : "N/A"}
+            testId="metric-pe"
+          />
+          <MetricCard
+            label="1m return"
+            value={fmtPct(perf?.change1mPct, 1)}
+            tone={perfTone(perf?.change1mPct)}
+            testId="metric-perf1m"
+          />
+          <MetricCard
+            label="6m return"
+            value={fmtPct(perf?.change6mPct, 1)}
+            tone={perfTone(perf?.change6mPct)}
+            testId="metric-perf6m"
+          />
+          <MetricCard
+            label="12m return"
+            value={fmtPct(perf?.change12mPct, 1)}
+            tone={perfTone(perf?.change12mPct)}
+            testId="metric-perf12m"
+          />
+          <MetricCard
+            label="Reward / risk"
+            value={
+              idea.scenarioModel?.rewardRiskRatio != null
+                ? `${idea.scenarioModel.rewardRiskRatio.toFixed(2)}×`
+                : "N/A"
+            }
+            testId="metric-rewardrisk"
+          />
         </div>
+
+        {km?.metricWarnings && km.metricWarnings.length > 0 && (
+          <ul className="space-y-0.5 text-[11px] text-muted-foreground" data-testid="idea-metric-warnings">
+            {km.metricWarnings.map((w, i) => (
+              <li key={i} className="flex items-start gap-1">
+                <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0 text-amber-500/80" aria-hidden />
+                {w}
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
-      {/* Metrics row — quote, market cap, P/E, 1m/6m/12m performance and the
-          scenario reward/risk. Each is independently nullable so short or
-          missing series degrade to "N/A" rather than fabricating a value. */}
-      <div
-        className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-2"
-        data-testid="idea-metrics"
-      >
-        <MetricCard
-          label="Price"
-          value={km?.price != null ? fmtPrice(km.price, km.priceCurrency ?? "USD") : "N/A"}
-          testId="metric-price"
-        />
-        <MetricCard
-          label="Market cap"
-          value={km?.marketCap != null ? fmtCompactCurrency(km.marketCap) : "N/A"}
-          testId="metric-marketcap"
-        />
-        <MetricCard
-          label="P/E (TTM)"
-          value={km?.peRatio != null ? km.peRatio.toFixed(1) : "N/A"}
-          testId="metric-pe"
-        />
-        <MetricCard
-          label="1m return"
-          value={fmtPct(perf?.change1mPct, 1)}
-          tone={perfTone(perf?.change1mPct)}
-          testId="metric-perf1m"
-        />
-        <MetricCard
-          label="6m return"
-          value={fmtPct(perf?.change6mPct, 1)}
-          tone={perfTone(perf?.change6mPct)}
-          testId="metric-perf6m"
-        />
-        <MetricCard
-          label="12m return"
-          value={fmtPct(perf?.change12mPct, 1)}
-          tone={perfTone(perf?.change12mPct)}
-          testId="metric-perf12m"
-        />
-        <MetricCard
-          label="Reward / risk"
-          value={
-            idea.scenarioModel?.rewardRiskRatio != null
-              ? `${idea.scenarioModel.rewardRiskRatio.toFixed(2)}×`
-              : "N/A"
-          }
-          testId="metric-rewardrisk"
-        />
+      {/* Chart-first market section — price + moving averages with breakout
+          status/markers, placed immediately under the snapshot so the graph
+          and breakout read are visible before any thesis text. */}
+      <div data-testid="idea-chart-first" className="space-y-4">
+        <ConvictionChart ticker={idea.ticker} />
       </div>
 
-      {km?.metricWarnings && km.metricWarnings.length > 0 && (
-        <ul className="space-y-0.5 text-[11px] text-muted-foreground" data-testid="idea-metric-warnings">
-          {km.metricWarnings.map((w, i) => (
-            <li key={i} className="flex items-start gap-1">
-              <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0 text-amber-500/80" aria-hidden />
-              {w}
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {/* Selected-ticker insight cards — surfaced near the top so the Buffett
-          score, buy/sell signal and risk read are visible without scrolling
-          past the chart and revenue panels. */}
+      {/* Compact action / analyst / risk / Buffett cards — the rules-based read
+          on the ticker, directly after the chart. */}
       <div className="space-y-4" data-testid="idea-insight-cards">
         {/* Primary, explainable Action Signal — folds the rules-based factors
             plus analyst consensus into one auditable verdict. */}
@@ -1030,10 +1084,7 @@ function IdeaDetail({
         <BuffettConvictionPanel ticker={idea.ticker} />
       </div>
 
-      {/* Price + moving-average chart */}
-      <ConvictionChart ticker={idea.ticker} />
-
-      {/* Revenue (current + historical from SEC EDGAR) */}
+      {/* Revenue / fundamentals (current + historical from SEC EDGAR) */}
       <RevenuePanel ticker={idea.ticker} />
 
       {/* Scenario card */}
@@ -1048,43 +1099,63 @@ function IdeaDetail({
         </div>
       )}
 
-      {/* Thesis / what must be true */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <BulletSection
-          heading="Thesis"
-          icon={Target}
-          items={idea.thesis}
-          testId="idea-thesis"
-        />
-        <BulletSection
-          heading="What must be true"
-          icon={CheckCircle2}
-          items={idea.whatMustBeTrue}
-          testId="idea-whatmustbetrue"
-        />
-        <BulletSection
-          heading="Catalysts"
-          icon={Sparkles}
-          items={idea.catalysts}
-          testId="idea-catalysts"
-        />
-        <BulletSection
-          heading="Risks"
-          icon={ShieldAlert}
-          items={idea.risks}
-          testId="idea-risks"
-          tone="text-amber-500/90"
-        />
-      </div>
+      {/* Thesis / what must be true. For freshly added custom tickers with no
+          authored research yet, show a clear pending state instead. */}
+      {idea.thesisPending ? (
+        <div
+          className="rounded-md border border-dashed border-sky-500/40 bg-sky-500/5 p-4 space-y-1.5"
+          data-testid="idea-thesis-pending"
+        >
+          <div className="flex items-center gap-1.5 text-sm font-semibold text-sky-500">
+            <Target className="h-4 w-4" aria-hidden />
+            Thesis pending
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Market data, chart, action signal and analyst consensus load
+            automatically for this ticker. An auto-generated thesis — with
+            catalysts, risks and kill criteria — can be added later.
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <BulletSection
+              heading="Thesis"
+              icon={Target}
+              items={idea.thesis}
+              testId="idea-thesis"
+            />
+            <BulletSection
+              heading="What must be true"
+              icon={CheckCircle2}
+              items={idea.whatMustBeTrue}
+              testId="idea-whatmustbetrue"
+            />
+            <BulletSection
+              heading="Catalysts"
+              icon={Sparkles}
+              items={idea.catalysts}
+              testId="idea-catalysts"
+            />
+            <BulletSection
+              heading="Risks"
+              icon={ShieldAlert}
+              items={idea.risks}
+              testId="idea-risks"
+              tone="text-amber-500/90"
+            />
+          </div>
 
-      {/* Kill criteria */}
-      <BulletSection
-        heading="Kill criteria (what removes it)"
-        icon={AlertTriangle}
-        items={idea.killCriteria}
-        testId="idea-killcriteria"
-        tone="text-neg"
-      />
+          {/* Kill criteria */}
+          <BulletSection
+            heading="Kill criteria (what removes it)"
+            icon={AlertTriangle}
+            items={idea.killCriteria}
+            testId="idea-killcriteria"
+            tone="text-neg"
+          />
+        </>
+      )}
 
       {/* Guardrails */}
       <div
@@ -1177,9 +1248,12 @@ function AddIdeaDialog({
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.ticker.trim() || !form.companyName.trim() || !form.theme.trim()) {
+    // Minimal required path: ticker + name. Theme/grouping is optional and the
+    // thesis is added/generated later — the ticker is persisted immediately and
+    // its market/pricing/fundamental data loads automatically.
+    if (!form.ticker.trim() || !form.companyName.trim()) {
       toast({
-        title: "Ticker, name and theme are required",
+        title: "Ticker and name are required",
         variant: "destructive",
       });
       return;
@@ -1189,7 +1263,7 @@ function AddIdeaDialog({
       const res = await apiRequest("POST", "/api/conviction-ideas", {
         ticker: form.ticker.trim(),
         companyName: form.companyName.trim(),
-        theme: form.theme.trim(),
+        theme: form.theme.trim() || undefined,
         role: form.role,
         convictionScore: Number(form.convictionScore) || 50,
       });
@@ -1214,11 +1288,12 @@ function AddIdeaDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md" data-testid="dialog-add-idea">
         <DialogHeader>
-          <DialogTitle>Add conviction idea</DialogTitle>
-          <DialogDescription>
-            Add your own research idea by ticker, name and theme. Live pricing
-            and a scenario model are attached automatically where available. You
-            can flesh out thesis, catalysts and kill criteria afterward.
+          <DialogTitle>Add to watchlist</DialogTitle>
+          <DialogDescription data-testid="add-idea-explainer">
+            The ticker is added immediately. Market, pricing and fundamental
+            data — plus the chart, action signal and analyst consensus — load
+            automatically. Only the ticker and a name are required; the theme is
+            optional and a thesis can be added or auto-generated later.
           </DialogDescription>
         </DialogHeader>
 
@@ -1259,7 +1334,7 @@ function AddIdeaDialog({
 
           <div>
             <Label htmlFor="idea-theme" className="text-xs">
-              Theme
+              Theme / grouping <span className="text-muted-foreground">(optional)</span>
             </Label>
             <Input
               id="idea-theme"

@@ -152,6 +152,7 @@ interface ThemeIdeaInput {
   reviewFrequency: string;
   reviewStatus: ConvictionIdea["reviewStatus"];
   issuerCountry?: string;
+  thesisPending?: boolean;
   checklist: { thesis: number; valuation: number; momentum: number; management: number; balanceSheet: number; catalyst: number; data: number };
   scenario: { marketCapBucket: MarketCapBucket; scenarioPotential: ScenarioPotential; riskLevel: RiskLevel };
 }
@@ -167,6 +168,7 @@ function themeSeed(input: ThemeIdeaInput): IdeaSeed {
       sectionKey: input.sectionKey,
       sectionLabel: SECTION_LABEL[input.sectionKey],
       themes: input.themes,
+      thesisPending: input.thesisPending,
       timeHorizon: "Long-term (3–5y+)",
       targetOutcome: input.targetOutcome,
       convictionScore: input.convictionScore,
@@ -1618,14 +1620,18 @@ function customRowToSeed(row: CustomConvictionRow): IdeaSeed {
     companyName: row.companyName,
     role,
     sectionKey: "other",
-    themes: [row.theme],
+    themes: row.theme && row.theme.trim() ? [row.theme.trim()] : [],
     targetOutcome: "User-defined idea — set your own target outcome",
     convictionScore: row.convictionScore,
-    thesis: [`User-added idea for ${t}. Add your thesis bullets here.`],
-    whatMustBeTrue: ["Define the preconditions that must hold for this idea to work."],
-    catalysts: ["List the catalysts you are watching for this idea."],
-    risks: ["List the key risks for this idea."],
-    killCriteria: ["Define what would remove this idea from your book."],
+    // No authored research yet — the detail pane renders a "Thesis pending"
+    // state (flagged below) rather than placeholder bullets. Market data,
+    // chart, action signal and analyst consensus still load normally.
+    thesisPending: true,
+    thesis: [],
+    whatMustBeTrue: [],
+    catalysts: [],
+    risks: [],
+    killCriteria: [],
     downsideGuardrail: "Define the downside floor / why this isn't a zero.",
     positionSizingBand: "watchlist",
     positionSizingNote: "Educational label only: user-added ideas start in the watchlist band until researched.",
@@ -1812,7 +1818,7 @@ export async function addConvictionIdea(
     ticker,
     companyName: input.companyName,
     role: input.role,
-    theme: input.theme,
+    theme: input.theme ?? "",
     convictionScore: input.convictionScore,
     createdAt: Date.now(),
   });
