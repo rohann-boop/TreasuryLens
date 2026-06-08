@@ -1414,8 +1414,157 @@ export interface ActionSignal {
   // The new honest, separated conviction read (upside/downside/entry/horizon/
   // backtest). Optional so older cached payloads still type-check.
   conviction?: ConvictionSignal;
+  // Transparent factor-score model (Quant Score v1). Optional so older cached
+  // payloads still type-check. The action signal references it where available.
+  quantScore?: QuantScore;
   // The legacy timing label is preserved so existing consumers keep working.
   legacySignal: SignalLabel;
   analystConsensus: AnalystConsensus | null;
   notes: string[];
+}
+
+// =============================================================================
+// Quant Score v1 — a transparent, weighted factor-score model. NOT a black-box
+// price predictor: every factor exposes its 0-100 score (or an explicit
+// "unavailable" status), its weight, its contribution to the overall score, a
+// concise rationale, and the source category of the underlying data. Unavailable
+// factors are excluded and their weight is redistributed across the rest, and an
+// overall confidence level is derived from how much of the model's intended
+// weight was actually backed by data (data coverage). NOT financial advice.
+// =============================================================================
+
+export type QuantFactorKey =
+  | "momentum"
+  | "analyst"
+  | "valuation"
+  | "growth"
+  | "quality"
+  | "risk";
+
+// Where the factor's data comes from, so the UI can group/colour by source and
+// the user understands what kind of evidence backs each score.
+export type QuantSource = "technical" | "analyst" | "fundamental" | "risk";
+
+// Per-factor data status. "scored" = a real 0-100 score; "pending" = the data
+// path exists but no value yet (e.g. live price/fundamental feed empty);
+// "unavailable" = not applicable / not covered for this instrument.
+export type QuantFactorStatus = "scored" | "pending" | "unavailable";
+
+export interface QuantFactor {
+  key: QuantFactorKey;
+  label: string; // "Momentum / Trend", "Analyst Sentiment", ...
+  source: QuantSource;
+  status: QuantFactorStatus;
+  // 0-100 (higher = more constructive) when status === "scored"; else null.
+  score: number | null;
+  // Intended base weight (0-1) before redistribution.
+  baseWeight: number;
+  // Effective weight (0-1) after redistributing unavailable factors. 0 when not
+  // scored.
+  weight: number;
+  // score * weight — the factor's points toward the overall 0-100. 0 when not
+  // scored.
+  contribution: number;
+  rationale: string; // one concise plain-English sentence
+}
+
+// Overall band for the composite score. "insufficient" when data coverage is
+// too low to stand behind any band honestly.
+export type QuantBand =
+  | "strong"
+  | "constructive"
+  | "mixed"
+  | "weak"
+  | "insufficient";
+
+export type QuantConfidence = "high" | "medium" | "low" | "insufficient";
+
+export interface QuantScore {
+  symbol: string;
+  asOf: number;
+  // 0-100 composite over the scored factors, or null when coverage is too low.
+  overall: number | null;
+  band: QuantBand;
+  bandLabel: string; // "Strong", "Constructive", "Mixed", "Weak", "Insufficient data"
+  confidence: QuantConfidence;
+  // Fraction (0-1) of the model's intended base weight that was actually backed
+  // by scored factors. Drives the confidence level and the "data coverage" UI.
+  dataCoverage: number;
+  // How many of the factors produced a real score.
+  scoredFactors: number;
+  totalFactors: number;
+  factors: QuantFactor[];
+  // One-line honest summary, e.g. "Constructive on 4/6 factors (67% coverage)."
+  summary: string;
+  // Honest pointer to whether the *quant rules* have been validated on history.
+  backtest: QuantBacktestStatus;
+}
+
+// Lightweight status object embedded in the QuantScore so the UI can always
+// state whether the rules are validated, without a second request.
+export interface QuantBacktestStatus {
+  tested: boolean;
+  label: string; // "Not validated yet" | "Technical-only backtest"
+  note: string;
+  // Optional pointer to the technical-only backtest method id.
+  methodId?: string | null;
+}
+
+// =============================================================================
+// Quant Score — technical-only backtest. Validates ONLY the price/technical
+// portion of the quant rules (momentum/trend + risk) on historical bars, with
+// no fundamental or analyst inputs to avoid look-ahead bias. Honest by
+// construction: every limitation is surfaced and the result is clearly labelled
+// "technical-only". NOT a validation of the full quant score or a track record.
+// =============================================================================
+
+export interface QuantBacktestRow {
+  ticker: string;
+  companyName: string | null;
+  // Technical-only quant signal computed point-in-time at the entry bar
+  // (price vs 50/200D MA + trailing momentum + volatility), 0-100.
+  entrySignal: number | null;
+  // Whether the entry signal cleared the "constructive" threshold.
+  selected: boolean;
+  entryPrice: number | null;
+  entryDate: string | null;
+  latestPrice: number | null;
+  latestDate: string | null;
+  forwardReturnPct: number | null;
+  maxDrawdownPct: number | null;
+  source: string;
+  warning: string | null;
+}
+
+export interface QuantBacktestSummary {
+  // Names whose entry signal cleared the threshold ("selected" cohort).
+  selectedCount: number;
+  // Names that did not clear the threshold ("rest" cohort).
+  restCount: number;
+  evaluated: number;
+  skipped: number;
+  // Average forward return of the selected vs. the rest cohort.
+  selectedAvgReturnPct: number | null;
+  restAvgReturnPct: number | null;
+  // selected − rest. Positive = the technical signal added value over the window.
+  edgePct: number | null;
+  selectedHitRatePct: number | null;
+  benchmarkReturnPct: number | null;
+  selectedBeatBenchmarkPct: number | null;
+}
+
+export interface QuantBacktestResponse {
+  asOf: number;
+  tested: boolean;
+  methodId: string;
+  lookbackDays: number;
+  thresholdScore: number;
+  windowStartDate: string | null;
+  windowEndDate: string | null;
+  benchmarkSymbol: string;
+  summary: QuantBacktestSummary;
+  rows: QuantBacktestRow[];
+  methodology: string;
+  limitations: string[];
+  disclaimer: string;
 }

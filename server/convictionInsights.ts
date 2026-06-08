@@ -18,6 +18,7 @@ import type {
   Instrument,
   InstrumentSnapshot,
   ModelSignal,
+  QuantScore,
   SignalConfig,
   TickerItem,
 } from "@shared/schema";
@@ -146,6 +147,40 @@ export async function getTickerActionSignal(
     getAnalystConsensus(sym).catch(() => null),
   ]);
   return buildActionSignal({ symbol: sym, signal, buffett, idea, analyst });
+}
+
+// Convenience endpoint: the transparent Quant Score for a ticker. The quant
+// score is already embedded in the Action Signal payload (built from the same
+// factor reads), so this simply projects that field — keeping a single source
+// of truth and avoiding a divergent parallel computation.
+export async function getTickerQuantScore(
+  ticker: string,
+  cfg: SignalConfig = DEFAULT_CONFIG,
+): Promise<QuantScore> {
+  const action = await getTickerActionSignal(ticker, cfg);
+  // buildActionSignal always populates quantScore; the fallback keeps the
+  // return type honest if an older code path ever omits it.
+  return (
+    action.quantScore ?? {
+      symbol: ticker.trim().toUpperCase(),
+      asOf: Date.now(),
+      overall: null,
+      band: "insufficient",
+      bandLabel: "Insufficient data",
+      confidence: "insufficient",
+      dataCoverage: 0,
+      scoredFactors: 0,
+      totalFactors: 6,
+      factors: [],
+      summary: "Insufficient data — quant score unavailable.",
+      backtest: {
+        tested: false,
+        label: "Not validated yet",
+        note: "No quant score could be computed for this ticker.",
+        methodId: "quant-technical-v1",
+      },
+    }
+  );
 }
 
 // Ticker-tape items sourced from the conviction watchlist. Reuses the

@@ -17,6 +17,11 @@ import type {
   SignalLabel,
   ConfidenceLabel,
   UpsidePotential,
+  QuantScore,
+  QuantFactor,
+  QuantBand,
+  QuantConfidence,
+  QuantBacktestResponse,
 } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
@@ -48,6 +53,9 @@ import {
   Clock,
   FlaskConical,
   Info,
+  Calculator,
+  Layers,
+  BarChart3,
 } from "lucide-react";
 
 // Shared React Query hooks so the detail panels and the summary grid reuse the
@@ -90,6 +98,20 @@ export function useIdeaActionSignal(ticker: string | null | undefined) {
         "GET",
         `/api/conviction-ideas/action-signal/${encodeURIComponent(ticker as string)}`,
       );
+      return res.json();
+    },
+  });
+}
+
+// Technical-only quant backtest (universe-wide, not per-ticker). Cached
+// server-side; we let React Query share it across panels.
+export function useQuantBacktest(enabled: boolean) {
+  return useQuery<QuantBacktestResponse>({
+    queryKey: ["/api/quant-score/backtest"],
+    enabled,
+    staleTime: 10 * 60 * 1000,
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/quant-score/backtest");
       return res.json();
     },
   });
@@ -1413,6 +1435,327 @@ function ConvictionBacktestBadge({ bt }: { bt: ConvictionSignal["backtest"] }) {
   );
 }
 
+// ---------- Quant Score v1 sub-panel (transparent factor-score model) --------
+
+function quantBandTone(band: QuantBand): string {
+  switch (band) {
+    case "strong":
+      return "border-pos/40 bg-pos/15 text-pos";
+    case "constructive":
+      return "border-pos/30 bg-pos/10 text-pos";
+    case "mixed":
+      return "border-primary/30 bg-primary/10 text-primary";
+    case "weak":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-500";
+    default:
+      return "border-border bg-muted/40 text-muted-foreground";
+  }
+}
+
+function quantConfidenceTone(c: QuantConfidence): string {
+  switch (c) {
+    case "high":
+      return "text-pos";
+    case "medium":
+      return "text-primary";
+    case "low":
+      return "text-amber-500";
+    default:
+      return "text-muted-foreground";
+  }
+}
+
+function quantSourceLabel(s: QuantFactor["source"]): string {
+  switch (s) {
+    case "technical":
+      return "Technical";
+    case "analyst":
+      return "Analyst";
+    case "fundamental":
+      return "Fundamental";
+    case "risk":
+      return "Risk";
+    default:
+      return s;
+  }
+}
+
+function quantStatusTone(status: QuantFactor["status"], score: number | null): string {
+  if (status !== "scored" || score == null) return "text-muted-foreground";
+  if (score >= 70) return "text-pos";
+  if (score >= 58) return "text-pos/80";
+  if (score >= 45) return "text-primary";
+  if (score >= 32) return "text-amber-500";
+  return "text-neg";
+}
+
+function quantBarTone(status: QuantFactor["status"], score: number | null): string {
+  if (status !== "scored" || score == null) return "bg-muted-foreground/30";
+  if (score >= 70) return "bg-pos";
+  if (score >= 58) return "bg-pos/70";
+  if (score >= 45) return "bg-primary";
+  if (score >= 32) return "bg-amber-500";
+  return "bg-neg";
+}
+
+function QuantFactorRow({ f }: { f: QuantFactor }) {
+  const scored = f.status === "scored" && f.score != null;
+  const statusText =
+    f.status === "scored"
+      ? `${f.score}`
+      : f.status === "pending"
+        ? "Pending"
+        : "N/A";
+  return (
+    <div
+      className="rounded border border-border/60 bg-background/40 px-2.5 py-2"
+      data-testid={`quant-factor-${f.key}`}
+      data-status={f.status}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 min-w-0">
+          <span className="text-[11px] font-medium text-foreground truncate">{f.label}</span>
+          <span className="shrink-0 rounded border border-border/60 px-1 py-px text-[8px] uppercase tracking-wide text-muted-foreground">
+            {quantSourceLabel(f.source)}
+          </span>
+        </span>
+        <span className="flex items-center gap-1.5 shrink-0">
+          <span className={cn("text-xs font-semibold tabular-nums", quantStatusTone(f.status, f.score))}>
+            {statusText}
+          </span>
+        </span>
+      </div>
+      <div className="mt-1 h-1.5 rounded-full bg-muted overflow-hidden">
+        <div
+          className={cn("h-full", quantBarTone(f.status, f.score))}
+          style={{ width: `${scored ? Math.max(2, Math.min(100, f.score as number)) : 0}%` }}
+        />
+      </div>
+      <div className="mt-1 flex items-center justify-between gap-2">
+        <p
+          className="text-[10px] text-muted-foreground leading-relaxed"
+          data-testid={`quant-factor-rationale-${f.key}`}
+        >
+          {f.rationale}
+        </p>
+        {scored && (
+          <span className="shrink-0 text-[9px] text-muted-foreground tabular-nums whitespace-nowrap">
+            w {Math.round(f.weight * 100)}% · +{f.contribution.toFixed(1)}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function QuantScoreBlock({ q }: { q: QuantScore }) {
+  const insufficient = q.overall == null;
+  return (
+    <div
+      className="rounded-md border border-primary/20 bg-primary/[0.03] p-3 space-y-2.5"
+      data-testid="quant-score-block"
+    >
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          <Calculator className="h-3.5 w-3.5 text-primary/80" aria-hidden />
+          Quant Score v1
+        </div>
+        <div className="flex items-center gap-2">
+          <span
+            className={cn(
+              "inline-flex items-center rounded border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide",
+              quantBandTone(q.band),
+            )}
+            data-testid="quant-score-band"
+          >
+            {q.bandLabel}
+          </span>
+          <span className="text-lg font-bold tabular-nums text-foreground" data-testid="quant-score-overall">
+            {q.overall == null ? "—" : q.overall}
+            <span className="text-[10px] font-normal text-muted-foreground">/100</span>
+          </span>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-x-4 gap-y-1 flex-wrap text-[10px]">
+        <span className="text-muted-foreground">
+          Confidence:{" "}
+          <span className={cn("font-semibold uppercase", quantConfidenceTone(q.confidence))} data-testid="quant-score-confidence">
+            {q.confidence}
+          </span>
+        </span>
+        <span className="text-muted-foreground" data-testid="quant-score-coverage">
+          Data coverage:{" "}
+          <span className="font-semibold tabular-nums text-foreground/90">
+            {Math.round(q.dataCoverage * 100)}%
+          </span>{" "}
+          ({q.scoredFactors}/{q.totalFactors} factors)
+        </span>
+      </div>
+
+      <p className="text-[11px] text-foreground/85 leading-relaxed" data-testid="quant-score-summary">
+        {q.summary}
+      </p>
+
+      {insufficient && (
+        <div className="flex items-start gap-1.5 text-[10px] text-muted-foreground">
+          <Info className="h-3 w-3 mt-0.5 shrink-0" />
+          <span>
+            Not enough scored factors to stand behind an overall number. Pending
+            market / fundamental data — we show factor detail below rather than a
+            fabricated score.
+          </span>
+        </div>
+      )}
+
+      <div data-testid="quant-score-factors">
+        <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">
+          <Layers className="h-3 w-3" /> Factor breakdown
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {q.factors.map((f) => (
+            <QuantFactorRow key={f.key} f={f} />
+          ))}
+        </div>
+      </div>
+
+      <div
+        className="rounded border border-border/60 bg-background/40 px-2.5 py-2 flex items-start gap-2"
+        data-testid="quant-score-backtest"
+      >
+        <FlaskConical className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
+        <div className="space-y-0.5">
+          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            {q.backtest.label}
+          </span>
+          <p className="text-[10px] text-muted-foreground leading-relaxed">{q.backtest.note}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Universe-wide technical-only backtest status. Distinguishes actual tested vs
+// not tested and surfaces the honest "technical-only" framing + limitations.
+export function QuantBacktestPanel({ open = false }: { open?: boolean }) {
+  const [expanded, setExpanded] = useState(open);
+  const query = useQuantBacktest(expanded);
+  const data = query.data;
+  const s = data?.summary;
+  return (
+    <div
+      className="rounded-md border border-border/70 bg-card/40 p-3 space-y-2"
+      data-testid="quant-backtest-panel"
+    >
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center justify-between gap-2 text-left"
+        data-testid="quant-backtest-toggle"
+      >
+        <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <BarChart3 className="h-3.5 w-3.5 text-primary/80" aria-hidden />
+          Backtest — technical-only validation
+        </span>
+        <span className="flex items-center gap-2">
+          {!expanded && (
+            <span className="text-[10px] text-muted-foreground">Tap to run</span>
+          )}
+          {expanded ? (
+            <ChevronDown className="h-4 w-4 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+          )}
+        </span>
+      </button>
+
+      {!expanded ? (
+        <p className="text-[11px] text-muted-foreground leading-relaxed">
+          The full quant score is not validated yet. A lightweight technical-only
+          backtest (price/momentum only, no fundamental or analyst look-ahead) can
+          be run over a 1-year window as a directional sanity check.
+        </p>
+      ) : query.isLoading ? (
+        <Skeleton className="h-[120px] rounded-md" data-testid="quant-backtest-loading" />
+      ) : query.isError ? (
+        <div className="text-xs text-muted-foreground" data-testid="quant-backtest-error">
+          Backtest unavailable: {(query.error as Error)?.message ?? "unknown"}
+        </div>
+      ) : !data || !s ? null : (
+        <div className="space-y-2.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span
+              className={cn(
+                "inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                data.tested
+                  ? "border-primary/30 bg-primary/10 text-primary"
+                  : "border-border bg-muted/40 text-muted-foreground",
+              )}
+              data-testid="quant-backtest-status"
+            >
+              {data.tested ? "Technical-only backtest run" : "Not enough historical validation yet"}
+            </span>
+            <span className="text-[10px] text-muted-foreground">
+              {data.windowStartDate ?? "?"} → {data.windowEndDate ?? "?"}
+            </span>
+          </div>
+
+          {data.tested && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" data-testid="quant-backtest-stats">
+              <Stat label="Selected avg" value={fmtPctVal(s.selectedAvgReturnPct)} />
+              <Stat label="Rest avg" value={fmtPctVal(s.restAvgReturnPct)} />
+              <Stat
+                label="Edge"
+                value={fmtPctVal(s.edgePct)}
+                tone={s.edgePct == null ? undefined : s.edgePct > 0 ? "pos" : "neg"}
+              />
+              <Stat label={`vs ${data.benchmarkSymbol}`} value={fmtPctVal(s.benchmarkReturnPct)} />
+            </div>
+          )}
+
+          <p className="text-[10px] text-muted-foreground leading-relaxed">
+            {data.tested
+              ? `Selected cohort = ${s.selectedCount} names whose point-in-time technical signal cleared ${data.thresholdScore}/100; comparison cohort = ${s.restCount}. Edge = selected avg − rest avg over the window. ${s.evaluated} evaluated, ${s.skipped} skipped.`
+              : "No names could be evaluated (insufficient historical price coverage)."}
+          </p>
+
+          <details className="text-[10px] text-muted-foreground" data-testid="quant-backtest-method">
+            <summary className="cursor-pointer select-none">Methodology & limitations</summary>
+            <p className="mt-1 leading-relaxed">{data.methodology}</p>
+            <ul className="mt-1 space-y-0.5 list-disc pl-4">
+              {data.limitations.map((l, i) => (
+                <li key={i}>{l}</li>
+              ))}
+            </ul>
+            <p className="mt-1 italic">{data.disclaimer}</p>
+          </details>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value, tone }: { label: string; value: string; tone?: "pos" | "neg" }) {
+  return (
+    <div className="rounded border border-border/60 bg-background/40 px-2 py-1.5">
+      <div className="text-[9px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div
+        className={cn(
+          "text-[12px] font-semibold tabular-nums",
+          tone === "pos" ? "text-pos" : tone === "neg" ? "text-neg" : "text-foreground/90",
+        )}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function fmtPctVal(n: number | null): string {
+  if (n == null) return "—";
+  return `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
+}
+
 export function ActionSignalPanel({ ticker }: { ticker: string }) {
   const query = useIdeaActionSignal(ticker);
   const data = query.data;
@@ -1461,7 +1804,11 @@ export function ActionSignalPanel({ ticker }: { ticker: string }) {
             {data.summary}
           </p>
 
+          {data.quantScore && <QuantScoreBlock q={data.quantScore} />}
+
           {data.conviction && <ConvictionSignalBlock c={data.conviction} />}
+
+          <QuantBacktestPanel />
 
           {data.notes.length > 0 && (
             <ul className="space-y-0.5 text-[10px] text-amber-500" data-testid="action-signal-notes">

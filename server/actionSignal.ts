@@ -26,6 +26,7 @@ import type {
   SubModelOutput,
   UpsidePotential,
 } from "@shared/schema";
+import { buildQuantScore } from "./quantScore";
 
 const clamp = (n: number, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, n));
 
@@ -342,8 +343,8 @@ function buildBacktestStatus(): BacktestStatus {
     tested: false,
     label: "Not tested yet",
     note:
-      "These conviction rules have not been backtested on historical data. A 1-year price-only scenario reconstruction exists separately, but it validates scenario labels — not these buy/sell rules. Treat the signal as a transparent heuristic until the rules are validated.",
-    methodId: null,
+      "These conviction rules have not been backtested on historical data. A technical-only quant backtest validates just the price/momentum portion of the quant score over a 1-year window (see the Backtest panel); fundamentals and analyst inputs are not validated. Treat the signal as a transparent heuristic until the full rules are validated.",
+    methodId: "quant-technical-v1",
     asOf: null,
   };
 }
@@ -722,6 +723,11 @@ export function buildActionSignal(args: {
     downgradeTriggers: trimmedDowngrade,
   });
 
+  // Transparent Quant Score v1, built from the same per-factor reads so the two
+  // views stay consistent. The action engine references it via the dedicated
+  // quantScore field (and its own panel) rather than the amber notes list.
+  const quantScore = buildQuantScore({ symbol, factors });
+
   return {
     symbol,
     asOf: Date.now(),
@@ -734,6 +740,7 @@ export function buildActionSignal(args: {
     downgradeTriggers: trimmedDowngrade,
     agreement: { internalStance, analystStance: aStance, agreement, note },
     conviction,
+    quantScore,
     legacySignal: signal?.signal ?? "Invalid Setup",
     analystConsensus: analyst,
     notes,

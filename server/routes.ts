@@ -12,6 +12,7 @@ import { getThirteenFSummary } from "./sec13f";
 import { getPoliticiansSummary } from "./politicians";
 import { getStockPicks, getTickerChart } from "./stockPicks";
 import { getStockPicksBacktest } from "./backtest";
+import { getQuantBacktest } from "./quantBacktest";
 import {
   getConvictionIdeas,
   addConvictionIdea,
@@ -23,6 +24,7 @@ import {
   getTickerBuffett,
   getTickerSignal,
   getTickerActionSignal,
+  getTickerQuantScore,
   parseTickerSignalConfig,
   getConvictionTicker,
 } from "./convictionInsights";
@@ -399,6 +401,18 @@ export async function registerRoutes(
     }
   });
 
+  // Quant Score — technical-only backtest. Validates ONLY the price/momentum
+  // portion of the quant rules over a 1-year window, with no fundamental or
+  // analyst look-ahead. Clearly labelled "technical-only"; not a validation of
+  // the full quant score. Cached server-side (30 min).
+  app.get("/api/quant-score/backtest", async (_req, res) => {
+    try {
+      res.json(await getQuantBacktest());
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
   // Conviction Ideas — a small, deliberate research book (curated, static
   // content). Enriched with live pricing + scenario models via the same
   // helpers Stock Picks uses. Cached server-side (30 min).
@@ -502,6 +516,24 @@ export async function registerRoutes(
       }
       const cfg = parseTickerSignalConfig(req.query as Record<string, unknown>);
       res.json(await getTickerActionSignal(ticker, cfg));
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // Transparent Quant Score v1 for a single conviction idea (by ticker). A
+  // weighted factor-score model (momentum/analyst/valuation/growth/quality/risk)
+  // with explicit per-factor data status, weights, contributions and rationale,
+  // plus an overall 0-100, band, and data-coverage-driven confidence. Rules-based,
+  // no LLM. Also embedded in the action-signal payload; this is the lighter view.
+  app.get("/api/conviction-ideas/quant-score/:ticker", async (req, res) => {
+    try {
+      const ticker = String(req.params.ticker ?? "").trim();
+      if (!ticker || !/^[A-Za-z0-9.\-]{1,12}$/.test(ticker)) {
+        return res.status(400).json({ message: "Invalid ticker." });
+      }
+      const cfg = parseTickerSignalConfig(req.query as Record<string, unknown>);
+      res.json(await getTickerQuantScore(ticker, cfg));
     } catch (e) {
       res.status(500).json({ message: (e as Error).message });
     }
