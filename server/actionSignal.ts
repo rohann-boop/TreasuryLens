@@ -13,12 +13,18 @@ import type {
   ActionSignal,
   ActionAgreement,
   AnalystConsensus,
+  BacktestStatus,
   BuffettIndex,
   ConfidenceLabel,
   ConvictionIdea,
+  ConvictionSignal,
+  DownsideRisk,
+  EntryQuality,
   FactorVerdict,
   ModelSignal,
+  SignalHorizon,
   SubModelOutput,
+  UpsidePotential,
 } from "@shared/schema";
 
 const clamp = (n: number, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, n));
@@ -324,6 +330,285 @@ const ACTION_SUMMARY: Record<ActionLabel, string> = {
   Avoid: "Weak across factors — stay on the sidelines for now.",
 };
 
+// -------------------- conviction signal (honest, separated read) --------------
+
+// Backtest status is honest by default: the *exact* conviction-signal rules
+// have not been validated on history yet. The existing scenario backtest
+// validates a related-but-different thing (scenario labels over price), so we
+// surface "not tested yet" rather than implying these rules are proven.
+function buildBacktestStatus(): BacktestStatus {
+  return {
+    confidence: "not-tested",
+    tested: false,
+    label: "Not tested yet",
+    note:
+      "These conviction rules have not been backtested on historical data. A 1-year price-only scenario reconstruction exists separately, but it validates scenario labels — not these buy/sell rules. Treat the signal as a transparent heuristic until the rules are validated.",
+    methodId: null,
+    asOf: null,
+  };
+}
+
+const UPSIDE_LABEL: Record<UpsidePotential, string> = {
+  base: "Base upside",
+  "2x candidate": "2x candidate",
+  "3x candidate": "3x candidate",
+  "5x candidate": "5x candidate",
+  unknown: "Not enough evidence",
+};
+
+const DOWNSIDE_LABEL: Record<DownsideRisk, string> = {
+  low: "Low",
+  moderate: "Moderate",
+  high: "High",
+  unknown: "Unknown",
+};
+
+const ENTRY_LABEL: Record<EntryQuality, string> = {
+  attractive: "Attractive",
+  fair: "Fair",
+  extended: "Extended",
+  "wait-for-setup": "Wait for setup",
+  unknown: "Unknown",
+};
+
+const HORIZON_LABEL: Record<SignalHorizon, string> = {
+  "short-term-trade": "Short-term trade",
+  "12-month-setup": "12-month setup",
+  "3-5-year-compounder": "3-5 year compounder",
+  "speculative-optionality": "Speculative optionality",
+  unknown: "Unknown",
+};
+
+// Classify upside from the scenario model's bull-case implied return when
+// present; otherwise fall back to the curated scenario tag. Evidence-based,
+// explicitly a *candidate*, never a promise.
+function classifyUpside(idea: ConvictionIdea | null): {
+  potential: UpsidePotential;
+  upsidePctEstimate: number | null;
+  rationale: string[];
+} {
+  const sm = idea?.scenarioModel ?? null;
+  const rationale: string[] = [];
+  if (sm && sm.bullUpsidePct != null && Number.isFinite(sm.bullUpsidePct)) {
+    const up = sm.bullUpsidePct;
+    let potential: UpsidePotential;
+    if (up >= 400) potential = "5x candidate";
+    else if (up >= 200) potential = "3x candidate";
+    else if (up >= 100) potential = "2x candidate";
+    else potential = "base";
+    rationale.push(
+      `Scenario model bull case implies roughly +${Math.round(up)}% over ${sm.horizonYears}y (estimate, not a target).`,
+    );
+    if (sm.classification) rationale.push(`Curated/derived classification: ${sm.classification}.`);
+    if (potential === "base")
+      rationale.push("Bull case is under 2x — treat as ordinary upside, not a multibagger candidate.");
+    return { potential, upsidePctEstimate: Math.round(up), rationale };
+  }
+  // Fall back to the curated scenario tag if no modelled band.
+  const tag = idea?.scenarioModel?.classification ?? null;
+  if (tag === "5x potential")
+    return { potential: "5x candidate", upsidePctEstimate: null, rationale: ["Curated tag: 5x potential (no live price to model a band)."] };
+  if (tag === "3x potential")
+    return { potential: "3x candidate", upsidePctEstimate: null, rationale: ["Curated tag: 3x potential (no live price to model a band)."] };
+  if (tag === "2x potential")
+    return { potential: "2x candidate", upsidePctEstimate: null, rationale: ["Curated tag: 2x potential (no live price to model a band)."] };
+  if (tag === "compounder" || tag === "defensive")
+    return { potential: "base", upsidePctEstimate: null, rationale: ["Curated tag points to steady compounding rather than a multiple."] };
+  return {
+    potential: "unknown",
+    upsidePctEstimate: null,
+    rationale: ["No scenario model or curated potential available — upside not classifiable yet."],
+  };
+}
+
+// Classify downside from the scenario model bear case + the risk factor.
+function classifyDownside(
+  idea: ConvictionIdea | null,
+  risk: ActionFactor,
+  signal: ModelSignal | null,
+): {
+  risk: DownsideRisk;
+  downsidePctEstimate: number | null;
+  invalidationLevel: number | null;
+  rationale: string[];
+} {
+  const sm = idea?.scenarioModel ?? null;
+  const rationale: string[] = [];
+  let downsidePct: number | null = null;
+  if (sm && sm.bearDownsidePct != null && Number.isFinite(sm.bearDownsidePct)) {
+    downsidePct = Math.round(sm.bearDownsidePct); // negative
+    rationale.push(`Scenario bear case implies roughly ${downsidePct}% (illustrative, not a floor).`);
+  }
+  const invalidationLevel =
+    signal?.stopPrice != null && Number.isFinite(signal.stopPrice) ? signal.stopPrice : null;
+  if (invalidationLevel != null)
+    rationale.push(`Technical invalidation near ${invalidationLevel.toFixed(2)} (model stop).`);
+
+  // Combine modelled downside magnitude with the safety/risk factor score.
+  // riskFactor score is *safety* (higher = calmer).
+  let level: DownsideRisk;
+  const mag = downsidePct != null ? Math.abs(downsidePct) : null;
+  const safety = risk.available ? (risk.score ?? null) : null;
+  if (mag == null && safety == null) {
+    level = "unknown";
+    rationale.push("Not enough price history or scenario data to size downside.");
+  } else {
+    // Score downside risk 0..100 (higher = riskier). Blend magnitude + (100-safety).
+    const fromMag = mag == null ? null : Math.min(100, mag);
+    const fromSafety = safety == null ? null : 100 - safety;
+    const parts = [fromMag, fromSafety].filter((x): x is number => x != null);
+    const blended = parts.reduce((a, b) => a + b, 0) / parts.length;
+    if (blended >= 60) level = "high";
+    else if (blended >= 38) level = "moderate";
+    else level = "low";
+    if (!risk.available) rationale.push("Risk read is approximate (limited history).");
+    else rationale.push(risk.rationale);
+  }
+  return { risk: level, downsidePctEstimate: downsidePct, invalidationLevel, rationale };
+}
+
+// Entry quality from valuation (cheaper = better entry) + momentum (extended
+// runs are worse entries) + any invalid timing setup.
+function classifyEntry(
+  valuation: ActionFactor,
+  momentum: ActionFactor,
+  signal: ModelSignal | null,
+): { quality: EntryQuality; rationale: string[] } {
+  const rationale: string[] = [];
+  if (signal && signal.invalidReasons.length > 0) {
+    rationale.push("Timing model flags an invalid setup — wait for confirmation.");
+    return { quality: "wait-for-setup", rationale };
+  }
+  const val = valuation.available ? valuation.score : null;
+  const mom = momentum.available ? momentum.score : null;
+  if (val == null && mom == null) {
+    return {
+      quality: "unknown",
+      rationale: ["No valuation or technical context to judge entry timing."],
+    };
+  }
+  if (val != null) rationale.push(valuation.rationale);
+  if (mom != null) rationale.push(momentum.rationale);
+  // Higher valuation score = cheaper = better entry. Very high momentum can
+  // mean an extended chase.
+  if (mom != null && mom >= 75 && (val == null || val < 45)) {
+    return { quality: "extended", rationale };
+  }
+  const valGood = val != null && val >= 58;
+  const momOk = mom == null || (mom >= 45 && mom < 78);
+  if (valGood && momOk) return { quality: "attractive", rationale };
+  if ((val != null && val < 38) || (mom != null && mom >= 80))
+    return { quality: "extended", rationale };
+  return { quality: "fair", rationale };
+}
+
+// Infer holding horizon from curated role/timeHorizon/scenario classification.
+function classifyHorizon(idea: ConvictionIdea | null): {
+  kind: SignalHorizon;
+  rationale: string;
+} {
+  if (!idea) return { kind: "unknown", rationale: "No curated idea metadata to infer a horizon." };
+  const tag = idea.scenarioModel?.classification ?? null;
+  const th = (idea.timeHorizon ?? "").toLowerCase();
+  const role = (idea.roleLabel ?? "").toLowerCase();
+  if (tag === "speculative" || role.includes("optionality") || role.includes("variance"))
+    return { kind: "speculative-optionality", rationale: `Curated as ${idea.roleLabel || "speculative optionality"}.` };
+  if (tag === "5x potential" || tag === "3x potential")
+    return { kind: "speculative-optionality", rationale: "High-multiple candidate — outcome is long-tail and binary-ish." };
+  if (tag === "compounder" || th.includes("5y") || th.includes("3-5") || th.includes("long"))
+    return { kind: "3-5-year-compounder", rationale: `Curated horizon: ${idea.timeHorizon || "multi-year compounder"}.` };
+  if (th.includes("12") || th.includes("year") || th.includes("medium"))
+    return { kind: "12-month-setup", rationale: `Curated horizon: ${idea.timeHorizon || "~12 months"}.` };
+  if (th.includes("short") || th.includes("trade"))
+    return { kind: "short-term-trade", rationale: `Curated horizon: ${idea.timeHorizon}.` };
+  if (idea.timeHorizon) return { kind: "12-month-setup", rationale: `Curated horizon: ${idea.timeHorizon}.` };
+  return { kind: "unknown", rationale: "No clear horizon signal from curated metadata." };
+}
+
+function buildConvictionSignal(args: {
+  signal: ModelSignal | null;
+  idea: ConvictionIdea | null;
+  factors: ActionFactor[];
+  downgradeTriggers: string[];
+}): ConvictionSignal {
+  const { signal, idea, factors, downgradeTriggers } = args;
+  const byKey = new Map(factors.map((f) => [f.key, f]));
+  const valuation = byKey.get("valuation")!;
+  const momentum = byKey.get("momentum")!;
+  const risk = byKey.get("risk")!;
+  const growth = byKey.get("growth")!;
+  const analyst = byKey.get("analyst")!;
+
+  const up = classifyUpside(idea);
+  const down = classifyDownside(idea, risk, signal);
+  const entry = classifyEntry(valuation, momentum, signal);
+  const horizon = classifyHorizon(idea);
+
+  // Honest reward/risk *estimate* from the scenario bands when both are present.
+  const sm = idea?.scenarioModel ?? null;
+  const estimatedRewardRisk =
+    sm && sm.rewardRiskRatio != null && Number.isFinite(sm.rewardRiskRatio)
+      ? sm.rewardRiskRatio
+      : null;
+
+  // Top-level evidence bullets — pull the strongest available factor rationales.
+  const evidence: string[] = [];
+  if (analyst.available) evidence.push(analyst.rationale);
+  if (momentum.available) evidence.push(momentum.rationale);
+  if (valuation.available) evidence.push(valuation.rationale);
+  if (growth.available) evidence.push(growth.rationale);
+  if (risk.available) evidence.push(risk.rationale);
+  if (evidence.length === 0)
+    evidence.push("Limited live data — signal rests on curated metadata only.");
+
+  // Not-enough-evidence gate: if both upside and downside are unknown and we
+  // have almost no usable factors, render the honest "pending" state.
+  const availableCount = factors.filter((f) => f.available).length;
+  const insufficientEvidence =
+    up.potential === "unknown" && down.risk === "unknown" && availableCount < 2;
+
+  // Invalidation triggers reuse the action-signal downgrade triggers plus a
+  // concrete downside-tolerance line.
+  const invalidationTriggers = [...downgradeTriggers];
+  if (down.downsidePctEstimate != null)
+    invalidationTriggers.push(
+      `Loss exceeds your downside tolerance (bear-case estimate ~${down.downsidePctEstimate}%).`,
+    );
+  if (down.invalidationLevel != null)
+    invalidationTriggers.push(`Price closes below the ${down.invalidationLevel.toFixed(2)} invalidation level.`);
+
+  return {
+    upside: {
+      potential: up.potential,
+      label: UPSIDE_LABEL[up.potential],
+      upsidePctEstimate: up.upsidePctEstimate,
+      rationale: up.rationale,
+    },
+    downside: {
+      risk: down.risk,
+      label: DOWNSIDE_LABEL[down.risk],
+      downsidePctEstimate: down.downsidePctEstimate,
+      invalidationLevel: down.invalidationLevel,
+      rationale: down.rationale,
+    },
+    entry: {
+      quality: entry.quality,
+      label: ENTRY_LABEL[entry.quality],
+      rationale: entry.rationale,
+    },
+    horizon: {
+      kind: horizon.kind,
+      label: HORIZON_LABEL[horizon.kind],
+      rationale: horizon.rationale,
+    },
+    estimatedRewardRisk,
+    insufficientEvidence,
+    evidence: evidence.slice(0, 5),
+    invalidationTriggers: invalidationTriggers.slice(0, 5),
+    backtest: buildBacktestStatus(),
+  };
+}
+
 export function buildActionSignal(args: {
   symbol: string;
   signal: ModelSignal | null;
@@ -429,6 +714,14 @@ export function buildActionSignal(args: {
   if (downgradeTriggers.length === 0)
     downgradeTriggers.push("Material deterioration in growth, quality or risk.");
 
+  const trimmedDowngrade = downgradeTriggers.slice(0, 4);
+  const conviction = buildConvictionSignal({
+    signal,
+    idea,
+    factors,
+    downgradeTriggers: trimmedDowngrade,
+  });
+
   return {
     symbol,
     asOf: Date.now(),
@@ -438,8 +731,9 @@ export function buildActionSignal(args: {
     summary: ACTION_SUMMARY[action],
     factors,
     upgradeTriggers: upgradeTriggers.slice(0, 4),
-    downgradeTriggers: downgradeTriggers.slice(0, 4),
+    downgradeTriggers: trimmedDowngrade,
     agreement: { internalStance, analystStance: aStance, agreement, note },
+    conviction,
     legacySignal: signal?.signal ?? "Invalid Setup",
     analystConsensus: analyst,
     notes,

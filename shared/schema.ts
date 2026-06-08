@@ -1291,6 +1291,108 @@ export interface ActionAgreement {
   note: string;
 }
 
+// =============================================================================
+// Conviction Signal — an honest, evidence-based read that replaces the old
+// fixed-looking "Reward / Risk 4x" framing. It separates *what kind of idea*
+// this could be (upside potential), *how much could go wrong* (downside risk),
+// *whether now is a good entry*, *over what horizon*, and *how trustworthy the
+// rules are* (backtest status). Every field is a candidate/estimate, never a
+// guarantee. NOT financial advice.
+// =============================================================================
+
+// Upside potential classification. "base" = ordinary upside; the multiple
+// candidates are evidence-based heuristics (NOT promised outcomes); "unknown"
+// when there is not enough evidence to classify.
+export type UpsidePotential =
+  | "base"
+  | "2x candidate"
+  | "3x candidate"
+  | "5x candidate"
+  | "unknown";
+
+export type DownsideRisk = "low" | "moderate" | "high" | "unknown";
+
+// Entry quality from valuation / momentum / technical context.
+export type EntryQuality =
+  | "attractive"
+  | "fair"
+  | "extended"
+  | "wait-for-setup"
+  | "unknown";
+
+// Coarse holding horizon, inferred from theme/type/role when available.
+export type SignalHorizon =
+  | "short-term-trade"
+  | "12-month-setup"
+  | "3-5-year-compounder"
+  | "speculative-optionality"
+  | "unknown";
+
+// Whether the rules behind this signal have been validated on history.
+export type BacktestConfidence =
+  | "not-tested"
+  | "weak"
+  | "moderate"
+  | "strong";
+
+export interface BacktestStatus {
+  // Honest top-level state. "not-tested" until a real engine validates the
+  // exact conviction-signal rules (the existing scenario backtest validates a
+  // related but different thing — scenario *labels*, not these rules).
+  confidence: BacktestConfidence;
+  tested: boolean;
+  // Human label e.g. "Not tested yet".
+  label: string;
+  // One-line honest description of what is/isn't validated.
+  note: string;
+  // Optional pointer to a backtest method/run once available.
+  methodId?: string | null;
+  asOf?: number | null;
+}
+
+export interface ConvictionSignal {
+  // Upside scenario classification + the evidence behind it.
+  upside: {
+    potential: UpsidePotential;
+    label: string; // human label e.g. "3x candidate"
+    // Illustrative upside band (% gain) when a scenario model is available.
+    upsidePctEstimate: number | null;
+    rationale: string[]; // why this potential (evidence bullets)
+  };
+  // Downside risk classification + estimate / invalidation level.
+  downside: {
+    risk: DownsideRisk;
+    label: string; // e.g. "Moderate"
+    // Illustrative downside band (% loss, negative) when modellable.
+    downsidePctEstimate: number | null;
+    // A concrete invalidation/stop level where one is derivable.
+    invalidationLevel: number | null;
+    rationale: string[];
+  };
+  // Entry quality read.
+  entry: {
+    quality: EntryQuality;
+    label: string; // e.g. "Fair", "Extended"
+    rationale: string[];
+  };
+  // Inferred holding horizon.
+  horizon: {
+    kind: SignalHorizon;
+    label: string; // e.g. "3-5 year compounder"
+    rationale: string;
+  };
+  // Honest reward/risk read — exposed as a *scenario estimate*, never a fixed
+  // default. Null when not enough data (no scenario model / price).
+  estimatedRewardRisk: number | null;
+  // True when there is not enough evidence to render a confident signal.
+  insufficientEvidence: boolean;
+  // Top-level evidence summary bullets (drawn from analyst/trend/MA/valuation/growth/risk).
+  evidence: string[];
+  // What would change the view / invalidation triggers (concise).
+  invalidationTriggers: string[];
+  backtest: BacktestStatus;
+}
+
 export interface ActionSignal {
   symbol: string;
   asOf: number;
@@ -1304,6 +1406,9 @@ export interface ActionSignal {
   upgradeTriggers: string[];
   downgradeTriggers: string[];
   agreement: ActionAgreement;
+  // The new honest, separated conviction read (upside/downside/entry/horizon/
+  // backtest). Optional so older cached payloads still type-check.
+  conviction?: ConvictionSignal;
   // The legacy timing label is preserved so existing consumers keep working.
   legacySignal: SignalLabel;
   analystConsensus: AnalystConsensus | null;

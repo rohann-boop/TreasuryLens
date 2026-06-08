@@ -7,12 +7,16 @@ import type {
   AnalystConsensus,
   BuffettCategory,
   BuffettIndex,
+  ConvictionSignal,
+  DownsideRisk,
+  EntryQuality,
   EquityFundamentals,
   FactorVerdict,
   ModelSignal,
   ManagementGovernance,
   SignalLabel,
   ConfidenceLabel,
+  UpsidePotential,
 } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
@@ -38,6 +42,12 @@ import {
   ArrowDownCircle,
   Sparkles,
   Scale as ScaleIcon,
+  Rocket,
+  ShieldHalf,
+  LogIn,
+  Clock,
+  FlaskConical,
+  Info,
 } from "lucide-react";
 
 // Shared React Query hooks so the detail panels and the summary grid reuse the
@@ -1137,6 +1147,272 @@ function FactorRow({ f }: { f: ActionFactor }) {
   );
 }
 
+// ---------- Conviction Signal sub-panel (honest, separated read) ----------
+
+function upsideTone(p: UpsidePotential): string {
+  switch (p) {
+    case "5x candidate":
+      return "border-pos/40 bg-pos/15 text-pos";
+    case "3x candidate":
+      return "border-pos/30 bg-pos/10 text-pos";
+    case "2x candidate":
+      return "border-primary/30 bg-primary/10 text-primary";
+    case "base":
+      return "border-border bg-muted/40 text-foreground/80";
+    default:
+      return "border-border bg-muted/30 text-muted-foreground";
+  }
+}
+
+function downsideTone(r: DownsideRisk): string {
+  switch (r) {
+    case "low":
+      return "border-pos/30 bg-pos/10 text-pos";
+    case "moderate":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-500";
+    case "high":
+      return "border-neg/30 bg-neg/10 text-neg";
+    default:
+      return "border-border bg-muted/30 text-muted-foreground";
+  }
+}
+
+function entryTone(q: EntryQuality): string {
+  switch (q) {
+    case "attractive":
+      return "border-pos/30 bg-pos/10 text-pos";
+    case "fair":
+      return "border-primary/30 bg-primary/10 text-primary";
+    case "extended":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-500";
+    case "wait-for-setup":
+      return "border-neg/30 bg-neg/10 text-neg";
+    default:
+      return "border-border bg-muted/30 text-muted-foreground";
+  }
+}
+
+function backtestTone(c: ConvictionSignal["backtest"]["confidence"]): string {
+  switch (c) {
+    case "strong":
+      return "border-pos/30 bg-pos/10 text-pos";
+    case "moderate":
+      return "border-primary/30 bg-primary/10 text-primary";
+    case "weak":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-500";
+    default:
+      return "border-border bg-muted/40 text-muted-foreground";
+  }
+}
+
+function PillCard({
+  icon,
+  title,
+  pill,
+  pillClass,
+  detail,
+  rationale,
+  testId,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  pill: string;
+  pillClass: string;
+  detail?: string | null;
+  rationale?: string[];
+  testId: string;
+}) {
+  return (
+    <div
+      className="rounded border border-border/60 bg-background/40 px-2.5 py-2 space-y-1.5"
+      data-testid={testId}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+          {icon}
+          {title}
+        </span>
+        <span
+          className={cn(
+            "inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+            pillClass,
+          )}
+          data-testid={`${testId}-pill`}
+        >
+          {pill}
+        </span>
+      </div>
+      {detail && (
+        <div className="text-[11px] font-medium tabular-nums text-foreground/90" data-testid={`${testId}-detail`}>
+          {detail}
+        </div>
+      )}
+      {rationale && rationale.length > 0 && (
+        <ul className="space-y-0.5">
+          {rationale.slice(0, 2).map((r, i) => (
+            <li key={i} className="text-[10px] text-muted-foreground leading-relaxed">
+              · {r}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function ConvictionSignalBlock({ c }: { c: ConvictionSignal }) {
+  const bt = c.backtest;
+  if (c.insufficientEvidence) {
+    return (
+      <div
+        className="rounded border border-border/60 bg-background/40 px-3 py-3 text-[12px] text-muted-foreground flex items-start gap-2"
+        data-testid="conviction-signal-insufficient"
+      >
+        <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+        <div className="space-y-1">
+          <div className="font-semibold text-foreground/90">Not enough evidence yet</div>
+          <p className="leading-relaxed">
+            Pending market / fundamental data for this ticker. We won't show an
+            overconfident upside or downside read until there's enough to back it.
+          </p>
+          <ConvictionBacktestBadge bt={bt} />
+        </div>
+      </div>
+    );
+  }
+
+  const upsideDetail =
+    c.upside.upsidePctEstimate != null
+      ? `Bull-case estimate ~+${c.upside.upsidePctEstimate}% (scenario, not guaranteed)`
+      : null;
+  const downsideDetail = (() => {
+    const parts: string[] = [];
+    if (c.downside.downsidePctEstimate != null)
+      parts.push(`Bear-case estimate ~${c.downside.downsidePctEstimate}%`);
+    if (c.downside.invalidationLevel != null)
+      parts.push(`invalidation ~${c.downside.invalidationLevel.toFixed(2)}`);
+    return parts.length ? parts.join(" · ") : null;
+  })();
+
+  return (
+    <div className="space-y-2.5" data-testid="conviction-signal-block">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+          Conviction signal — scenario read
+        </div>
+        {c.estimatedRewardRisk != null && (
+          <div className="text-[10px] text-muted-foreground" data-testid="conviction-reward-risk">
+            Est. reward/risk{" "}
+            <span className="font-semibold tabular-nums text-foreground/90">
+              {c.estimatedRewardRisk.toFixed(2)}×
+            </span>{" "}
+            <span className="opacity-70">(scenario estimate, not a fixed target)</span>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <PillCard
+          icon={<Rocket className="h-3 w-3" />}
+          title="Upside potential"
+          pill={c.upside.label}
+          pillClass={upsideTone(c.upside.potential)}
+          detail={upsideDetail}
+          rationale={c.upside.rationale}
+          testId="conviction-upside"
+        />
+        <PillCard
+          icon={<ShieldHalf className="h-3 w-3" />}
+          title="Downside risk"
+          pill={c.downside.label}
+          pillClass={downsideTone(c.downside.risk)}
+          detail={downsideDetail}
+          rationale={c.downside.rationale}
+          testId="conviction-downside"
+        />
+        <PillCard
+          icon={<LogIn className="h-3 w-3" />}
+          title="Entry quality"
+          pill={c.entry.label}
+          pillClass={entryTone(c.entry.quality)}
+          rationale={c.entry.rationale}
+          testId="conviction-entry"
+        />
+        <PillCard
+          icon={<Clock className="h-3 w-3" />}
+          title="Time horizon"
+          pill={c.horizon.label}
+          pillClass="border-border bg-muted/40 text-foreground/80"
+          rationale={c.horizon.rationale ? [c.horizon.rationale] : undefined}
+          testId="conviction-horizon"
+        />
+      </div>
+
+      {c.evidence.length > 0 && (
+        <div data-testid="conviction-evidence">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+            Why this signal
+          </div>
+          <ul className="space-y-1 text-[11px]">
+            {c.evidence.map((e, i) => (
+              <li key={i} className="flex items-start gap-1.5">
+                <CircleCheck className="h-3 w-3 mt-0.5 shrink-0 text-primary/70" />
+                <span className="text-foreground/90">{e}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {c.invalidationTriggers.length > 0 && (
+        <div data-testid="conviction-invalidation">
+          <div className="text-[10px] uppercase tracking-wide text-amber-500 mb-1 flex items-center gap-1">
+            <ShieldAlert className="h-3 w-3" /> What would change the view
+          </div>
+          <ul className="space-y-1 text-[11px]">
+            {c.invalidationTriggers.map((t, i) => (
+              <li key={i} className="flex items-start gap-1.5" data-testid="conviction-invalidation-trigger">
+                <ArrowDownCircle className="h-3 w-3 mt-0.5 shrink-0 text-amber-500/70" />
+                <span className="text-foreground/90">{t}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <ConvictionBacktestBadge bt={bt} />
+    </div>
+  );
+}
+
+function ConvictionBacktestBadge({ bt }: { bt: ConvictionSignal["backtest"] }) {
+  return (
+    <div
+      className="rounded border border-border/60 bg-background/40 px-2.5 py-2 flex items-start gap-2"
+      data-testid="conviction-backtest"
+    >
+      <FlaskConical className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
+      <div className="space-y-0.5">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Backtest status
+          </span>
+          <span
+            className={cn(
+              "inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+              backtestTone(bt.confidence),
+            )}
+            data-testid="conviction-backtest-pill"
+          >
+            {bt.label}
+          </span>
+        </div>
+        <p className="text-[10px] text-muted-foreground leading-relaxed">{bt.note}</p>
+      </div>
+    </div>
+  );
+}
+
 export function ActionSignalPanel({ ticker }: { ticker: string }) {
   const query = useIdeaActionSignal(ticker);
   const data = query.data;
@@ -1184,6 +1460,8 @@ export function ActionSignalPanel({ ticker }: { ticker: string }) {
           <p className="text-[12px] text-foreground/90 leading-relaxed" data-testid="action-signal-summary">
             {data.summary}
           </p>
+
+          {data.conviction && <ConvictionSignalBlock c={data.conviction} />}
 
           {data.notes.length > 0 && (
             <ul className="space-y-0.5 text-[10px] text-amber-500" data-testid="action-signal-notes">
