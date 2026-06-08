@@ -22,6 +22,8 @@ import type {
   QuantBand,
   QuantConfidence,
   QuantBacktestResponse,
+  QuantBacktestWindow,
+  QuantBacktestVerdict,
 } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
@@ -1635,13 +1637,153 @@ function QuantScoreBlock({ q }: { q: QuantScore }) {
   );
 }
 
-// Universe-wide technical-only backtest status. Distinguishes actual tested vs
-// not tested and surfaces the honest "technical-only" framing + limitations.
+function verdictTone(v: QuantBacktestVerdict): string {
+  switch (v) {
+    case "edge":
+      return "border-pos/40 bg-pos/10 text-pos";
+    case "no-edge":
+      return "border-neg/40 bg-neg/10 text-neg";
+    case "mixed":
+      return "border-amber-500/40 bg-amber-500/10 text-amber-500";
+    default:
+      return "border-border bg-muted/40 text-muted-foreground";
+  }
+}
+
+function verdictLabel(v: QuantBacktestVerdict): string {
+  switch (v) {
+    case "edge":
+      return "Edge";
+    case "no-edge":
+      return "No edge";
+    case "mixed":
+      return "Mixed";
+    default:
+      return "Thin";
+  }
+}
+
+// One window's threshold cohorts rendered as a compact responsive table.
+function BacktestWindowCard({
+  w,
+  benchmarkSymbol,
+}: {
+  w: QuantBacktestWindow;
+  benchmarkSymbol: string;
+}) {
+  if (!w.available) {
+    return (
+      <div
+        className="rounded border border-border/60 bg-background/40 px-2.5 py-2"
+        data-testid={`quant-backtest-window-${w.key}`}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[11px] font-semibold text-foreground/90">{w.label}</span>
+          <span className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Unavailable
+          </span>
+        </div>
+        <p className="mt-1 text-[10px] text-muted-foreground leading-relaxed">{w.status}</p>
+      </div>
+    );
+  }
+  return (
+    <div
+      className="rounded border border-border/60 bg-background/40 px-2.5 py-2 space-y-1.5"
+      data-testid={`quant-backtest-window-${w.key}`}
+    >
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <span className="text-[11px] font-semibold text-foreground/90">
+          {w.label}
+          <span className="ml-1.5 font-normal text-[10px] text-muted-foreground">
+            {w.decisionDate ?? "?"} → {w.asOfDate ?? "?"}
+          </span>
+        </span>
+        <span className="text-[10px] text-muted-foreground">
+          {w.evaluated} scored · {benchmarkSymbol} {fmtPctVal(w.benchmarkReturnPct)}
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[10px] tabular-nums">
+          <thead>
+            <tr className="text-muted-foreground text-left">
+              <th className="font-medium pr-2 py-0.5">Cohort</th>
+              <th className="font-medium px-1 py-0.5 text-right">N</th>
+              <th className="font-medium px-1 py-0.5 text-right">Sel</th>
+              <th className="font-medium px-1 py-0.5 text-right">Rest</th>
+              <th className="font-medium px-1 py-0.5 text-right">vs rest</th>
+              <th className="font-medium px-1 py-0.5 text-right">vs bmk</th>
+              <th className="font-medium px-1 py-0.5 text-right">Hit</th>
+              <th className="font-medium px-1 py-0.5 text-right">MaxDD</th>
+              <th className="font-medium pl-1 py-0.5 text-right">Verdict</th>
+            </tr>
+          </thead>
+          <tbody>
+            {w.thresholds.map((t) => (
+              <tr
+                key={t.key}
+                className="border-t border-border/40"
+                data-testid={`quant-backtest-cohort-${w.key}-${t.key}`}
+              >
+                <td className="pr-2 py-0.5 text-foreground/90 whitespace-nowrap">{t.label}</td>
+                <td className="px-1 py-0.5 text-right text-muted-foreground">{t.selectedCount}</td>
+                <td className="px-1 py-0.5 text-right">{fmtPctVal(t.selectedAvgReturnPct)}</td>
+                <td className="px-1 py-0.5 text-right text-muted-foreground">
+                  {fmtPctVal(t.restAvgReturnPct)}
+                </td>
+                <td
+                  className={cn(
+                    "px-1 py-0.5 text-right",
+                    toneClass(t.excessVsRestPct),
+                  )}
+                >
+                  {fmtPctVal(t.excessVsRestPct)}
+                </td>
+                <td
+                  className={cn(
+                    "px-1 py-0.5 text-right",
+                    toneClass(t.excessVsBenchmarkPct),
+                  )}
+                >
+                  {fmtPctVal(t.excessVsBenchmarkPct)}
+                </td>
+                <td className="px-1 py-0.5 text-right text-muted-foreground">
+                  {t.hitRatePct == null ? "—" : `${t.hitRatePct.toFixed(0)}%`}
+                </td>
+                <td className="px-1 py-0.5 text-right text-neg/90">
+                  {fmtPctVal(t.selectedMaxDrawdownPct)}
+                </td>
+                <td className="pl-1 py-0.5 text-right">
+                  <span
+                    className={cn(
+                      "inline-flex items-center rounded border px-1 py-0.5 text-[8px] font-semibold uppercase tracking-wide",
+                      verdictTone(t.verdict),
+                    )}
+                  >
+                    {verdictLabel(t.verdict)}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function toneClass(n: number | null): string {
+  if (n == null) return "text-muted-foreground";
+  return n > 0 ? "text-pos" : n < 0 ? "text-neg" : "text-foreground/90";
+}
+
+// Universe-wide technical-only Backtest v1. Multiple point-in-time windows
+// (3M/6M/1Y/2Y where data exists) each with several threshold cohorts. Honest
+// "Technical-only" framing + limitations are always surfaced.
 export function QuantBacktestPanel({ open = false }: { open?: boolean }) {
   const [expanded, setExpanded] = useState(open);
   const query = useQuantBacktest(expanded);
   const data = query.data;
-  const s = data?.summary;
   return (
     <div
       className="rounded-md border border-border/70 bg-card/40 p-3 space-y-2"
@@ -1655,7 +1797,7 @@ export function QuantBacktestPanel({ open = false }: { open?: boolean }) {
       >
         <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           <BarChart3 className="h-3.5 w-3.5 text-primary/80" aria-hidden />
-          Backtest — technical-only validation
+          Backtest v1 — technical-only validation
         </span>
         <span className="flex items-center gap-2">
           {!expanded && (
@@ -1672,18 +1814,25 @@ export function QuantBacktestPanel({ open = false }: { open?: boolean }) {
       {!expanded ? (
         <p className="text-[11px] text-muted-foreground leading-relaxed">
           The full quant score is not validated yet. A lightweight technical-only
-          backtest (price/momentum only, no fundamental or analyst look-ahead) can
-          be run over a 1-year window as a directional sanity check.
+          backtest (price/momentum only, no fundamental or analyst look-ahead) runs
+          across several point-in-time windows (3M / 6M / 1Y / 2Y where data exists)
+          as a directional sanity check — not a complete fundamentals-aware backtest.
         </p>
       ) : query.isLoading ? (
-        <Skeleton className="h-[120px] rounded-md" data-testid="quant-backtest-loading" />
+        <Skeleton className="h-[160px] rounded-md" data-testid="quant-backtest-loading" />
       ) : query.isError ? (
         <div className="text-xs text-muted-foreground" data-testid="quant-backtest-error">
           Backtest unavailable: {(query.error as Error)?.message ?? "unknown"}
         </div>
-      ) : !data || !s ? null : (
+      ) : !data ? null : (
         <div className="space-y-2.5">
           <div className="flex items-center gap-2 flex-wrap">
+            <span
+              className="inline-flex items-center rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-500"
+              data-testid="quant-backtest-badge"
+            >
+              {data.validationBadge}
+            </span>
             <span
               className={cn(
                 "inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
@@ -1693,31 +1842,38 @@ export function QuantBacktestPanel({ open = false }: { open?: boolean }) {
               )}
               data-testid="quant-backtest-status"
             >
-              {data.tested ? "Technical-only backtest run" : "Not enough historical validation yet"}
+              {data.tested
+                ? "Backtest run"
+                : "Not enough historical validation yet"}
             </span>
             <span className="text-[10px] text-muted-foreground">
-              {data.windowStartDate ?? "?"} → {data.windowEndDate ?? "?"}
+              Universe: {data.universeSize} · benchmark {data.benchmarkSymbol}
             </span>
           </div>
 
-          {data.tested && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" data-testid="quant-backtest-stats">
-              <Stat label="Selected avg" value={fmtPctVal(s.selectedAvgReturnPct)} />
-              <Stat label="Rest avg" value={fmtPctVal(s.restAvgReturnPct)} />
-              <Stat
-                label="Edge"
-                value={fmtPctVal(s.edgePct)}
-                tone={s.edgePct == null ? undefined : s.edgePct > 0 ? "pos" : "neg"}
-              />
-              <Stat label={`vs ${data.benchmarkSymbol}`} value={fmtPctVal(s.benchmarkReturnPct)} />
-            </div>
-          )}
-
           <p className="text-[10px] text-muted-foreground leading-relaxed">
-            {data.tested
-              ? `Selected cohort = ${s.selectedCount} names whose point-in-time technical signal cleared ${data.thresholdScore}/100; comparison cohort = ${s.restCount}. Edge = selected avg − rest avg over the window. ${s.evaluated} evaluated, ${s.skipped} skipped.`
-              : "No names could be evaluated (insufficient historical price coverage)."}
+            Directional sanity check on the price/momentum factor only. Each window
+            scores names at a past decision date using prior bars, then measures the
+            forward return to today. "vs rest" = selected avg − rest avg; "vs bmk" =
+            selected avg − {data.benchmarkSymbol}. This is NOT a complete
+            fundamentals-aware historical backtest.
           </p>
+
+          {data.tested ? (
+            <div className="space-y-2" data-testid="quant-backtest-windows">
+              {data.windows.map((w) => (
+                <BacktestWindowCard
+                  key={w.key}
+                  w={w}
+                  benchmarkSymbol={data.benchmarkSymbol}
+                />
+              ))}
+            </div>
+          ) : (
+            <p className="text-[10px] text-muted-foreground">
+              No window had enough historical price coverage to evaluate.
+            </p>
+          )}
 
           <details className="text-[10px] text-muted-foreground" data-testid="quant-backtest-method">
             <summary className="cursor-pointer select-none">Methodology & limitations</summary>
@@ -1731,22 +1887,6 @@ export function QuantBacktestPanel({ open = false }: { open?: boolean }) {
           </details>
         </div>
       )}
-    </div>
-  );
-}
-
-function Stat({ label, value, tone }: { label: string; value: string; tone?: "pos" | "neg" }) {
-  return (
-    <div className="rounded border border-border/60 bg-background/40 px-2 py-1.5">
-      <div className="text-[9px] uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div
-        className={cn(
-          "text-[12px] font-semibold tabular-nums",
-          tone === "pos" ? "text-pos" : tone === "neg" ? "text-neg" : "text-foreground/90",
-        )}
-      >
-        {value}
-      </div>
     </div>
   );
 }

@@ -401,10 +401,11 @@ export async function registerRoutes(
     }
   });
 
-  // Quant Score — technical-only backtest. Validates ONLY the price/momentum
-  // portion of the quant rules over a 1-year window, with no fundamental or
-  // analyst look-ahead. Clearly labelled "technical-only"; not a validation of
-  // the full quant score. Cached server-side (30 min).
+  // Quant Score — Backtest v1 (technical-only, multi-window). Validates ONLY the
+  // price/momentum portion of the quant rules across several point-in-time
+  // windows (3M/6M/1Y/2Y where data exists) with multiple threshold cohorts, no
+  // fundamental or analyst look-ahead. Clearly labelled "technical-only"; not a
+  // validation of the full quant score. Cached server-side (30 min).
   app.get("/api/quant-score/backtest", async (_req, res) => {
     try {
       res.json(await getQuantBacktest());

@@ -1553,17 +1553,85 @@ export interface QuantBacktestSummary {
   selectedBeatBenchmarkPct: number | null;
 }
 
+// -----------------------------------------------------------------------------
+// Backtest v1 — multi-window / multi-threshold extension. Each evaluation window
+// has a decision date (today − window) at which a point-in-time technical signal
+// is computed from prior bars only; the forward return is measured from the
+// decision date to today. Within each window we report several threshold cohorts
+// (e.g. score ≥70 / ≥60 / ≥50, plus a top-quintile-vs-rest split) so the reader
+// can see whether a stricter filter actually selected better forward returns.
+// Still technical-only and still a directional sanity check, never a full
+// fundamentals-aware validation.
+// -----------------------------------------------------------------------------
+
+export type QuantBacktestVerdict = "edge" | "mixed" | "no-edge" | "insufficient";
+
+// One threshold/cohort result inside a single window.
+export interface QuantBacktestThresholdResult {
+  // Stable key, e.g. "score>=70" or "top-quintile".
+  key: string;
+  // Human label, e.g. "Score ≥ 70" or "Top quintile vs rest".
+  label: string;
+  kind: "band" | "cohort";
+  // For band cohorts, the minimum entry signal required (else null).
+  minScore: number | null;
+  // Size of the cohort that cleared the filter at the decision date.
+  selectedCount: number;
+  // Size of the comparison group (rest of the evaluated universe).
+  restCount: number;
+  // Average forward return of selected vs. rest cohorts (%).
+  selectedAvgReturnPct: number | null;
+  restAvgReturnPct: number | null;
+  // selected − rest (%). Positive = the filter added value over this window.
+  excessVsRestPct: number | null;
+  // selected − benchmark (%).
+  excessVsBenchmarkPct: number | null;
+  // Fraction of the selected cohort with a positive forward return (%).
+  hitRatePct: number | null;
+  // Worst peak-to-trough drawdown across the selected cohort's window (%).
+  selectedMaxDrawdownPct: number | null;
+  verdict: QuantBacktestVerdict;
+}
+
+// One evaluation window (e.g. 1Y). `available` is false when the data source
+// lacks enough depth to honour the decision date for most of the universe.
+export interface QuantBacktestWindow {
+  key: string; // "3M" | "6M" | "1Y" | "2Y"
+  label: string; // "3 months", etc.
+  lookbackDays: number;
+  available: boolean;
+  decisionDate: string | null; // point-in-time entry date (today − window)
+  asOfDate: string | null; // latest bar date (forward-return end)
+  // How many names had enough history to be scored at the decision date.
+  evaluated: number;
+  // How many names were skipped (insufficient depth / coverage) this window.
+  skipped: number;
+  benchmarkReturnPct: number | null;
+  thresholds: QuantBacktestThresholdResult[];
+  status: string; // short human status / limitation note for the window
+}
+
 export interface QuantBacktestResponse {
   asOf: number;
   tested: boolean;
   methodId: string;
+  // Default/headline window used by compact summaries (kept for compatibility).
   lookbackDays: number;
   thresholdScore: number;
   windowStartDate: string | null;
   windowEndDate: string | null;
   benchmarkSymbol: string;
+  // Legacy single-window summary/rows, derived from the 1Y window so existing
+  // consumers keep working.
   summary: QuantBacktestSummary;
   rows: QuantBacktestRow[];
+  // Backtest v1: every evaluation window with its threshold cohorts.
+  windows: QuantBacktestWindow[];
+  // Whether any fundamental/analyst factors were used (false = technical-only).
+  technicalOnly: boolean;
+  // "Technical-only" | "Partial validation" — badge text for the UI.
+  validationBadge: string;
+  universeSize: number;
   methodology: string;
   limitations: string[];
   disclaimer: string;
