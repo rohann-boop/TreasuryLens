@@ -917,7 +917,10 @@ export interface ConvictionChecklistItem {
 // Thematic section an idea belongs to. Sections are the primary grouping in
 // the UI selector (e.g. "Bravos", "Core AI compounders"). An idea has exactly
 // one primary section to avoid duplicate cards, but may carry extra theme tags.
-export type ConvictionSectionKey =
+// Curated section keys. User-created groups produce synthetic keys of the form
+// `custom-<slug>`, so the type also admits arbitrary strings while keeping the
+// curated keys as autocomplete hints.
+export type ConvictionCuratedSectionKey =
   | "bravos"
   | "core-ai-compounders"
   | "speculative-ai-infra"
@@ -925,6 +928,8 @@ export type ConvictionSectionKey =
   | "ai-software-data"
   | "frontier-high-upside"
   | "other";
+
+export type ConvictionSectionKey = ConvictionCuratedSectionKey | (string & {});
 
 export interface ConvictionSectionInfo {
   key: ConvictionSectionKey;

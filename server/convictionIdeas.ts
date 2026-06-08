@@ -112,6 +112,13 @@ const SECTION_LABEL: Record<ConvictionSectionKey, string> = SECTIONS.reduce(
   {} as Record<ConvictionSectionKey, string>,
 );
 
+// Reverse lookup: curated section label (lowercased) → key. Lets a user-added
+// idea whose theme matches an existing curated group file under that group
+// rather than spawning a near-duplicate synthetic section.
+const SECTION_KEY_BY_LABEL = new Map<string, ConvictionSectionKey>(
+  SECTIONS.map((s) => [s.label.toLowerCase(), s.key]),
+);
+
 // Each entry pairs the curated conviction body with the StockPick-shaped base
 // fields required by the shared enrichment + scenario model. The base fields
 // (marketCapBucket, scenarioPotential, riskLevel, convictionScore) drive the
@@ -139,6 +146,9 @@ interface ThemeIdeaInput {
   companyName: string;
   role: ConvictionRole;
   sectionKey: ConvictionSectionKey;
+  // Explicit label for synthetic (user-group) sections that aren't in the
+  // curated SECTION_LABEL map. Curated sections may omit it.
+  sectionLabel?: string;
   themes: string[];
   targetOutcome: string;
   convictionScore: number;
@@ -167,7 +177,7 @@ function themeSeed(input: ThemeIdeaInput): IdeaSeed {
       companyName: input.companyName,
       role: input.role,
       sectionKey: input.sectionKey,
-      sectionLabel: SECTION_LABEL[input.sectionKey],
+      sectionLabel: input.sectionLabel ?? SECTION_LABEL[input.sectionKey],
       themes: input.themes,
       thesisPending: input.thesisPending,
       timeHorizon: "Long-term (3–5y+)",
@@ -1608,6 +1618,23 @@ const SEEDS: IdeaSeed[] = [
 // ticker/name/theme/role/score, so the rest is generic curated scaffolding
 // that prompts the user to fill in their own research. Pricing/scenario
 // enrichment still runs via the shared code path.
+
+// Synthetic section key for a user-created group, derived from its theme text.
+// Prefixed to avoid colliding with curated section keys. Falls back to a hash
+// of the raw theme when slugification yields nothing (e.g. all punctuation).
+function customSectionKey(theme: string): string {
+  const slug = slugify(theme);
+  return `custom-${slug || Math.abs(hashString(theme)).toString(36)}`;
+}
+
+function hashString(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+  }
+  return h;
+}
+
 function customRowToSeed(row: CustomConvictionRow): IdeaSeed {
   const role = (["core-compounder", "asymmetric-candidate", "high-variance-optionality"].includes(
     row.role,
@@ -1615,13 +1642,28 @@ function customRowToSeed(row: CustomConvictionRow): IdeaSeed {
     ? row.role
     : "asymmetric-candidate") as ConvictionRole;
   const t = row.ticker;
+  // A user-supplied theme becomes the idea's group: it gets a synthetic
+  // section key (`custom-<slug>`) and the raw theme as its label, so it
+  // surfaces as its own group in the rail and the Add dialog's group dropdown.
+  // Themeless custom ideas fall back to the curated "other" bucket.
+  const theme = row.theme?.trim() ?? "";
+  const curatedKey = theme
+    ? SECTION_KEY_BY_LABEL.get(theme.toLowerCase())
+    : undefined;
+  const sectionKey = curatedKey ?? (theme ? customSectionKey(theme) : "other");
+  const sectionLabel = curatedKey
+    ? SECTION_LABEL[curatedKey]
+    : theme
+      ? theme
+      : SECTION_LABEL.other;
   return themeSeed({
     id: row.id,
     ticker: t,
     companyName: row.companyName,
     role,
-    sectionKey: "other",
-    themes: row.theme && row.theme.trim() ? [row.theme.trim()] : [],
+    sectionKey,
+    sectionLabel,
+    themes: theme ? [theme] : [],
     targetOutcome: "User-defined idea — set your own target outcome",
     convictionScore: row.convictionScore,
     // No authored research yet — the detail pane renders a "Thesis pending"
@@ -1741,9 +1783,35 @@ async function buildResponse(): Promise<ConvictionIdeasResponse> {
   );
 
   // Only surface sections that actually contain at least one idea, preserving
-  // the canonical display order from SECTIONS.
+  // the canonical display order from SECTIONS. User-created groups produce
+  // synthetic section keys (`custom-…`) that aren't in SECTIONS; append them
+  // (in first-seen order) after the curated sections so they show in the rail
+  // and the Add dialog's group dropdown.
   const presentSections = new Set(ideas.map((i) => i.sectionKey ?? "other"));
-  const sections = SECTIONS.filter((s) => presentSections.has(s.key));
+  const curated = SECTIONS.filter((s) => presentSections.has(s.key));
+  const curatedKeys = new Set(SECTIONS.map((s) => s.key as string));
+  const synthetic: ConvictionSectionInfo[] = [];
+  const seenSynthetic = new Set<string>();
+  for (const idea of ideas) {
+    const key = (idea.sectionKey ?? "other") as string;
+    if (curatedKeys.has(key) || seenSynthetic.has(key)) continue;
+    seenSynthetic.add(key);
+    synthetic.push({
+      key,
+      label: idea.sectionLabel ?? key,
+      blurb: "User-created watchlist group.",
+    });
+  }
+  // Keep the curated "Other" bucket last if present.
+  const otherIdx = curated.findIndex((s) => s.key === "other");
+  let sections: ConvictionSectionInfo[];
+  if (otherIdx >= 0) {
+    const other = curated[otherIdx];
+    const curatedNoOther = curated.filter((_, i) => i !== otherIdx);
+    sections = [...curatedNoOther, ...synthetic, other];
+  } else {
+    sections = [...curated, ...synthetic];
+  }
 
   return {
     roles: ROLES,

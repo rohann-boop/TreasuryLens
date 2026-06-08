@@ -1275,18 +1275,41 @@ const emptyForm = {
   convictionScore: "50",
 };
 
+// Sentinels for the Theme/grouping dropdown: no group, or create a new one.
+const THEME_NONE = "__none__";
+const THEME_NEW = "__new__";
+
 function AddIdeaDialog({
   open,
   onOpenChange,
   onAdded,
+  groupNames,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onAdded: (data: ConvictionIdeasResponse, ticker: string) => void;
+  // Existing watchlist group names (section labels) to offer in the dropdown.
+  groupNames: string[];
 }) {
   const [form, setForm] = useState(emptyForm);
   const [submitting, setSubmitting] = useState(false);
+  // When the user picks "New group…", we show an inline text input and track
+  // its value here; otherwise `form.theme` holds the chosen existing group.
+  const [creatingGroup, setCreatingGroup] = useState(false);
+  const [newGroup, setNewGroup] = useState("");
   const { toast } = useToast();
+
+  // Reset the create-group sub-state whenever the dialog closes.
+  useEffect(() => {
+    if (!open) {
+      setCreatingGroup(false);
+      setNewGroup("");
+    }
+  }, [open]);
+
+  // The effective theme/group string sent to the server: the inline new-group
+  // name when creating, otherwise the selected existing group (blank = none).
+  const effectiveTheme = creatingGroup ? newGroup.trim() : form.theme.trim();
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1307,7 +1330,7 @@ function AddIdeaDialog({
       const res = await apiRequest("POST", "/api/conviction-ideas", {
         ticker: form.ticker.trim(),
         companyName: form.companyName.trim() || undefined,
-        theme: form.theme.trim() || undefined,
+        theme: effectiveTheme || undefined,
         role: form.role,
         convictionScore: Number(form.convictionScore) || 50,
       });
@@ -1316,6 +1339,8 @@ function AddIdeaDialog({
       onAdded(data, ticker);
       toast({ title: `Added ${ticker}` });
       setForm(emptyForm);
+      setCreatingGroup(false);
+      setNewGroup("");
       onOpenChange(false);
     } catch (err) {
       toast({
@@ -1381,14 +1406,53 @@ function AddIdeaDialog({
             <Label htmlFor="idea-theme" className="text-xs">
               Theme / grouping <span className="text-muted-foreground">(optional)</span>
             </Label>
-            <Input
-              id="idea-theme"
-              value={form.theme}
-              onChange={(e) => setForm((f) => ({ ...f, theme: e.target.value }))}
-              placeholder="e.g. Semiconductors / AI capex"
-              className="mt-1"
-              data-testid="input-idea-theme"
-            />
+            <Select
+              value={
+                creatingGroup
+                  ? THEME_NEW
+                  : form.theme.trim()
+                    ? form.theme
+                    : THEME_NONE
+              }
+              onValueChange={(v) => {
+                if (v === THEME_NEW) {
+                  setCreatingGroup(true);
+                  setForm((f) => ({ ...f, theme: "" }));
+                } else if (v === THEME_NONE) {
+                  setCreatingGroup(false);
+                  setNewGroup("");
+                  setForm((f) => ({ ...f, theme: "" }));
+                } else {
+                  setCreatingGroup(false);
+                  setNewGroup("");
+                  setForm((f) => ({ ...f, theme: v }));
+                }
+              }}
+            >
+              <SelectTrigger className="mt-1" data-testid="select-idea-theme">
+                <SelectValue placeholder="No group (default)" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={THEME_NONE}>No group (default)</SelectItem>
+                {groupNames.map((name) => (
+                  <SelectItem key={name} value={name}>
+                    {name}
+                  </SelectItem>
+                ))}
+                <SelectItem value={THEME_NEW}>+ New group…</SelectItem>
+              </SelectContent>
+            </Select>
+            {creatingGroup && (
+              <Input
+                id="idea-theme"
+                value={newGroup}
+                onChange={(e) => setNewGroup(e.target.value)}
+                placeholder="New group name (e.g. Semiconductors / AI capex)"
+                className="mt-2"
+                data-testid="input-idea-theme"
+                autoFocus
+              />
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -2047,7 +2111,10 @@ export function ConvictionWatchlist({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<WatchlistFilter>("all");
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  // Groups start collapsed by default. We track explicit *expanded* groups; a
+  // key absent from this map is collapsed. Auto-expansion (selecting/adding a
+  // ticker) marks that group expanded for orientation.
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [addOpen, setAddOpen] = useState(false);
   const [mobileRailOpen, setMobileRailOpen] = useState(false);
   const [pendingRemove, setPendingRemove] = useState<ConvictionIdea | null>(
@@ -2093,6 +2160,13 @@ export function ConvictionWatchlist({
     if (!order.includes("other")) order.push("other");
     return order;
   }, [sections]);
+
+  // Existing group names offered in the Add dialog's Theme/grouping dropdown.
+  // Excludes the catch-all "Other" bucket (themeless ideas land there anyway).
+  const groupNames = useMemo(
+    () => sections.filter((s) => s.key !== "other").map((s) => s.label),
+    [sections],
+  );
 
   // Apply the active scope filter (All / Needs review / Custom) and the search
   // query across ticker, company name and section label. Search filters across
@@ -2159,6 +2233,14 @@ export function ConvictionWatchlist({
     [ideas, selectedId],
   );
 
+  // Keep the selected ticker's group expanded for orientation; all other
+  // groups remain collapsed by default until the user opens them.
+  useEffect(() => {
+    if (!selected) return;
+    const key = (selected.sectionKey ?? "other") as string;
+    setExpanded((e) => (e[key] ? e : { ...e, [key]: true }));
+  }, [selected]);
+
   // Report the active ticker symbol up so the moving ribbon can highlight it.
   useEffect(() => {
     onSelectedTickerChange?.(selected?.ticker ?? null);
@@ -2174,11 +2256,11 @@ export function ConvictionWatchlist({
     if (!match) return;
     setSelectedId(match.id);
     const key = (match.sectionKey ?? "other") as string;
-    setCollapsed((c) => ({ ...c, [key]: false }));
+    setExpanded((e) => ({ ...e, [key]: true }));
   }, [selectTicker, ideas]);
 
   const toggleGroup = (key: string) =>
-    setCollapsed((c) => ({ ...c, [key]: !c[key] }));
+    setExpanded((e) => ({ ...e, [key]: !e[key] }));
 
   const handleSelectIdea = (id: string) => {
     setSelectedId(id);
@@ -2199,7 +2281,7 @@ export function ConvictionWatchlist({
       setSearch("");
       setSelectedId(added.id);
       const key = (added.sectionKey ?? "other") as string;
-      setCollapsed((c) => ({ ...c, [key]: false }));
+      setExpanded((e) => ({ ...e, [key]: true }));
     }
   };
 
@@ -2320,7 +2402,7 @@ export function ConvictionWatchlist({
               icon={g.icon}
               ideas={g.ideas}
               roles={roles}
-              collapsed={!!collapsed[g.key]}
+              collapsed={!expanded[g.key]}
               onToggle={toggleGroup}
               selectedId={selectedId}
               onSelect={handleSelectIdea}
@@ -2436,7 +2518,7 @@ export function ConvictionWatchlist({
                 const target = ideas.find((i) => i.id === id);
                 if (target) {
                   const key = (target.sectionKey ?? "other") as string;
-                  setCollapsed((c) => ({ ...c, [key]: false }));
+                  setExpanded((e) => ({ ...e, [key]: true }));
                 }
                 setSelectedId(id);
               }}
@@ -2449,6 +2531,7 @@ export function ConvictionWatchlist({
         open={addOpen}
         onOpenChange={setAddOpen}
         onAdded={handleAdded}
+        groupNames={groupNames}
       />
 
       <AlertDialog
