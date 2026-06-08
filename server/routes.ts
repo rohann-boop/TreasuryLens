@@ -419,7 +419,8 @@ export async function registerRoutes(
       if (!ticker || !/^[A-Za-z0-9.\-]{1,12}$/.test(ticker)) {
         return res.status(400).json({ message: "Invalid ticker." });
       }
-      res.json(await getTickerChart(ticker));
+      const range = String(req.query.range ?? "");
+      res.json(await getTickerChart(ticker, range));
     } catch (e) {
       res.status(500).json({ message: (e as Error).message });
     }

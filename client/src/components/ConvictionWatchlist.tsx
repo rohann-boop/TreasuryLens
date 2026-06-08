@@ -15,6 +15,7 @@ import {
 } from "recharts";
 import type {
   ConvictionBreakoutStatus,
+  ConvictionChartRange,
   ConvictionChartResponse,
   ConvictionIdea,
   ConvictionIdeasResponse,
@@ -23,6 +24,7 @@ import type {
   EquityRevenueResponse,
   ScenarioModel,
 } from "@shared/schema";
+import { CONVICTION_CHART_RANGES } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
@@ -230,9 +232,20 @@ function BreakoutBadge({ breakout }: { breakout: ConvictionBreakoutStatus | unde
 // Compact price + moving-average chart for the selected idea. Fetches a
 // downsampled close series plus 50-/200-day SMAs from the server (deployment-
 // safe via the shared query client). Mobile-friendly height + responsive.
+const RANGE_LABELS: Record<ConvictionChartRange, string> = {
+  "1D": "1D",
+  "1W": "1W",
+  "1M": "1M",
+  "6M": "6M",
+  "1Y": "1Y",
+  "5Y": "5Y",
+  MAX: "Max",
+};
+
 function ConvictionChart({ ticker }: { ticker: string }) {
+  const [range, setRange] = useState<ConvictionChartRange>("1Y");
   const query = useQuery<ConvictionChartResponse>({
-    queryKey: ["/api/conviction-ideas/chart", ticker],
+    queryKey: ["/api/conviction-ideas/chart", `${ticker}?range=${range}`],
     enabled: !!ticker,
   });
 
@@ -243,6 +256,12 @@ function ConvictionChart({ ticker }: { ticker: string }) {
   const showMa200 = (data?.availableMaWindows ?? []).includes(200);
   const currency = data?.currency ?? "USD";
   const fmt = (v: number) => fmtPrice(v, currency);
+  // Short ranges span days, not months — switch the axis label granularity so
+  // the ticks stay meaningful (e.g. "Apr 12" instead of repeated "Apr 25").
+  const intradayAxis = range === "1D" || range === "1W" || range === "1M";
+  const axisFormat: Intl.DateTimeFormatOptions = intradayAxis
+    ? { month: "short", day: "numeric" }
+    : { month: "short", year: "2-digit" };
 
   // Only mark breakouts that fall inside the rendered (downsampled) window so
   // a ReferenceDot never floats off the visible axis.
@@ -264,6 +283,29 @@ function ConvictionChart({ ticker }: { ticker: string }) {
             Price &amp; moving averages
           </div>
           <BreakoutBadge breakout={data?.breakout} />
+        </div>
+        <div
+          className="inline-flex items-center gap-0.5 rounded-md border border-border/70 bg-background/50 p-0.5"
+          role="group"
+          aria-label="Chart time range"
+          data-testid="chart-range-selector"
+        >
+          {CONVICTION_CHART_RANGES.map((r) => (
+            <button
+              key={r}
+              type="button"
+              onClick={() => setRange(r)}
+              aria-pressed={range === r}
+              data-testid={`chart-range-${r}`}
+              className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide transition-colors ${
+                range === r
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {RANGE_LABELS[r]}
+            </button>
+          ))}
         </div>
         <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
           <span className="inline-flex items-center gap-1">
@@ -311,7 +353,7 @@ function ConvictionChart({ ticker }: { ticker: string }) {
                 type="number"
                 domain={["dataMin", "dataMax"]}
                 tickFormatter={(t) =>
-                  new Date(t).toLocaleDateString(undefined, { month: "short", year: "2-digit" })
+                  new Date(t).toLocaleDateString(undefined, axisFormat)
                 }
                 stroke="hsl(var(--muted-foreground))"
                 fontSize={10}
@@ -874,8 +916,8 @@ function IdeaDetail({
   const perf = km?.performance ?? null;
 
   // Derive a one-day change from the chart series so the top snapshot can show
-  // a daily move when intraday/daily history is available. React Query dedupes
-  // this against the ConvictionChart fetch (same queryKey), so it is free.
+  // a daily move. Fetches the default (1Y) range — the last two closes give the
+  // daily move regardless of the range the user later picks in ConvictionChart.
   const chartQuery = useQuery<ConvictionChartResponse>({
     queryKey: ["/api/conviction-ideas/chart", idea.ticker],
     enabled: !!idea.ticker,
@@ -1248,12 +1290,14 @@ function AddIdeaDialog({
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Minimal required path: ticker + name. Theme/grouping is optional and the
-    // thesis is added/generated later — the ticker is persisted immediately and
-    // its market/pricing/fundamental data loads automatically.
-    if (!form.ticker.trim() || !form.companyName.trim()) {
+    // Only the ticker is required. Name, theme/grouping, role and conviction
+    // are all optional — the server infers the display name from market data
+    // (falling back to the ticker), slots the idea into a default grouping, and
+    // its market/pricing/fundamental data loads automatically. The thesis and
+    // other fields can be auto-updated later by the agent.
+    if (!form.ticker.trim()) {
       toast({
-        title: "Ticker and name are required",
+        title: "Ticker is required",
         variant: "destructive",
       });
       return;
@@ -1262,7 +1306,7 @@ function AddIdeaDialog({
     try {
       const res = await apiRequest("POST", "/api/conviction-ideas", {
         ticker: form.ticker.trim(),
-        companyName: form.companyName.trim(),
+        companyName: form.companyName.trim() || undefined,
         theme: form.theme.trim() || undefined,
         role: form.role,
         convictionScore: Number(form.convictionScore) || 50,
@@ -1290,10 +1334,10 @@ function AddIdeaDialog({
         <DialogHeader>
           <DialogTitle>Add to watchlist</DialogTitle>
           <DialogDescription data-testid="add-idea-explainer">
-            The ticker is added immediately. Market, pricing and fundamental
-            data — plus the chart, action signal and analyst consensus — load
-            automatically. Only the ticker and a name are required; the theme is
-            optional and a thesis can be added or auto-generated later.
+            Only the ticker is required. Market data loads automatically; thesis
+            and additional fields can be auto-updated later. Name, theme, role
+            and conviction are all optional — leave them blank and the name is
+            inferred from market data (falling back to the ticker).
           </DialogDescription>
         </DialogHeader>
 
@@ -1317,7 +1361,8 @@ function AddIdeaDialog({
             </div>
             <div>
               <Label htmlFor="idea-name" className="text-xs">
-                Company / fund name
+                Company / fund name{" "}
+                <span className="text-muted-foreground">(optional)</span>
               </Label>
               <Input
                 id="idea-name"
@@ -1325,7 +1370,7 @@ function AddIdeaDialog({
                 onChange={(e) =>
                   setForm((f) => ({ ...f, companyName: e.target.value }))
                 }
-                placeholder="e.g. ASML Holding N.V."
+                placeholder="Auto-filled from market data"
                 className="mt-1"
                 data-testid="input-idea-name"
               />

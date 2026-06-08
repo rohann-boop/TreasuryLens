@@ -76,11 +76,14 @@ interface MassiveAggResponse {
   error?: string;
 }
 
-async function fetchMassiveChart(symbol: string): Promise<Bar[] | null> {
+async function fetchMassiveChart(
+  symbol: string,
+  lookbackDays = 730,
+): Promise<Bar[] | null> {
   if (!MASSIVE_API_KEY) return null;
   try {
     const to = new Date().toISOString().slice(0, 10);
-    const from = new Date(Date.now() - 730 * 86400000)
+    const from = new Date(Date.now() - lookbackDays * 86400000)
       .toISOString()
       .slice(0, 10);
     // Massive's stock API is Polygon-compatible for aggregate bars.
@@ -232,11 +235,12 @@ interface YahooQuote {
 async function fetchYahooChartFromHost(
   host: string,
   symbol: string,
+  range = "2y",
 ): Promise<Bar[] | null> {
   try {
     const url = `https://${host}/v8/finance/chart/${encodeURIComponent(
       symbol,
-    )}?range=2y&interval=1d`;
+    )}?range=${encodeURIComponent(range)}&interval=1d`;
     const r = await fetch(url, { headers: YAHOO_HEADERS });
     const j = r.ok
       ? ((await r.json()) as YahooChart)
@@ -270,11 +274,14 @@ async function fetchYahooChartFromHost(
   }
 }
 
-export async function fetchYahooChart(symbol: string): Promise<Bar[] | null> {
+export async function fetchYahooChart(
+  symbol: string,
+  range = "2y",
+): Promise<Bar[] | null> {
   // Try both Yahoo hosts (sometimes one rate-limits while the other works).
   const hosts = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"];
   for (const h of hosts) {
-    const bars = await fetchYahooChartFromHost(h, symbol);
+    const bars = await fetchYahooChartFromHost(h, symbol, range);
     if (bars && bars.length) return bars;
   }
   return null;

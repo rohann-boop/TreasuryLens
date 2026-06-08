@@ -2,6 +2,7 @@ import type {
   ConvictionBreakoutPoint,
   ConvictionBreakoutStatus,
   ConvictionChartPoint,
+  ConvictionChartRange,
   ConvictionChartResponse,
   DataConfidence,
   MarketCapBucket,
@@ -4214,14 +4215,17 @@ function computePerformance(
   return perf;
 }
 
-async function fetchBars(ticker: string): Promise<{ bars: Bar[] | null; source: string }> {
+async function fetchBars(
+  ticker: string,
+  opts?: { lookbackDays?: number; yahooRange?: string },
+): Promise<{ bars: Bar[] | null; source: string }> {
   // Prefer Massive (Polygon-compatible) when key is configured — matches the
   // main indicators pipeline used elsewhere in TreasuryLens. Fall back to
   // Yahoo's chart endpoint, which is the same path other instruments use
   // when no Massive key is present.
-  const massive = await fetchMassiveChart(ticker);
+  const massive = await fetchMassiveChart(ticker, opts?.lookbackDays);
   if (massive && massive.length > 0) return { bars: massive, source: "massive" };
-  const yahoo = await fetchYahooChart(ticker);
+  const yahoo = await fetchYahooChart(ticker, opts?.yahooRange);
   if (yahoo && yahoo.length > 0) return { bars: yahoo, source: "yahoo" };
   return { bars: null, source: "unavailable" };
 }
@@ -4593,6 +4597,34 @@ const chartCache = new Map<string, { at: number; data: ConvictionChartResponse }
 const CHART_TTL_MS = 30 * 60 * 1000;
 const MAX_CHART_POINTS = 180; // keep payload small + mobile-friendly
 
+// Per-range chart configuration. `windowDays` is the trailing calendar window
+// the response renders; `fetchLookbackDays` / `yahooRange` size the underlying
+// daily-bar pull so moving averages (50/200-day) and breakout context have
+// enough prior history even for short windows. Data source is daily bars, so
+// the shortest windows (1D/1W) surface the most recent daily closes rather than
+// true intraday ticks.
+const RANGE_CONFIG: Record<
+  ConvictionChartRange,
+  { windowDays: number | null; fetchLookbackDays: number; yahooRange: string }
+> = {
+  // Short windows: still fetch ~2y so MAs/breakouts compute, then slice.
+  "1D": { windowDays: 5, fetchLookbackDays: 730, yahooRange: "2y" },
+  "1W": { windowDays: 10, fetchLookbackDays: 730, yahooRange: "2y" },
+  "1M": { windowDays: 31, fetchLookbackDays: 730, yahooRange: "2y" },
+  "6M": { windowDays: 186, fetchLookbackDays: 730, yahooRange: "2y" },
+  "1Y": { windowDays: 366, fetchLookbackDays: 730, yahooRange: "2y" },
+  // Long windows: pull a wider series.
+  "5Y": { windowDays: 1830, fetchLookbackDays: 1900, yahooRange: "5y" },
+  // MAX: everything the provider returns.
+  MAX: { windowDays: null, fetchLookbackDays: 7300, yahooRange: "max" },
+};
+
+function normalizeRange(raw: string | undefined): ConvictionChartRange {
+  const v = (raw ?? "").trim().toUpperCase();
+  if (v in RANGE_CONFIG) return v as ConvictionChartRange;
+  return "1Y";
+}
+
 function downsampleIndices(length: number, target: number): number[] {
   if (length <= target) return Array.from({ length }, (_, i) => i);
   const out: number[] = [];
@@ -4731,18 +4763,26 @@ function computeBreakouts(bars: Bar[]): ConvictionBreakoutStatus {
 
 export async function getTickerChart(
   rawTicker: string,
+  rawRange?: string,
 ): Promise<ConvictionChartResponse> {
   const ticker = rawTicker.trim().toUpperCase();
+  const range = normalizeRange(rawRange);
+  const cfg = RANGE_CONFIG[range];
   const now = Date.now();
-  const hit = chartCache.get(ticker);
+  const cacheKey = `${ticker}::${range}`;
+  const hit = chartCache.get(cacheKey);
   if (hit && now - hit.at < CHART_TTL_MS) return hit.data;
 
   const warnings: string[] = [];
-  const { bars, source } = await fetchBars(ticker);
+  const { bars, source } = await fetchBars(ticker, {
+    lookbackDays: cfg.fetchLookbackDays,
+    yahooRange: cfg.yahooRange,
+  });
 
   if (!bars || bars.length === 0) {
     const empty: ConvictionChartResponse = {
       ticker,
+      range,
       points: [],
       source: "unavailable",
       currency: null,
@@ -4761,35 +4801,59 @@ export async function getTickerChart(
       note: "No historical price series available for this ticker.",
       warnings: ["Historical price series unavailable for this ticker."],
     };
-    chartCache.set(ticker, { at: now, data: empty });
+    chartCache.set(cacheKey, { at: now, data: empty });
     return empty;
   }
 
-  // Compute MAs on the FULL series (so the 200-day window is correct), then
-  // downsample the close + MA arrays together to keep the payload small.
+  // Compute MAs and breakouts on the FULL fetched series so the 50-/200-day
+  // windows and prior-high breakout context stay correct even when the visible
+  // range is short. We then slice to the requested trailing window for display.
   const closes = bars.map((b) => b.c);
   const ma50Full = sma(closes, 50);
   const ma200Full = sma(closes, 200);
-
-  // Breakouts are computed on the full series (prior-window highs need the
-  // un-downsampled bars to be correct), then surfaced as a compact status.
   const breakout = computeBreakouts(bars);
 
-  const idxs = downsampleIndices(bars.length, MAX_CHART_POINTS);
+  // Window the series to the requested range (trailing calendar days). MAX
+  // keeps everything. The MA arrays are index-aligned to `bars`, so slice the
+  // same index range.
+  let startIdx = 0;
+  if (cfg.windowDays != null) {
+    const cutoff = now - cfg.windowDays * 86400000;
+    const firstInWindow = bars.findIndex((b) => b.t >= cutoff);
+    startIdx = firstInWindow < 0 ? bars.length - 1 : firstInWindow;
+    // Always keep at least two points so the line/return renders.
+    if (bars.length - startIdx < 2) startIdx = Math.max(0, bars.length - 2);
+  }
+  const windowBars = bars.slice(startIdx);
+  const windowMa50 = ma50Full.slice(startIdx);
+  const windowMa200 = ma200Full.slice(startIdx);
+
+  // Downsample the windowed close + MA arrays together to keep payload small.
+  const idxs = downsampleIndices(windowBars.length, MAX_CHART_POINTS);
   const points: ConvictionChartPoint[] = idxs.map((i) => ({
-    t: bars[i].t,
-    c: bars[i].c,
-    ma50: ma50Full[i],
-    ma200: ma200Full[i],
+    t: windowBars[i].t,
+    c: windowBars[i].c,
+    ma50: windowMa50[i] ?? null,
+    ma200: windowMa200[i] ?? null,
   }));
 
+  // An MA window is "available" only if it has a non-null value somewhere in
+  // the visible window — short ranges (1D/1W) have no MA points to show.
   const availableMaWindows: number[] = [];
-  if (closes.length >= 50) availableMaWindows.push(50);
-  if (closes.length >= 200) availableMaWindows.push(200);
+  if (windowMa50.some((v) => v != null)) availableMaWindows.push(50);
+  if (windowMa200.some((v) => v != null)) availableMaWindows.push(200);
 
   if (closes.length < 50) {
     warnings.push(
       `Only ${closes.length} trading days available — no moving average shown.`,
+    );
+  } else if (availableMaWindows.length === 0) {
+    warnings.push(
+      "Selected range is shorter than the moving-average windows — moving averages are not shown for this range.",
+    );
+  } else if (!availableMaWindows.includes(200) && closes.length >= 200) {
+    warnings.push(
+      "200-day moving average is outside the selected range — switch to a longer range to see it.",
     );
   } else if (closes.length < 200) {
     warnings.push(
@@ -4804,15 +4868,17 @@ export async function getTickerChart(
       ? ((lastClose - first) / first) * 100
       : null;
 
-  const note =
+  const maNote =
     availableMaWindows.length === 2
       ? "Price with 50-day and 200-day moving averages."
       : availableMaWindows.length === 1
-        ? "Price with 50-day moving average (insufficient history for 200-day)."
-        : "Price only — insufficient history for moving averages.";
+        ? "Price with 50-day moving average (200-day outside this range)."
+        : "Price only — range too short for moving averages.";
+  const note = `${range} · ${maNote}`;
 
   const data: ConvictionChartResponse = {
     ticker,
+    range,
     points,
     source,
     currency: source === "unavailable" ? null : "USD",
@@ -4823,6 +4889,6 @@ export async function getTickerChart(
     note,
     warnings,
   };
-  chartCache.set(ticker, { at: now, data });
+  chartCache.set(cacheKey, { at: now, data });
   return data;
 }

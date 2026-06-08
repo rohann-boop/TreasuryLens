@@ -25,6 +25,7 @@ import type { AddConvictionIdeaInput } from "@shared/schema";
 import { enrichOne } from "./stockPicks";
 import { buildScenarioModel } from "./scenarioModel";
 import { convictionStore, type CustomConvictionRow } from "./storage";
+import { fetchMassiveTickerDetails } from "./marketData";
 
 const CURATED_SOURCE =
   "Curated by TreasuryLens research — qualitative scores and bands are opinion, not advice.";
@@ -1787,9 +1788,26 @@ function allKnownIds(): Set<string> {
 
 export class ConvictionConflictError extends Error {}
 
+// Best-effort display name for a ticker-only add. Tries the market-data
+// profile (Massive reference endpoint exposes an issuer name); falls back to
+// the ticker symbol itself when no provider name is available. Never throws —
+// a failed lookup simply yields the ticker.
+async function resolveDisplayName(ticker: string): Promise<string> {
+  try {
+    const details = await fetchMassiveTickerDetails(ticker);
+    const name = details?.name?.trim();
+    if (name) return name;
+  } catch {
+    // ignore — fall back to the ticker symbol
+  }
+  return ticker;
+}
+
 // Add a user-defined conviction idea. Validation happens at the route via the
 // shared zod schema; this assumes a clean input. Throws ConvictionConflictError
-// if the ticker collides with an existing (non-removed) idea.
+// if the ticker collides with an existing (non-removed) idea. Only the ticker
+// is required: when no name is supplied the server infers it from market data
+// or falls back to the ticker symbol.
 export async function addConvictionIdea(
   input: AddConvictionIdeaInput,
 ): Promise<ConvictionIdeasResponse> {
@@ -1813,10 +1831,14 @@ export async function addConvictionIdea(
   if (isDefaultId) id = `${baseId}-custom`;
   while (known.has(id) && !removed.has(id)) id = `${id}-1`;
 
+  // Name is optional: use what the user supplied, else infer from market data,
+  // else fall back to the ticker symbol so the card always has a label.
+  const companyName = input.companyName ?? (await resolveDisplayName(ticker));
+
   convictionStore.addCustom({
     id,
     ticker,
-    companyName: input.companyName,
+    companyName,
     role: input.role,
     theme: input.theme ?? "",
     convictionScore: input.convictionScore,

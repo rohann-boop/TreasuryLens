@@ -1030,8 +1030,33 @@ export interface ConvictionBreakoutStatus {
   note: string;
 }
 
+// Selectable chart time windows. Daily-bar source means the shortest
+// practical windows still render daily closes (no intraday provider), so 1D/1W
+// show the most recent bars rather than true intraday ticks.
+export type ConvictionChartRange =
+  | "1D"
+  | "1W"
+  | "1M"
+  | "6M"
+  | "1Y"
+  | "5Y"
+  | "MAX";
+
+export const CONVICTION_CHART_RANGES: ConvictionChartRange[] = [
+  "1D",
+  "1W",
+  "1M",
+  "6M",
+  "1Y",
+  "5Y",
+  "MAX",
+];
+
 export interface ConvictionChartResponse {
   ticker: string;
+  // The range actually applied to this response (echoes the request; defaults
+  // to "1Y" when none was supplied or the value was unrecognized).
+  range: ConvictionChartRange;
   points: ConvictionChartPoint[];
   source: string; // "massive" | "yahoo" | "unavailable"
   currency: string | null;
@@ -1107,7 +1132,11 @@ export interface EquityRevenueResponse {
 }
 
 // Payload to add a user-defined conviction idea. Kept intentionally small —
-// ticker, name, theme, role, and an optional conviction score.
+// ONLY the ticker is required. Everything else (name, theme, role, conviction)
+// is optional: the server infers the display name from market data when it can
+// and otherwise falls back to the ticker, slots the idea into a default
+// grouping, and renders missing fields as pending so the agent can auto-update
+// them later.
 export const addConvictionIdeaSchema = z.object({
   ticker: z
     .string()
@@ -1115,10 +1144,18 @@ export const addConvictionIdeaSchema = z.object({
     .min(1, "Ticker is required")
     .max(12, "Ticker too long")
     .regex(/^[A-Za-z0-9.\-]+$/, "Use letters, numbers, '.' or '-' only"),
-  companyName: z.string().trim().min(1, "Name is required").max(120),
-  // Theme / grouping is optional — a ticker can be added with just symbol +
-  // name and slotted into the generic "other" section. Empty/whitespace
-  // collapses to undefined so the server applies its default label.
+  // Name is optional. Empty/whitespace collapses to undefined so the server
+  // infers a display name from market data / profile or falls back to the
+  // ticker symbol itself.
+  companyName: z
+    .string()
+    .trim()
+    .max(120)
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : undefined)),
+  // Theme / grouping is optional — a ticker can be added with just its symbol
+  // and slotted into the generic "other" section. Empty/whitespace collapses
+  // to undefined so the server applies its default label.
   theme: z
     .string()
     .trim()
