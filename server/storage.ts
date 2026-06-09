@@ -119,6 +119,14 @@ export const convictionStore = {
     const r = sqlite.prepare(`DELETE FROM conviction_custom WHERE id = ?`).run(id);
     return r.changes > 0;
   },
+  // Rewrite a stored row's theme in place (used by the one-time taxonomy
+  // normalization migration). Preserves the row id and all other fields.
+  updateCustomTheme(id: string, theme: string): boolean {
+    const r = sqlite
+      .prepare(`UPDATE conviction_custom SET theme = ? WHERE id = ?`)
+      .run(theme, id);
+    return r.changes > 0;
+  },
   listRemoved(): string[] {
     const rows = sqlite
       .prepare(`SELECT id FROM conviction_removed`)

@@ -16,6 +16,7 @@ import type {
   ConvictionRoleInfo,
   ConvictionSectionInfo,
   ConvictionSectionKey,
+  ConvictionCuratedSectionKey,
   MarketCapBucket,
   RiskLevel,
   ScenarioPotential,
@@ -74,6 +75,12 @@ const SECTIONS: ConvictionSectionInfo[] = [
       "Durable mega-cap franchises with full-stack AI exposure — the anchor of the broader universe.",
   },
   {
+    key: "semiconductors-ai-hardware",
+    label: "Semiconductors & AI Hardware",
+    blurb:
+      "Chip designers, custom-silicon, connectivity and accelerator names — the physical compute layer of the AI build-out.",
+  },
+  {
     key: "speculative-ai-infra",
     label: "Speculative AI infrastructure",
     blurb:
@@ -99,8 +106,9 @@ const SECTIONS: ConvictionSectionInfo[] = [
   },
   {
     key: "other",
-    label: "Other ideas",
-    blurb: "Ideas not assigned to a thematic section, including user-added ideas.",
+    label: "Custom / Needs Review",
+    blurb:
+      "User-added ideas without a recognized theme yet — classify them into a thematic group when their theme is known.",
   },
 ];
 
@@ -118,6 +126,83 @@ const SECTION_LABEL: Record<ConvictionSectionKey, string> = SECTIONS.reduce(
 const SECTION_KEY_BY_LABEL = new Map<string, ConvictionSectionKey>(
   SECTIONS.map((s) => [s.label.toLowerCase(), s.key]),
 );
+
+// Synonym / misspelling table mapping free-form user theme text (lowercased,
+// trimmed) onto a canonical curated section key. This is what keeps the
+// taxonomy clean: a user who types "Semiconfuctors", "semis", or "AI chips"
+// lands in the single canonical "Semiconductors & AI Hardware" group instead
+// of spawning near-duplicate synthetic sections (including the old typo). The
+// keys here are matched in addition to the exact section-label lookup above.
+const THEME_SYNONYM_TO_KEY: Record<string, ConvictionCuratedSectionKey> = {
+  // Semiconductors & AI hardware (incl. the "Semiconfuctors" misspelling).
+  semiconfuctors: "semiconductors-ai-hardware",
+  semiconfuctor: "semiconductors-ai-hardware",
+  semiconductors: "semiconductors-ai-hardware",
+  semiconductor: "semiconductors-ai-hardware",
+  semis: "semiconductors-ai-hardware",
+  semi: "semiconductors-ai-hardware",
+  chips: "semiconductors-ai-hardware",
+  "ai chips": "semiconductors-ai-hardware",
+  "ai hardware": "semiconductors-ai-hardware",
+  "semiconductors & ai hardware": "semiconductors-ai-hardware",
+  "semiconductors / ai hardware": "semiconductors-ai-hardware",
+  "semiconductors and ai hardware": "semiconductors-ai-hardware",
+  // Power / grid.
+  "energy/power": "ai-power-grid",
+  "energy / power": "ai-power-grid",
+  "energy": "ai-power-grid",
+  "power": "ai-power-grid",
+  "grid": "ai-power-grid",
+  "ai power": "ai-power-grid",
+  "ai power/grid": "ai-power-grid",
+  "ai power / grid": "ai-power-grid",
+  // Uranium / nuclear → curated Bravos basket.
+  "uranium": "bravos",
+  "uranium/nuclear": "bravos",
+  "uranium / nuclear": "bravos",
+  "nuclear": "bravos",
+  // Copper / materials → curated Bravos basket.
+  "copper": "bravos",
+  "copper/materials": "bravos",
+  "copper / materials": "bravos",
+  "materials": "bravos",
+  // AI software / data.
+  "ai software": "ai-software-data",
+  "ai software/data": "ai-software-data",
+  "ai software / data": "ai-software-data",
+  "software": "ai-software-data",
+  "data": "ai-software-data",
+  // AI infrastructure / compute.
+  "ai infrastructure": "speculative-ai-infra",
+  "ai infra": "speculative-ai-infra",
+  "speculative ai infrastructure": "speculative-ai-infra",
+  "compute": "speculative-ai-infra",
+  // Core AI compounders.
+  "core ai compounders": "core-ai-compounders",
+  "core ai": "core-ai-compounders",
+  // Space / frontier.
+  "space": "frontier-high-upside",
+  "space/frontier": "frontier-high-upside",
+  "space / frontier": "frontier-high-upside",
+  "frontier": "frontier-high-upside",
+};
+
+// Resolve a free-form user theme onto a canonical curated section when we can.
+// Returns the curated section key (and its canonical label) when the theme
+// matches a section label or a known synonym/misspelling; otherwise null so the
+// caller can keep the user's own theme as a distinct custom group. Empty/blank
+// themes resolve to the catch-all "other" bucket.
+function resolveCuratedSection(
+  theme: string,
+): { key: ConvictionSectionKey; label: string } | null {
+  const t = theme.trim().toLowerCase();
+  if (!t) return { key: "other", label: SECTION_LABEL.other };
+  const byLabel = SECTION_KEY_BY_LABEL.get(t);
+  if (byLabel) return { key: byLabel, label: SECTION_LABEL[byLabel] };
+  const bySynonym = THEME_SYNONYM_TO_KEY[t];
+  if (bySynonym) return { key: bySynonym, label: SECTION_LABEL[bySynonym] };
+  return null;
+}
 
 // Each entry pairs the curated conviction body with the StockPick-shaped base
 // fields required by the shared enrichment + scenario model. The base fields
@@ -613,7 +698,7 @@ const THEME_SEEDS: IdeaSeed[] = [
     ticker: "AVGO",
     companyName: "Broadcom Inc.",
     role: "core-compounder",
-    sectionKey: "core-ai-compounders",
+    sectionKey: "semiconductors-ai-hardware",
     themes: ["AI infrastructure", "Custom silicon (XPU)", "Networking", "Software"],
     targetOutcome: "Compounder — ~2x as custom AI silicon + networking scale",
     convictionScore: 75,
@@ -705,8 +790,8 @@ const THEME_SEEDS: IdeaSeed[] = [
     ticker: "CRDO",
     companyName: "Credo Technology Group Holding Ltd.",
     role: "asymmetric-candidate",
-    sectionKey: "speculative-ai-infra",
-    themes: ["Speculative AI Infrastructure", "Connectivity (AECs)", "Data centers"],
+    sectionKey: "semiconductors-ai-hardware",
+    themes: ["Semiconductors", "AI Hardware", "Connectivity (AECs)", "Data centers"],
     targetOutcome: "Asymmetric — 2x/3x as AI connectivity content scales",
     convictionScore: 52,
     thesis: [
@@ -735,8 +820,8 @@ const THEME_SEEDS: IdeaSeed[] = [
     ticker: "ALAB",
     companyName: "Astera Labs, Inc.",
     role: "asymmetric-candidate",
-    sectionKey: "speculative-ai-infra",
-    themes: ["Speculative AI Infrastructure", "Connectivity / interconnect", "Data centers"],
+    sectionKey: "semiconductors-ai-hardware",
+    themes: ["Semiconductors", "AI Hardware", "Connectivity / interconnect", "Data centers"],
     targetOutcome: "Asymmetric — 2x/3x as AI interconnect content compounds",
     convictionScore: 50,
     thesis: [
@@ -765,8 +850,8 @@ const THEME_SEEDS: IdeaSeed[] = [
     ticker: "ARM",
     companyName: "Arm Holdings plc",
     role: "asymmetric-candidate",
-    sectionKey: "speculative-ai-infra",
-    themes: ["Speculative AI Infrastructure", "CPU IP / royalties", "Edge + data center"],
+    sectionKey: "semiconductors-ai-hardware",
+    themes: ["Semiconductors", "AI Hardware", "CPU IP / royalties", "Edge + data center"],
     targetOutcome: "Asymmetric — 2x/3x if royalty mix shifts to higher-value AI compute",
     convictionScore: 54,
     thesis: [
@@ -1647,12 +1732,18 @@ function customRowToSeed(row: CustomConvictionRow): IdeaSeed {
   // surfaces as its own group in the rail and the Add dialog's group dropdown.
   // Themeless custom ideas fall back to the curated "other" bucket.
   const theme = row.theme?.trim() ?? "";
-  const curatedKey = theme
-    ? SECTION_KEY_BY_LABEL.get(theme.toLowerCase())
-    : undefined;
-  const sectionKey = curatedKey ?? (theme ? customSectionKey(theme) : "other");
-  const sectionLabel = curatedKey
-    ? SECTION_LABEL[curatedKey]
+  // Map the user's free-form theme onto a canonical curated section when it
+  // matches a section label or a known synonym/misspelling (e.g. the legacy
+  // "Semiconfuctors" typo → "Semiconductors & AI Hardware"). Otherwise keep the
+  // user's own theme as its own custom group; blank themes fall to "other".
+  const curated = resolveCuratedSection(theme);
+  const sectionKey = curated
+    ? curated.key
+    : theme
+      ? customSectionKey(theme)
+      : "other";
+  const sectionLabel = curated
+    ? curated.label
     : theme
       ? theme
       : SECTION_LABEL.other;
@@ -1846,6 +1937,30 @@ function invalidate(): void {
 
 function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+// One-time, non-destructive taxonomy normalization for persisted custom ideas.
+// Rewrites any stored theme that resolves to a *curated* section (via the
+// synonym/misspelling table) to that section's canonical label — so legacy
+// rows tagged "Semiconfuctors", "semis", "uranium", etc. display under the
+// clean canonical group instead of a misspelled/duplicate synthetic one. Rows
+// whose theme doesn't map to a curated section (genuine user-defined groups)
+// and blank-theme rows are left untouched; nothing is ever deleted. Read at
+// boot; safe to run repeatedly (idempotent once labels are canonical).
+export function normalizePersistedThemes(): number {
+  let changed = 0;
+  for (const row of convictionStore.listCustom()) {
+    const theme = row.theme?.trim() ?? "";
+    if (!theme) continue;
+    const curated = resolveCuratedSection(theme);
+    // Only rewrite when it maps to a real curated section (not the "other"
+    // catch-all) and the stored text isn't already the canonical label.
+    if (!curated || curated.key === "other") continue;
+    if (theme === curated.label) continue;
+    if (convictionStore.updateCustomTheme(row.id, curated.label)) changed++;
+  }
+  if (changed > 0) invalidate();
+  return changed;
 }
 
 function allKnownIds(): Set<string> {

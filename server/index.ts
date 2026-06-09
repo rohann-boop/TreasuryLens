@@ -62,6 +62,17 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // One-time taxonomy cleanup: normalize legacy custom-idea themes (e.g. the
+  // "Semiconfuctors" typo / synonyms) onto canonical curated group labels.
+  // Non-destructive and idempotent; never blocks startup if it fails.
+  try {
+    const { normalizePersistedThemes } = await import("./convictionIdeas");
+    const n = normalizePersistedThemes();
+    if (n > 0) log(`normalized ${n} custom idea theme(s) to canonical groups`);
+  } catch (e) {
+    console.error("Theme normalization skipped:", e);
+  }
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

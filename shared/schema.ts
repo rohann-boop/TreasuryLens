@@ -928,6 +928,7 @@ export interface ConvictionChecklistItem {
 export type ConvictionCuratedSectionKey =
   | "bravos"
   | "core-ai-compounders"
+  | "semiconductors-ai-hardware"
   | "speculative-ai-infra"
   | "ai-power-grid"
   | "ai-software-data"

@@ -73,6 +73,7 @@ import {
   DollarSign,
   Rocket,
   LayoutGrid,
+  Cpu,
   Star,
   Eye,
   PanelLeft,
@@ -1543,6 +1544,7 @@ const WATCHLIST_FILTERS: { key: WatchlistFilter; label: string; icon: typeof Anc
 const SECTION_ICON: Record<string, typeof Anchor> = {
   bravos: Star,
   "core-ai-compounders": Anchor,
+  "semiconductors-ai-hardware": Cpu,
   "speculative-ai-infra": Sparkles,
   "ai-power-grid": Rocket,
   "ai-software-data": LayoutGrid,
