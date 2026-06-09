@@ -10,6 +10,7 @@ import ThirteenF from "@/pages/ThirteenF";
 import StockPicks from "@/pages/StockPicks";
 import ModelLab from "@/pages/ModelLab";
 import InvestmentGroups from "@/pages/InvestmentGroups";
+import TradeIdeas from "@/pages/TradeIdeas";
 import { AssistantWidget } from "@/components/AssistantWidget";
 
 // The root route renders the merged Dashboard, which now embeds the Watchlist /
@@ -32,6 +33,9 @@ function AppRouter() {
       <Route path="/model-lab" component={ModelLab} />
       <Route path="/investment-groups" component={InvestmentGroups} />
       <Route path="/baskets" component={InvestmentGroups} />
+      <Route path="/trade-ideas" component={TradeIdeas} />
+      <Route path="/trade-ideas/longs" component={TradeIdeas} />
+      <Route path="/trade-ideas/options" component={TradeIdeas} />
       <Route component={NotFound} />
     </Switch>
   );

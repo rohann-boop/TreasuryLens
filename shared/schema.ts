@@ -1861,3 +1861,173 @@ export interface InvestmentGroupsResponse {
   };
   disclaimer: string;
 }
+
+// =============================================================================
+// Trade Ideas — actionable research ideas distilled from the Stock Picks /
+// conviction universe. Two lenses:
+//   - Longs: rank the most actionable equity ideas by a blend of conviction,
+//     entry quality, scenario reward/risk, and a downside guardrail.
+//   - Options: convert the same theses into ranked bullish option structures,
+//     surfacing 2x/3x scenario-based ideas. Ranked by a payoff-adjusted
+//     probability/actionability score, NOT raw theoretical upside.
+//
+// Everything here is deterministic and transparent. Option payoffs use live
+// chain data ONLY if the backend already exposes it; otherwise transparent
+// fallback modeled templates are derived from current price, a volatility/risk
+// proxy, the scenario model, the time horizon, and the downside guardrail. The
+// `dataMode` flag makes the modeled/fallback status visible. Research only —
+// not personalized financial advice; 2x/3x labels describe scenarios, never
+// guaranteed outcomes.
+// =============================================================================
+
+// Honest source-of-truth flag for option payoff inputs.
+export type TradeIdeaDataMode = "live-chain" | "modeled-fallback";
+
+// Coarse actionability tier shared by the long and option views.
+export type TradeIdeaTier = "high" | "medium" | "low";
+
+// Upside class used as a Longs filter and badge.
+export type TradeIdeaUpsideClass =
+  | "defensive"
+  | "compounder"
+  | "2x"
+  | "3x"
+  | "5x+";
+
+// One ranked long (equity) idea.
+export interface TradeIdeaLong {
+  ticker: string;
+  companyName: string;
+  themes: StockPickTheme[];
+  subTheme: StockPickSubTheme | null;
+  marketCapBucket: MarketCapBucket;
+  // 0-100 blended actionability score for ranking (conviction + entry + R/R).
+  ideaScore: number;
+  tier: TradeIdeaTier;
+  // Source convictions / quality reads pulled straight from the universe.
+  convictionScore: number; // 0-100
+  riskLevel: RiskLevel;
+  scenarioClassification: ScenarioClassification | null;
+  upsideClass: TradeIdeaUpsideClass;
+  entryQuality: EntryQuality; // derived from momentum/valuation proxies
+  entryLabel: string;
+  // Scenario math (from the curated bands model).
+  price: number | null;
+  priceCurrency: string | null;
+  bullUpsidePct: number | null;
+  baseUpsidePct: number | null;
+  bearDownsidePct: number | null; // negative
+  bullTargetPrice: number | null;
+  baseTargetPrice: number | null;
+  bearTargetPrice: number | null;
+  rewardRisk: number | null; // bull% / |bear%|
+  // Guardrails / narrative.
+  downsideGuardrail: string;
+  invalidationLevel: number | null; // concrete price where thesis breaks
+  catalysts: string[];
+  hasCatalysts: boolean;
+  thesis: string[];
+  whatMustBeTrue: string[];
+  whatWouldChangeView: string[];
+  // Why this idea ranks where it does — short readable bullets.
+  rationale: string[];
+  sourceNote: string;
+  dataConfidence: DataConfidence;
+}
+
+// V1 supported option structures.
+export type OptionStructureKind =
+  | "long-call"
+  | "bull-call-spread"
+  | "call-diagonal"
+  | "cash-secured-put"
+  | "bull-put-spread";
+
+// One leg of an option structure (modeled).
+export interface OptionLeg {
+  action: "buy" | "sell";
+  right: "call" | "put";
+  // Strike as an absolute price.
+  strike: number;
+  // Expiry horizon in months for this leg (diagonals differ across legs).
+  expiryMonths: number;
+  // Modeled premium per share for this leg.
+  premium: number;
+}
+
+// One ranked bullish option idea derived from a long thesis.
+export interface TradeIdeaOption {
+  id: string; // `${ticker}-${kind}`
+  ticker: string;
+  companyName: string;
+  kind: OptionStructureKind;
+  structureLabel: string; // "Bull call spread"
+  // The thesis score it inherits from the long idea (0-100).
+  thesisScore: number;
+  // Payoff-adjusted probability/actionability score for ranking (0-100).
+  actionabilityScore: number;
+  tier: TradeIdeaTier;
+  // Scenario target this structure is sized around (usually base or bull).
+  scenarioTargetPrice: number | null;
+  scenarioTargetLabel: string; // "Base ~+38%" etc.
+  // True when the modeled payoff at the bull scenario reaches ≥2x / ≥3x on
+  // capital at risk. These describe the modeled scenario, not a promise.
+  doubleCandidate: boolean; // ≥2x on risk
+  tripleCandidate: boolean; // ≥3x on risk
+  multipleLabel: string | null; // "2x scenario" | "3x scenario" | null
+  // Modeled economics (per 1 contract / 100 shares unless noted). Nullable when
+  // no price is available.
+  price: number | null;
+  priceCurrency: string | null;
+  legs: OptionLeg[];
+  netDebit: number | null; // net premium paid (debit structures), per share
+  netCredit: number | null; // net premium received (credit structures), per share
+  maxRisk: number | null; // max loss per share (capital at risk)
+  maxReward: number | null; // max gain per share (null = uncapped for long calls)
+  breakeven: number | null;
+  // Estimated probability the structure is profitable at expiry, from the
+  // scenario execution-probability weights + breakeven distance. 0-1.
+  estProfitProbability: number | null;
+  // Modeled payoff multiple on capital at risk in the bull scenario.
+  bullPayoffMultiple: number | null;
+  expiryMonths: number; // headline horizon
+  expiryHorizonLabel: string; // "~6 months"
+  // Volatility / risk proxy used to model premium (annualised %).
+  ivProxyPct: number | null;
+  // Narrative.
+  whySelected: string[];
+  whatMustHappen: string[];
+  whyNotJustStock: string;
+  limitations: string[];
+  dataMode: TradeIdeaDataMode;
+  dataConfidence: DataConfidence;
+}
+
+export interface OptionStructureInfo {
+  kind: OptionStructureKind;
+  label: string;
+  summary: string; // one-line plain-English description
+  bias: string; // "Bullish, defined risk" etc.
+}
+
+export interface TradeIdeasResponse {
+  asOf: number;
+  longs: TradeIdeaLong[];
+  options: TradeIdeaOption[];
+  structures: OptionStructureInfo[];
+  universeSize: number;
+  // Whether any live option-chain data backed the option models. Today this is
+  // always false (no chain provider wired); surfaced honestly so the UI can
+  // label all option ideas as modeled fallbacks.
+  optionsDataMode: TradeIdeaDataMode;
+  metricsStatus: {
+    livePricing: boolean;
+    fundamentals: boolean;
+    optionChain: boolean;
+  };
+  methodology: {
+    longs: string;
+    options: string;
+  };
+  disclaimer: string;
+}

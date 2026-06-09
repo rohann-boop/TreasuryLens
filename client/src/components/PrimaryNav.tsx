@@ -1,5 +1,12 @@
 import { Link, useLocation } from "wouter";
-import { LineChart, Users, Lightbulb, FlaskConical, Boxes } from "lucide-react";
+import {
+  LineChart,
+  Users,
+  Lightbulb,
+  FlaskConical,
+  Boxes,
+  Target,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // Routes that resolve to the merged Dashboard (which now embeds the watchlist).
@@ -15,6 +22,12 @@ const DASHBOARD_ROUTES = [
 ];
 
 const STOCK_PICKS_ROUTES = ["/stock-picks", "/themes"];
+
+const TRADE_IDEAS_ROUTES = [
+  "/trade-ideas",
+  "/trade-ideas/longs",
+  "/trade-ideas/options",
+];
 
 type Tab = {
   href: string;
@@ -55,6 +68,13 @@ export const PRIMARY_TABS: Tab[] = [
     testId: "nav-investment-groups",
     icon: Boxes,
     match: (loc) => loc === "/investment-groups" || loc === "/baskets",
+  },
+  {
+    href: "/trade-ideas",
+    label: "Trade Ideas",
+    testId: "nav-trade-ideas",
+    icon: Target,
+    match: (loc) => TRADE_IDEAS_ROUTES.includes(loc),
   },
   {
     href: "/13f",

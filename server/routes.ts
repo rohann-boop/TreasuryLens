@@ -15,6 +15,7 @@ import { getStockPicksBacktest } from "./backtest";
 import { getQuantBacktest } from "./quantBacktest";
 import { runModelLabBacktest } from "./modelLab";
 import { getInvestmentGroups } from "./investmentGroups";
+import { getTradeIdeas } from "./tradeIdeas";
 import {
   getConvictionIdeas,
   addConvictionIdea,
@@ -506,6 +507,21 @@ export async function registerRoutes(
             : undefined,
         }),
       );
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // Trade Ideas v1 — deterministic distillation of the Stock Picks universe
+  // into ranked actionable LONG equity ideas and ranked bullish OPTION
+  // structures (long call, bull call spread, call diagonal, cash-secured put,
+  // bull put spread). Longs reuse conviction + scenario reward/risk; options are
+  // MODELED FALLBACKS (no live chain) ranked by a payoff-adjusted actionability
+  // score with explicit 2x/3x scenario flags. No external calls beyond the ones
+  // Stock Picks already makes; cached server-side (30 min). Research only.
+  app.get("/api/trade-ideas", async (_req, res) => {
+    try {
+      res.json(await getTradeIdeas());
     } catch (e) {
       res.status(500).json({ message: (e as Error).message });
     }
