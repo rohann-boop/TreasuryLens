@@ -294,7 +294,6 @@ type LongSortKey =
   | "ideaScore"
   | "ticker"
   | "conviction"
-  | "rewardRisk"
   | "bull"
   | "risk"
   | "entry";
@@ -335,8 +334,6 @@ function LongsTable({
           return compareStr(a.ticker, b.ticker, sortDir);
         case "conviction":
           return compareNum(a.convictionScore, b.convictionScore, sortDir);
-        case "rewardRisk":
-          return compareNum(a.rewardRisk, b.rewardRisk, sortDir);
         case "bull":
           return compareNum(a.bullUpsidePct, b.bullUpsidePct, sortDir);
         case "risk":
@@ -376,9 +373,6 @@ function LongsTable({
             <th className="px-3 py-2 text-left">
               <SortHeader label="Entry" k="entry" active={sortKey} dir={sortDir} onSort={onSort} />
             </th>
-            <th className="px-3 py-2 text-right hidden sm:table-cell">
-              <SortHeader label="R/R" k="rewardRisk" active={sortKey} dir={sortDir} onSort={onSort} align="right" />
-            </th>
             <th className="px-3 py-2 text-right hidden md:table-cell">
               <SortHeader label="Bull" k="bull" active={sortKey} dir={sortDir} onSort={onSort} align="right" />
             </th>
@@ -413,9 +407,6 @@ function LongsTable({
                 <ConvictionBar score={r.convictionScore} />
               </td>
               <td className="px-3 py-2 text-[11px] text-foreground/90">{r.entryLabel}</td>
-              <td className="px-3 py-2 text-right tabular-nums hidden sm:table-cell">
-                {r.rewardRisk != null ? `${r.rewardRisk.toFixed(1)}x` : "—"}
-              </td>
               <td className={cn("px-3 py-2 text-right tabular-nums hidden md:table-cell", pctTone(r.bullUpsidePct))}>
                 {fmtPct(r.bullUpsidePct, 0)}
               </td>

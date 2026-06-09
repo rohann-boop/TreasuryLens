@@ -24,27 +24,27 @@ export function MobileNav() {
     <nav
       aria-label="Primary"
       data-testid="mobile-nav"
-      className="md:hidden fixed bottom-0 inset-x-0 z-40 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 pb-[env(safe-area-inset-bottom)]"
+      className="md:hidden fixed bottom-0 inset-x-0 z-40 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 pb-[max(env(safe-area-inset-bottom),0px)]"
     >
-      <ul className="grid grid-cols-6">
+      <ul className="flex overflow-x-auto no-scrollbar overscroll-x-contain">
         {ITEMS.map((item) => {
           const Icon = item.icon;
           const active = item.match(location);
           return (
-            <li key={item.href}>
+            <li key={item.href} className="flex-1 min-w-[64px]">
               <Link
                 href={item.href}
                 data-testid={item.testId}
                 aria-label={item.label}
                 aria-current={active ? "page" : undefined}
-                className={`flex h-14 flex-col items-center justify-center gap-0.5 text-[10px] font-medium leading-none transition-colors ${
+                className={`flex h-14 flex-col items-center justify-center gap-0.5 px-1 text-[10px] font-medium leading-none transition-colors ${
                   active
                     ? "text-primary"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                <Icon className="h-5 w-5" aria-hidden />
-                <span className="truncate px-1">{item.label}</span>
+                <Icon className="h-5 w-5 shrink-0" aria-hidden />
+                <span className="max-w-full truncate">{item.label}</span>
               </Link>
             </li>
           );
