@@ -34,13 +34,24 @@ const round1 = (n: number) => Math.round(n * 10) / 10;
 // analyst sentiment are the most reliably-available, price-and-coverage-derived
 // signals, so they carry the most weight; valuation/growth/quality lean on
 // fundamentals that are frequently missing for ETFs/funds; risk rounds it out.
-const BASE_WEIGHTS: Record<QuantFactorKey, number> = {
+export const BASE_WEIGHTS: Record<QuantFactorKey, number> = {
   momentum: 0.26,
   analyst: 0.2,
   valuation: 0.16,
   growth: 0.14,
   quality: 0.14,
   risk: 0.1,
+};
+
+// Human labels for the six factors, exported so the Model Lab can render weight
+// controls without duplicating the strings.
+export const QUANT_FACTOR_LABELS: Record<QuantFactorKey, string> = {
+  momentum: "Momentum / Trend",
+  analyst: "Analyst Sentiment",
+  valuation: "Valuation",
+  growth: "Growth",
+  quality: "Quality / Financial Strength",
+  risk: "Risk / Volatility",
 };
 
 const SOURCE: Record<QuantFactorKey, QuantSource> = {
@@ -52,14 +63,7 @@ const SOURCE: Record<QuantFactorKey, QuantSource> = {
   risk: "risk",
 };
 
-const LABEL: Record<QuantFactorKey, string> = {
-  momentum: "Momentum / Trend",
-  analyst: "Analyst Sentiment",
-  valuation: "Valuation",
-  growth: "Growth",
-  quality: "Quality / Financial Strength",
-  risk: "Risk / Volatility",
-};
+const LABEL = QUANT_FACTOR_LABELS;
 
 // Map an ActionFactor key to its quant key (they share names except the quant
 // model treats them identically). The action engine already produces a 0-100

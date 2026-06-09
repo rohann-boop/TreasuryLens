@@ -1636,3 +1636,101 @@ export interface QuantBacktestResponse {
   limitations: string[];
   disclaimer: string;
 }
+
+// =============================================================================
+// Model Lab — a sandbox for inspecting and tuning the Quant Score v1 factor
+// weights and seeing how the *technically-validatable* portion of those weights
+// would have performed historically. It reuses the same point-in-time,
+// technical-only backtest engine as Backtest v1. Custom weights are applied
+// end-to-end for the two factors the technical engine can honestly reconstruct
+// (Momentum/Trend and Risk/Volatility); the fundamental/analyst weights still
+// shape the live Quant Score but cannot be backtested without look-ahead, so the
+// response flags them as informational-only. This is a modeling sandbox, NOT
+// personalized financial advice.
+// =============================================================================
+
+// A full set of the six Quant Score v1 factor weights (each 0-1). They do not
+// need to sum to 1 on input — the engine normalises them — but the UI presents
+// them normalised for clarity.
+export type ModelWeights = Record<QuantFactorKey, number>;
+
+// A named weighting strategy (preset) the Model Lab can compare side by side.
+export interface ModelStrategyPreset {
+  id: string; // "default" | "momentum-tilt" | "growth-tilt" | "risk-control"
+  label: string; // "Default Model", "Momentum Tilt", ...
+  description: string; // one-line plain-English intent
+  weights: ModelWeights;
+}
+
+// Request body for POST /api/model-lab/backtest. Either a known preset id or an
+// explicit set of custom weights (custom wins when both are present).
+export interface ModelLabBacktestRequest {
+  weights?: Partial<ModelWeights>;
+  presetId?: string;
+}
+
+// Which factors the technical-only engine could actually apply, and which were
+// accepted but treated as informational (fundamental/analyst). Surfaced so the
+// UI never overstates what the backtest validated.
+export interface ModelLabFactorApplication {
+  key: QuantFactorKey;
+  label: string;
+  // Normalised weight (0-1) the user requested for this factor.
+  requestedWeight: number;
+  // Whether the technical backtest could honour this factor point-in-time.
+  technicallyApplied: boolean;
+  note: string;
+}
+
+// Result of one weighting run: the normalised weights actually used, the
+// technical sub-weights that drove the point-in-time signal, and a reuse of the
+// Backtest v1 window/threshold structure under those weights.
+export interface ModelLabBacktestResult {
+  // The resolved strategy (preset id/label when a preset was used, else "custom").
+  strategyId: string;
+  strategyLabel: string;
+  // Normalised weights used (sum to 1 across the six factors).
+  weights: ModelWeights;
+  // The technical sub-weights (0-1, sum to 1) actually used to blend the
+  // point-in-time entry signal from trend/momentum/volatility components.
+  technicalWeights: {
+    trendMomentum: number; // derived from the Momentum/Trend factor weight
+    volatility: number; // derived from the Risk/Volatility factor weight
+  };
+  factorApplication: ModelLabFactorApplication[];
+  // Fraction (0-1) of the requested weight that the technical backtest could
+  // actually honour (momentum + risk share of the total).
+  technicalCoverage: number;
+  tested: boolean;
+  benchmarkSymbol: string;
+  // Reused Backtest v1 windows, recomputed under these technical weights.
+  windows: QuantBacktestWindow[];
+  // Compact headline pulled from the 1Y window's top-cohort for easy comparison.
+  headline: {
+    windowKey: string;
+    selectedAvgReturnPct: number | null;
+    excessVsBenchmarkPct: number | null;
+    hitRatePct: number | null;
+    verdict: QuantBacktestVerdict;
+  } | null;
+}
+
+export interface ModelLabBacktestResponse {
+  asOf: number;
+  methodId: string;
+  universeSize: number;
+  benchmarkSymbol: string;
+  // The run for the requested weights/preset.
+  result: ModelLabBacktestResult;
+  // Always-available preset definitions so the UI can render the comparison
+  // strip and the weight controls without a second request.
+  presets: ModelStrategyPreset[];
+  // Default weights (Quant Score v1 base weights) for the reset-to-default
+  // control.
+  defaultWeights: ModelWeights;
+  technicalOnly: boolean;
+  validationBadge: string;
+  methodology: string;
+  limitations: string[];
+  disclaimer: string;
+}

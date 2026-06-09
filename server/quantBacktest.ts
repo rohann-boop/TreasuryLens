@@ -117,58 +117,130 @@ function maxDrawdownBetween(
   return maxDD == null ? null : maxDD * 100;
 }
 
-// Technical-only entry signal (0-100) computed using ONLY bars[0..entryIdx].
-// Mirrors the momentum/trend + risk spirit of the quant score without any
-// fundamental/analyst look-ahead. Returns null when there is not enough history
-// at the entry bar to read a trend honestly.
-function technicalEntrySignal(bars: Bar[], entryIdx: number): number | null {
+// Point-in-time technical components (each 0-100), computed using ONLY
+// bars[0..entryIdx]. `trendMomentum` blends the price-vs-MA trend reads with
+// trailing momentum (the Momentum/Trend factor); `volatility` is the calm-is-
+// better read (the Risk/Volatility factor). Returned separately so callers can
+// re-blend them under arbitrary factor weights. Null when there is not enough
+// history at the entry bar to read a trend honestly.
+export interface TechnicalComponents {
+  trendMomentum: number | null;
+  volatility: number | null;
+}
+
+// Default technical sub-weights used by the equal-blend Backtest v1 signal. The
+// original v1 signal averaged up to four parts (two trend reads + momentum +
+// vol), i.e. trend/momentum carried 3/4 and volatility 1/4 of the blend.
+export const DEFAULT_TECHNICAL_WEIGHTS = {
+  trendMomentum: 0.75,
+  volatility: 0.25,
+} as const;
+
+export function technicalComponents(
+  bars: Bar[],
+  entryIdx: number,
+): TechnicalComponents {
   const closes = bars
     .slice(0, entryIdx + 1)
     .map((b) => b.c)
     .filter((c) => Number.isFinite(c) && c > 0);
-  if (closes.length < 60) return null; // need ~3 months minimum
+  if (closes.length < 60) return { trendMomentum: null, volatility: null };
   const price = closes[closes.length - 1];
   const sma50 = lastSma(closes, 50);
   const sma200 = closes.length >= 200 ? lastSma(closes, 200) : null;
 
-  const parts: number[] = [];
+  const trendParts: number[] = [];
 
   // Trend vs 50D MA: above = constructive, scaled by distance (±10% → ±25pts).
   if (sma50 != null && sma50 > 0) {
     const gap = (price - sma50) / sma50;
-    parts.push(clamp(50 + gap * 250));
+    trendParts.push(clamp(50 + gap * 250));
   }
   // Trend vs 200D MA (long-term): above the 200D is a classic regime filter.
   if (sma200 != null && sma200 > 0) {
     const gap = (price - sma200) / sma200;
-    parts.push(clamp(50 + gap * 150));
+    trendParts.push(clamp(50 + gap * 150));
   }
   // Trailing 3-month (~63 trading day) momentum.
   if (closes.length > 63) {
     const past = closes[closes.length - 1 - 63];
     if (past > 0) {
       const mom = ((price - past) / past) * 100;
-      parts.push(clamp(50 + mom * 1.2));
+      trendParts.push(clamp(50 + mom * 1.2));
     }
   }
-  // Volatility penalty: calmer = better. ~20% vol ≈ neutral, 60%+ ≈ penalised.
-  const vol = annualizedVolatility(closes, 30);
-  if (vol != null) {
-    parts.push(clamp(100 - (vol - 20) * 1.1));
-  }
 
-  if (parts.length < 2) return null;
-  return Math.round(parts.reduce((a, b) => a + b, 0) / parts.length);
+  // Volatility read: calmer = better. ~20% vol ≈ neutral, 60%+ ≈ penalised.
+  const vol = annualizedVolatility(closes, 30);
+  const volatility = vol != null ? clamp(100 - (vol - 20) * 1.1) : null;
+
+  const trendMomentum =
+    trendParts.length > 0
+      ? trendParts.reduce((a, b) => a + b, 0) / trendParts.length
+      : null;
+
+  return { trendMomentum, volatility };
 }
 
+// Blend the technical components into a single 0-100 signal under the given
+// sub-weights. Missing components drop out and the remaining weight is
+// renormalised. Returns null when fewer than the minimum components are present.
+function blendTechnical(
+  c: TechnicalComponents,
+  w: { trendMomentum: number; volatility: number },
+): number | null {
+  const parts: { value: number; weight: number }[] = [];
+  if (c.trendMomentum != null && w.trendMomentum > 0)
+    parts.push({ value: c.trendMomentum, weight: w.trendMomentum });
+  if (c.volatility != null && w.volatility > 0)
+    parts.push({ value: c.volatility, weight: w.volatility });
+  // Require at least one weighted component; when the trend read exists but its
+  // weight is 0 we still want a usable signal, so fall back to any present part.
+  if (parts.length === 0) {
+    const fallback: number[] = [];
+    if (c.trendMomentum != null) fallback.push(c.trendMomentum);
+    if (c.volatility != null) fallback.push(c.volatility);
+    if (fallback.length === 0) return null;
+    return Math.round(fallback.reduce((a, b) => a + b, 0) / fallback.length);
+  }
+  const totalWeight = parts.reduce((a, p) => a + p.weight, 0);
+  if (totalWeight <= 0) return null;
+  const weighted =
+    parts.reduce((a, p) => a + p.value * p.weight, 0) / totalWeight;
+  return Math.round(weighted);
+}
+
+// Technical-only entry signal (0-100) under default Backtest v1 sub-weights.
+function technicalEntrySignal(bars: Bar[], entryIdx: number): number | null {
+  return blendTechnical(
+    technicalComponents(bars, entryIdx),
+    DEFAULT_TECHNICAL_WEIGHTS,
+  );
+}
+
+// Per-ticker bar cache shared by the standard backtest and the Model Lab so
+// re-running with different weights does not re-hit the data sources. Bars are
+// point-in-time price history and do not depend on weights.
+interface BarsCacheEntry {
+  at: number;
+  bars: Bar[] | null;
+}
+const barsCache = new Map<string, BarsCacheEntry>();
+
 async function fetchBars(ticker: string): Promise<Bar[] | null> {
+  const cachedBars = barsCache.get(ticker);
+  if (cachedBars && Date.now() - cachedBars.at < TTL_MS) return cachedBars.bars;
   const massive = await fetchMassiveChart(ticker, HISTORY_DAYS);
-  if (massive && massive.length > 0) return massive;
-  // Yahoo's range param caps our depth; request the widest range so the deep
-  // (2Y) window can find a decision bar when Massive is unavailable.
-  const yahoo = await fetchYahooChart(ticker, "5y");
-  if (yahoo && yahoo.length > 0) return yahoo;
-  return null;
+  let bars: Bar[] | null = null;
+  if (massive && massive.length > 0) bars = massive;
+  else {
+    // Yahoo's range param caps our depth; request the widest range so the deep
+    // (2Y) window can find a decision bar when Massive is unavailable.
+    const yahoo = await fetchYahooChart(ticker, "5y");
+    if (yahoo && yahoo.length > 0) bars = yahoo;
+  }
+  barsCache.set(ticker, { at: Date.now(), bars });
+  return bars;
 }
 
 // Per-window evaluation of a single ticker's bars.
@@ -182,8 +254,14 @@ interface WindowEval {
 
 // Compute the point-in-time signal + forward return for one window from a single
 // ticker's full bar history. Returns null fields when the window can't be
-// honoured (insufficient depth at the decision date).
-function evalWindow(bars: Bar[] | null, lookbackDays: number): WindowEval {
+// honoured (insufficient depth at the decision date). When `techWeights` is
+// supplied the entry signal is blended under those technical sub-weights (used
+// by the Model Lab); otherwise the default Backtest v1 blend is used.
+function evalWindow(
+  bars: Bar[] | null,
+  lookbackDays: number,
+  techWeights?: { trendMomentum: number; volatility: number },
+): WindowEval {
   const empty: WindowEval = {
     entrySignal: null,
     forwardReturnPct: null,
@@ -201,7 +279,9 @@ function evalWindow(bars: Bar[] | null, lookbackDays: number): WindowEval {
   if (!Number.isFinite(entryBar.c) || entryBar.c <= 0) {
     return { ...empty, asOfDate: isoDate(last.t) };
   }
-  const entrySignal = technicalEntrySignal(bars, entryIdx);
+  const entrySignal = techWeights
+    ? blendTechnical(technicalComponents(bars, entryIdx), techWeights)
+    : technicalEntrySignal(bars, entryIdx);
   const forwardReturnPct = ((last.c - entryBar.c) / entryBar.c) * 100;
   const maxDrawdownPct = maxDrawdownBetween(bars, entryIdx, bars.length - 1);
   return {
@@ -535,4 +615,68 @@ export async function getQuantBacktest(): Promise<QuantBacktestResponse> {
   const data = await buildResponse();
   cached = { at: now, data };
   return data;
+}
+
+// ---------------------------------------------------------------------------
+// Model Lab support: run the same point-in-time, technical-only windows/cohorts
+// under caller-supplied technical sub-weights. Returns the window structures and
+// the benchmark symbol so the Model Lab module can wrap them with weight
+// metadata. Shares the per-ticker bar cache with the standard backtest, so
+// repeated runs (e.g. comparing presets) are cheap after the first fetch.
+// ---------------------------------------------------------------------------
+export interface WeightedBacktestRun {
+  windows: QuantBacktestWindow[];
+  benchmarkSymbol: string;
+  universeSize: number;
+  tested: boolean;
+  methodId: string;
+}
+
+export async function runWeightedBacktest(techWeights: {
+  trendMomentum: number;
+  volatility: number;
+}): Promise<WeightedBacktestRun> {
+  const picksData = await getStockPicks();
+  const picks: StockPick[] = picksData.picks;
+
+  // Benchmark forward return is weight-independent (it is just SPY's price move
+  // over the window), so reuse the default-blend benchmark eval.
+  const benchBars = await fetchBars(BENCHMARK);
+  const benchByWindow = new Map<string, number | null>();
+  for (const w of QUANT_BACKTEST_WINDOWS) {
+    benchByWindow.set(w.key, evalWindow(benchBars, w.days).forwardReturnPct);
+  }
+
+  const results: TickerResult[] = [];
+  for (let i = 0; i < picks.length; i += CONCURRENCY) {
+    const slice = picks.slice(i, i + CONCURRENCY);
+    const sliceResults = await Promise.all(
+      slice.map(async (p): Promise<TickerResult> => {
+        const bars = await fetchBars(p.ticker);
+        const byWindow = new Map<string, WindowEval>();
+        for (const w of QUANT_BACKTEST_WINDOWS) {
+          byWindow.set(w.key, evalWindow(bars, w.days, techWeights));
+        }
+        return {
+          ticker: p.ticker,
+          companyName: p.companyName,
+          hasBars: !!bars,
+          byWindow,
+        };
+      }),
+    );
+    results.push(...sliceResults);
+  }
+
+  const windows: QuantBacktestWindow[] = QUANT_BACKTEST_WINDOWS.map((w) =>
+    buildWindow(w.key, w.label, w.days, results, benchByWindow.get(w.key) ?? null),
+  );
+
+  return {
+    windows,
+    benchmarkSymbol: BENCHMARK,
+    universeSize: picks.length,
+    tested: windows.some((w) => w.available),
+    methodId: QUANT_BACKTEST_METHOD_ID,
+  };
 }

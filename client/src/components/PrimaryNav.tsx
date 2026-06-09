@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LineChart, Users, Lightbulb } from "lucide-react";
+import { LineChart, Users, Lightbulb, FlaskConical } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // Routes that resolve to the merged Dashboard (which now embeds the watchlist).
@@ -24,8 +24,9 @@ type Tab = {
   match: (loc: string) => boolean;
 };
 
-// The three primary tabs. Order is intentional: Dashboard (merged
-// dashboard + watchlist), Stock Picks (theme discovery), 13F Filings.
+// The primary tabs. Order is intentional: Dashboard (merged dashboard +
+// watchlist), Stock Picks (theme discovery), Model Lab (quant weight sandbox),
+// 13F Filings.
 export const PRIMARY_TABS: Tab[] = [
   {
     href: "/dashboard",
@@ -40,6 +41,13 @@ export const PRIMARY_TABS: Tab[] = [
     testId: "nav-stock-picks",
     icon: Lightbulb,
     match: (loc) => STOCK_PICKS_ROUTES.includes(loc),
+  },
+  {
+    href: "/model-lab",
+    label: "Model Lab",
+    testId: "nav-model-lab",
+    icon: FlaskConical,
+    match: (loc) => loc === "/model-lab",
   },
   {
     href: "/13f",

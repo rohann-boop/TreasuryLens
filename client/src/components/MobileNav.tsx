@@ -6,6 +6,7 @@ import { PRIMARY_TABS } from "@/components/PrimaryNav";
 const MOBILE_LABELS: Record<string, string> = {
   "nav-dashboard": "Dashboard",
   "nav-stock-picks": "Stock Picks",
+  "nav-model-lab": "Model Lab",
   "nav-13f": "13F",
 };
 
@@ -23,7 +24,7 @@ export function MobileNav() {
       data-testid="mobile-nav"
       className="md:hidden fixed bottom-0 inset-x-0 z-40 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 pb-[env(safe-area-inset-bottom)]"
     >
-      <ul className="grid grid-cols-3">
+      <ul className="grid grid-cols-4">
         {ITEMS.map((item) => {
           const Icon = item.icon;
           const active = item.match(location);

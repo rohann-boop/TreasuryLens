@@ -13,6 +13,7 @@ import { getPoliticiansSummary } from "./politicians";
 import { getStockPicks, getTickerChart } from "./stockPicks";
 import { getStockPicksBacktest } from "./backtest";
 import { getQuantBacktest } from "./quantBacktest";
+import { runModelLabBacktest } from "./modelLab";
 import {
   getConvictionIdeas,
   addConvictionIdea,
@@ -409,6 +410,48 @@ export async function registerRoutes(
   app.get("/api/quant-score/backtest", async (_req, res) => {
     try {
       res.json(await getQuantBacktest());
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // Model Lab — run the technical-only backtest under caller-supplied factor
+  // weights (or a named preset). Only the momentum/risk weights are applied
+  // point-in-time; fundamental/analyst weights are accepted but flagged
+  // informational. Body: { weights?: Partial<ModelWeights>, presetId?: string }.
+  // GET is also supported (no body) so the page can fetch defaults/presets.
+  const FACTOR_KEYS = [
+    "momentum",
+    "analyst",
+    "valuation",
+    "growth",
+    "quality",
+    "risk",
+  ] as const;
+  const parseModelLabBody = (body: unknown) => {
+    const b = (body ?? {}) as Record<string, unknown>;
+    const out: { weights?: Record<string, number>; presetId?: string } = {};
+    if (typeof b.presetId === "string") out.presetId = b.presetId;
+    if (b.weights && typeof b.weights === "object") {
+      const w: Record<string, number> = {};
+      for (const k of FACTOR_KEYS) {
+        const v = (b.weights as Record<string, unknown>)[k];
+        if (typeof v === "number" && Number.isFinite(v) && v >= 0) w[k] = v;
+      }
+      if (Object.keys(w).length > 0) out.weights = w;
+    }
+    return out;
+  };
+  app.post("/api/model-lab/backtest", async (req, res) => {
+    try {
+      res.json(await runModelLabBacktest(parseModelLabBody(req.body)));
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+  app.get("/api/model-lab/backtest", async (_req, res) => {
+    try {
+      res.json(await runModelLabBacktest({}));
     } catch (e) {
       res.status(500).json({ message: (e as Error).message });
     }
