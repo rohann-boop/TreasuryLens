@@ -745,8 +745,8 @@ function ChecklistRow({
 // short-term performance already attached to keyMetrics), so rendering a row
 // never triggers a per-ticker provider call.
 function RowBadges({ idea }: { idea: ConvictionIdea }) {
-  const change1m = idea.keyMetrics?.performance?.change1mPct;
-  const hasPerf = change1m != null && Number.isFinite(change1m);
+  const change1d = idea.keyMetrics?.performance?.change1dPct;
+  const hasPerf = change1d != null && Number.isFinite(change1d);
   return (
     <div className="flex items-center gap-1 shrink-0" data-testid={`row-badges-${idea.id}`}>
       {idea.custom && (
@@ -767,18 +767,29 @@ function RowBadges({ idea }: { idea: ConvictionIdea }) {
           Review
         </span>
       )}
-      {hasPerf && (
+      {hasPerf ? (
         <span
-          className={`inline-flex items-center gap-0.5 text-[10px] font-medium tabular-nums ${perfTone(change1m)}`}
-          title="1-month return"
+          className={`inline-flex items-center gap-0.5 text-[10px] font-medium tabular-nums ${perfTone(change1d)}`}
+          title="Day-over-day change (today vs prior close)"
           data-testid={`row-perf-${idea.id}`}
         >
-          {(change1m as number) >= 0 ? (
+          {(change1d as number) >= 0 ? (
             <TrendingUp className="h-3 w-3" aria-hidden />
           ) : (
             <TrendingDown className="h-3 w-3" aria-hidden />
           )}
-          {fmtPct(change1m, 0)}
+          {fmtPct(change1d, 1)}
+          <span className="text-[8px] uppercase tracking-wide text-muted-foreground">
+            1D
+          </span>
+        </span>
+      ) : (
+        <span
+          className="text-[9px] uppercase tracking-wide text-muted-foreground"
+          title="Day-over-day change unavailable"
+          data-testid={`row-perf-pending-${idea.id}`}
+        >
+          1D —
         </span>
       )}
     </div>

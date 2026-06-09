@@ -536,6 +536,11 @@ export type DataConfidence = "curated" | "approximate" | "low";
 // lookbacks at 1m/6m/12m. Each window is independent so the UI can render
 // what's available even when the series is short (newly-listed names).
 export interface StockPickPerformance {
+  // Day-over-day move: latest close vs the prior trading day's close. Null when
+  // fewer than two daily bars are available (e.g. freshly listed names).
+  price1dAgo: number | null;
+  price1dDate: string | null; // YYYY-MM-DD of the prior trading-day bar used
+  change1dPct: number | null; // %
   price1mAgo: number | null;
   price1mDate: string | null; // YYYY-MM-DD of the actual bar used
   change1mPct: number | null; // %

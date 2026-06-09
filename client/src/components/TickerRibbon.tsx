@@ -141,14 +141,21 @@ function RibbonCell({
         "hover:bg-accent/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         isSelected && "bg-accent/30",
       )}
-      title={`${item.displayName} · 1m ${fmtPct(item.changePct1d, 1)}`}
+      title={
+        item.changePct1d == null
+          ? `${item.displayName} · daily change pending`
+          : `${item.displayName} · today ${fmtPct(item.changePct1d, 1)}`
+      }
     >
       <span className="mono font-medium text-foreground/90">{item.symbol}</span>
       <span className="text-foreground/80">
         {fmtPrice(item.price, item.currency)}
       </span>
-      <span className={cn("font-medium", tone)}>
+      <span className={cn("font-medium inline-flex items-baseline gap-1", tone)}>
         {fmtPct(item.changePct1d, 1)}
+        <span className="text-[9px] uppercase tracking-wide text-muted-foreground">
+          1D
+        </span>
       </span>
     </button>
   );

@@ -4168,6 +4168,9 @@ function computePerformance(
 ): StockPickPerformance {
   const warnings: string[] = [];
   const perf: StockPickPerformance = {
+    price1dAgo: null,
+    price1dDate: null,
+    change1dPct: null,
     price1mAgo: null,
     price1mDate: null,
     change1mPct: null,
@@ -4187,6 +4190,17 @@ function computePerformance(
   }
   const last = bars[bars.length - 1];
   const now = last.t;
+  // Day-over-day move: latest close vs the immediately prior trading-day bar.
+  // Computed directly from the two most recent bars so it reflects the true
+  // daily change rather than a scaled longer-window return.
+  const prevBar = bars.length > 1 ? bars[bars.length - 2] : null;
+  if (prevBar && prevBar.c > 0) {
+    perf.price1dAgo = prevBar.c;
+    perf.price1dDate = isoDate(prevBar.t);
+    perf.change1dPct = ((latestPrice - prevBar.c) / prevBar.c) * 100;
+  } else {
+    warnings.push("No prior trading-day bar for day-over-day change.");
+  }
   let filled = 0;
   for (const w of PERF_WINDOWS) {
     const target = now - w.days * 86400000;

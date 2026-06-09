@@ -186,9 +186,10 @@ export async function getTickerQuantScore(
 // Ticker-tape items sourced from the conviction watchlist. Reuses the
 // already-enriched keyMetrics on each idea (price/currency/performance) so the
 // ribbon needs no extra provider calls — it degrades gracefully to the ideas
-// that have a live price. changePct1d is approximated from the 1-month
-// performance scaled by trading days when no intraday change is available;
-// when even that is missing the item is still shown with a null change.
+// that have a live price. changePct1d is the true day-over-day move (latest
+// close vs the prior trading-day close) from the idea's performance block; when
+// that is unavailable the item is still shown with a null change (the ribbon
+// renders it as neutral/pending rather than substituting a longer window).
 export async function getConvictionTicker(): Promise<{
   items: TickerItem[];
   asOf: number;
@@ -207,7 +208,7 @@ export async function getConvictionTicker(): Promise<{
       assetClass: "equity",
       price: km.price,
       currency: km.priceCurrency ?? "USD",
-      changePct1d: km.performance?.change1mPct ?? null,
+      changePct1d: km.performance?.change1dPct ?? null,
       change1d: null,
       status: km.price != null ? "live" : "demo",
       source: km.metricSource ?? "conviction",
