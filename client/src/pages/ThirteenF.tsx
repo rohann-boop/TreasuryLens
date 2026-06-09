@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import type {
@@ -37,16 +37,7 @@ import { MobileNav } from "@/components/MobileNav";
 import { PrimaryNav } from "@/components/PrimaryNav";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-
-function useTheme() {
-  const [dark, setDark] = useState(true);
-  useEffect(() => {
-    const root = document.documentElement;
-    if (dark) root.classList.add("dark");
-    else root.classList.remove("dark");
-  }, [dark]);
-  return { dark, setDark };
-}
+import { useTheme } from "@/lib/theme";
 
 function fmtUsd(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "—";

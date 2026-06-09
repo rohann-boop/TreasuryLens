@@ -28,17 +28,7 @@ import { WordMark } from "@/components/Logo";
 import { MobileNav } from "@/components/MobileNav";
 import { PrimaryNav } from "@/components/PrimaryNav";
 import { useToast } from "@/hooks/use-toast";
-
-// Light mode is the app default; mirrors the Dashboard/Model Lab theme hook.
-function useTheme() {
-  const [dark, setDark] = useState(false);
-  useEffect(() => {
-    const root = document.documentElement;
-    if (dark) root.classList.add("dark");
-    else root.classList.remove("dark");
-  }, [dark]);
-  return { dark, setDark };
-}
+import { useTheme } from "@/lib/theme";
 
 const RISK_LEVELS: RiskLevel[] = [
   "low",

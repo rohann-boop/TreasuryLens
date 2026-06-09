@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type {
   OptionStructureKind,
@@ -37,17 +37,7 @@ import { cn } from "@/lib/utils";
 import { WordMark } from "@/components/Logo";
 import { MobileNav } from "@/components/MobileNav";
 import { PrimaryNav } from "@/components/PrimaryNav";
-
-// Light mode is the app default; mirrors Dashboard / Model Lab / Groups.
-function useTheme() {
-  const [dark, setDark] = useState(false);
-  useEffect(() => {
-    const root = document.documentElement;
-    if (dark) root.classList.add("dark");
-    else root.classList.remove("dark");
-  }, [dark]);
-  return { dark, setDark };
-}
+import { useTheme } from "@/lib/theme";
 
 type SubTab = "longs" | "options";
 

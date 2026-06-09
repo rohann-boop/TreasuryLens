@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { RefreshCcw, Sun, Moon, Plus } from "lucide-react";
 import { queryClient } from "@/lib/queryClient";
@@ -8,16 +8,7 @@ import { MobileNav } from "@/components/MobileNav";
 import { PrimaryNav } from "@/components/PrimaryNav";
 import { ConvictionWatchlist } from "@/components/ConvictionWatchlist";
 import { TickerRibbon } from "@/components/TickerRibbon";
-
-function useTheme() {
-  const [dark, setDark] = useState(false);
-  useEffect(() => {
-    const root = document.documentElement;
-    if (dark) root.classList.add("dark");
-    else root.classList.remove("dark");
-  }, [dark]);
-  return { dark, setDark };
-}
+import { useTheme } from "@/lib/theme";
 
 // The Dashboard *is* the Watchlist & Conviction workspace. The left rail lists
 // the thematic watchlist sections (Bravos, Core AI, Speculative AI infra, AI

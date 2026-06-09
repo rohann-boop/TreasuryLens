@@ -27,17 +27,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { WordMark } from "@/components/Logo";
 import { MobileNav } from "@/components/MobileNav";
 import { PrimaryNav } from "@/components/PrimaryNav";
-
-// Light mode is the app default; this page mirrors the Dashboard's theme hook.
-function useTheme() {
-  const [dark, setDark] = useState(false);
-  useEffect(() => {
-    const root = document.documentElement;
-    if (dark) root.classList.add("dark");
-    else root.classList.remove("dark");
-  }, [dark]);
-  return { dark, setDark };
-}
+import { useTheme } from "@/lib/theme";
 
 const FACTOR_KEYS: QuantFactorKey[] = [
   "momentum",

@@ -36,16 +36,7 @@ import { fmtAgo } from "@/lib/format";
 import { WordMark } from "@/components/Logo";
 import { MobileNav } from "@/components/MobileNav";
 import { PrimaryNav } from "@/components/PrimaryNav";
-
-function useTheme() {
-  const [dark, setDark] = useState(true);
-  useEffect(() => {
-    const root = document.documentElement;
-    if (dark) root.classList.add("dark");
-    else root.classList.remove("dark");
-  }, [dark]);
-  return { dark, setDark };
-}
+import { useTheme } from "@/lib/theme";
 
 const THEME_ICON: Record<StockPickTheme, typeof Cpu> = {
   "ai-hardware": Cpu,

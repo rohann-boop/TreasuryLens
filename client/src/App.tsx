@@ -12,6 +12,7 @@ import ModelLab from "@/pages/ModelLab";
 import InvestmentGroups from "@/pages/InvestmentGroups";
 import TradeIdeas from "@/pages/TradeIdeas";
 import { AssistantWidget } from "@/components/AssistantWidget";
+import { ThemeProvider } from "@/lib/theme";
 
 // The root route renders the merged Dashboard, which now embeds the Watchlist /
 // conviction-ideas experience. Three primary tabs: Dashboard, Stock Picks, 13F
@@ -45,11 +46,13 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <Toaster />
-        <Router hook={useHashLocation}>
-          <AppRouter />
-          <AssistantWidget />
-        </Router>
+        <ThemeProvider>
+          <Toaster />
+          <Router hook={useHashLocation}>
+            <AppRouter />
+            <AssistantWidget />
+          </Router>
+        </ThemeProvider>
       </TooltipProvider>
     </QueryClientProvider>
   );
