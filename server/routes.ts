@@ -14,6 +14,7 @@ import { getStockPicks, getTickerChart } from "./stockPicks";
 import { getStockPicksBacktest } from "./backtest";
 import { getQuantBacktest } from "./quantBacktest";
 import { runModelLabBacktest } from "./modelLab";
+import { getInvestmentGroups } from "./investmentGroups";
 import {
   getConvictionIdeas,
   addConvictionIdea,
@@ -452,6 +453,59 @@ export async function registerRoutes(
   app.get("/api/model-lab/backtest", async (_req, res) => {
     try {
       res.json(await runModelLabBacktest({}));
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // Investment Groups (Baskets) v1 — deterministic, explainable research
+  // baskets built from the conviction universe under a chosen template +
+  // controls (min conviction score, max risk tolerance, max holdings). No LLM;
+  // each member carries its factor reads and inclusion rationale, and the group
+  // borrows a Model Lab technical-only validation badge. Query params:
+  // template, minScore, maxRisk, maxHoldings.
+  const GROUP_TEMPLATE_IDS = [
+    "core-compounders",
+    "high-upside-speculative",
+    "ai-infrastructure",
+    "energy-power",
+    "risk-controlled",
+    "momentum-breakouts",
+  ] as const;
+  const RISK_LEVELS = [
+    "low",
+    "moderate",
+    "elevated",
+    "high",
+    "very high",
+  ] as const;
+  app.get("/api/investment-groups", async (req, res) => {
+    try {
+      const q = req.query as Record<string, unknown>;
+      const templateId =
+        typeof q.template === "string" &&
+        (GROUP_TEMPLATE_IDS as readonly string[]).includes(q.template)
+          ? (q.template as (typeof GROUP_TEMPLATE_IDS)[number])
+          : undefined;
+      const maxRiskLevel =
+        typeof q.maxRisk === "string" &&
+        (RISK_LEVELS as readonly string[]).includes(q.maxRisk)
+          ? (q.maxRisk as (typeof RISK_LEVELS)[number])
+          : undefined;
+      const minScoreNum = Number(q.minScore);
+      const maxHoldingsNum = Number(q.maxHoldings);
+      res.json(
+        await getInvestmentGroups({
+          templateId,
+          maxRiskLevel,
+          minConvictionScore: Number.isFinite(minScoreNum)
+            ? minScoreNum
+            : undefined,
+          maxHoldings: Number.isFinite(maxHoldingsNum)
+            ? maxHoldingsNum
+            : undefined,
+        }),
+      );
     } catch (e) {
       res.status(500).json({ message: (e as Error).message });
     }

@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { LineChart, Users, Lightbulb, FlaskConical } from "lucide-react";
+import { LineChart, Users, Lightbulb, FlaskConical, Boxes } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // Routes that resolve to the merged Dashboard (which now embeds the watchlist).
@@ -48,6 +48,13 @@ export const PRIMARY_TABS: Tab[] = [
     testId: "nav-model-lab",
     icon: FlaskConical,
     match: (loc) => loc === "/model-lab",
+  },
+  {
+    href: "/investment-groups",
+    label: "Groups",
+    testId: "nav-investment-groups",
+    icon: Boxes,
+    match: (loc) => loc === "/investment-groups" || loc === "/baskets",
   },
   {
     href: "/13f",

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import type {
   ModelLabBacktestResponse,
@@ -242,9 +243,8 @@ function WindowCard({
   );
 }
 
-// Planned investment groups — copy-only placeholder for the next phase. These
-// describe how model outputs will later be turned into baskets; nothing is wired
-// yet.
+// Investment group templates — these are now live on the Investment Groups
+// page; this strip is a teaser that links across to build them.
 const PLANNED_GROUPS: { name: string; blurb: string }[] = [
   {
     name: "Core Compounders",
@@ -705,26 +705,32 @@ export default function ModelLab() {
           </section>
         </div>
 
-        {/* Next phase: investment groups (copy-only placeholder) */}
+        {/* Investment groups — now live; this strip links across to build them. */}
         <section
-          className="rounded-md border border-dashed border-border bg-card/30 p-4 space-y-3"
+          className="rounded-md border border-border bg-card/30 p-4 space-y-3"
           data-testid="model-lab-next-groups"
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <h2 className="text-sm font-semibold flex items-center gap-1.5">
               <ArrowRight className="h-4 w-4 text-primary" aria-hidden />
-              Next: build investment groups
+              Build investment groups
             </h2>
-            <span className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Planned
+            <span className="inline-flex items-center rounded border border-pos/40 bg-pos/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-pos">
+              Live
             </span>
+            <Link
+              href="/investment-groups"
+              className="ml-auto text-[11px] font-medium text-primary hover:underline"
+              data-testid="link-investment-groups"
+            >
+              Open Investment Groups →
+            </Link>
           </div>
           <p className="text-[12px] text-muted-foreground leading-relaxed max-w-3xl">
-            The next step is to turn model outputs into curated groups / baskets.
-            Once weights are dialled in, the lab will rank the universe under a
-            chosen strategy and assemble named groups you can save to your
-            watchlist. Nothing below is wired yet — it's a preview of the planned
-            buckets.
+            Model outputs now turn into explainable groups / baskets on the
+            Investment Groups page: pick a template, set min score / max risk /
+            max holdings, and the model ranks the universe into a named group you
+            can save to your watchlist. These are the available templates:
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
             {PLANNED_GROUPS.map((g) => (

@@ -1734,3 +1734,130 @@ export interface ModelLabBacktestResponse {
   limitations: string[];
   disclaimer: string;
 }
+
+// =============================================================================
+// Investment Groups (Baskets) v1 — model-driven, explainable research baskets.
+//
+// HONEST FRAMING: these are research watchlists assembled deterministically from
+// the existing conviction universe (its curated conviction score, scenario
+// model, themes, risk level and live performance). They are NOT personalized
+// financial advice, NOT a portfolio, and NOT backtested as baskets. Where a
+// Model Lab preset / technical backtest applies, we surface a compact validation
+// badge from that engine rather than inventing one.
+// =============================================================================
+
+export type InvestmentGroupTemplateId =
+  | "core-compounders"
+  | "high-upside-speculative"
+  | "ai-infrastructure"
+  | "energy-power"
+  | "risk-controlled"
+  | "momentum-breakouts";
+
+// Per-member factor reads that explain why a name made the basket. All optional
+// numerics are null when the underlying data was unavailable for that ticker.
+export interface InvestmentGroupMemberFactors {
+  // 0-100 curated conviction score carried from the conviction universe.
+  convictionScore: number;
+  // Scenario classification (e.g. "compounder", "3x potential", "speculative").
+  scenarioClassification: ScenarioClassification | null;
+  // Curated/derived risk level for the name.
+  riskLevel: RiskLevel | null;
+  // Scenario bull upside / bear downside over the model horizon (%).
+  upsidePct: number | null;
+  downsidePct: number | null;
+  // Trailing price performance windows (%), when history is available.
+  change6mPct: number | null;
+  change12mPct: number | null;
+  // Whether the name matched the template's thematic intent (theme/section).
+  themeMatch: boolean;
+}
+
+export interface InvestmentGroupMember {
+  ticker: string;
+  companyName: string;
+  // Why this name is in the basket — one short line, template-aware.
+  rationale: string;
+  factors: InvestmentGroupMemberFactors;
+  // The template-specific 0-100 fit score used to rank/select this member.
+  fitScore: number;
+  // Themes carried from the universe (for chips / transparency).
+  themes: string[];
+  sectionLabel: string | null;
+}
+
+// Compact, honest validation badge attached to a generated group. Sourced from
+// the Model Lab technical-only backtest under the template's strategy preset —
+// it validates the momentum/risk slice of the model, NOT the basket itself.
+export interface InvestmentGroupValidation {
+  // The Model Lab preset id whose weights best express this template's tilt.
+  presetId: string;
+  presetLabel: string;
+  // The technical-only verdict + headline from the deepest available window.
+  windowKey: string | null;
+  verdict: QuantBacktestVerdict;
+  selectedAvgReturnPct: number | null;
+  excessVsBenchmarkPct: number | null;
+  hitRatePct: number | null;
+  badge: string; // e.g. "Technical-only"
+  note: string;
+}
+
+export interface InvestmentGroup {
+  templateId: InvestmentGroupTemplateId;
+  name: string;
+  // One-paragraph thesis describing the intent of the basket.
+  thesis: string;
+  // The model lens used to build it (plain English).
+  modelLens: string;
+  members: InvestmentGroupMember[];
+  // Explainability blocks.
+  whyTheseNames: string[]; // bullet reasons the cohort hangs together
+  whatWouldChange: string[]; // what would add/remove names from this group
+  // Aggregate reads across the selected members.
+  avgConvictionScore: number | null;
+  riskProfile: string; // human label e.g. "Lower risk", "Higher risk"
+  upsideProfile: string | null; // human label e.g. "~2x base / 3x bull skew"
+  // The controls actually applied to produce this set (echoed back).
+  appliedControls: {
+    minConvictionScore: number;
+    maxRiskLevel: RiskLevel;
+    maxHoldings: number;
+  };
+  // Validation badge from the Model Lab engine, when available.
+  validation: InvestmentGroupValidation | null;
+  // True when no member cleared the filters (graceful empty state).
+  empty: boolean;
+  emptyNote: string | null;
+}
+
+export interface InvestmentGroupTemplateInfo {
+  id: InvestmentGroupTemplateId;
+  name: string;
+  blurb: string;
+  modelLens: string;
+  // The Model Lab preset whose tilt this template borrows for validation.
+  presetId: string;
+}
+
+// Query controls for GET /api/investment-groups. All optional; the server
+// applies sensible defaults and clamps.
+export interface InvestmentGroupsRequest {
+  templateId?: InvestmentGroupTemplateId;
+  minConvictionScore?: number; // 0-100
+  maxRiskLevel?: RiskLevel;
+  maxHoldings?: number; // 1-25
+}
+
+export interface InvestmentGroupsResponse {
+  asOf: number;
+  templates: InvestmentGroupTemplateInfo[];
+  // The generated group for the requested (or default) template.
+  group: InvestmentGroup;
+  universeSize: number;
+  metricsStatus: {
+    livePricing: boolean;
+    fundamentals: boolean;
+  };
+  disclaimer: string;
+}
