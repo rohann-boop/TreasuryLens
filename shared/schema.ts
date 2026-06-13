@@ -570,6 +570,18 @@ export interface StockPickKeyMetrics {
   operatingMargin: number | null; // %
   fcfMargin: number | null; // %
   debtToEquity: number | null; // ratio
+  // Raw fundamental anchors (USD / shares / per-share) for the fundamentals
+  // driven scenario bridge. Populated from SEC EDGAR where available; null for
+  // non-US issuers, sparse filers, or negative-earnings names. These are the
+  // starting points the V2 scenario model multiplies forward — kept separate
+  // from the derived ratios above so the bridge math is inspectable.
+  revenueTtm?: number | null; // USD trailing-twelve-month revenue
+  operatingIncomeTtm?: number | null; // USD TTM operating income
+  netIncomeTtm?: number | null; // USD TTM net income
+  netMargin?: number | null; // % (net income / revenue)
+  sharesOutstanding?: number | null; // count (diluted weighted avg or cover-page)
+  epsTtm?: number | null; // USD per share, TTM diluted
+  fundamentalsAsOf?: string | null; // period end (YYYY-MM-DD) of the anchors
   metricSource: string; // e.g. "yahoo+sec_edgar" | "sec_edgar" | "curated" | "unavailable"
   metricAsOf: number | null; // ms since epoch
   metricConfidence: DataConfidence;
@@ -616,6 +628,55 @@ export type StockPickSubTheme =
 
 export type ScenarioCaseKey = "bear" | "base" | "bull";
 
+// Provenance tag for each derivation input. Lets the UI render a source badge
+// per row so users can see whether a number came from a live quote, SEC
+// fundamentals, a TreasuryLens assumption, or a heuristic fallback.
+export type ScenarioSource =
+  | "market-data" // live price / market cap from a quote provider
+  | "sec-fundamentals" // SEC EDGAR reported figure (revenue, margin, shares…)
+  | "analyst-estimate" // consensus / analyst-sourced figure (not wired yet)
+  | "treasurylens-assumption" // an explicit TreasuryLens modelling assumption
+  | "fallback-heuristic" // value carried over from the curated-bands heuristic
+  | "unavailable"; // input could not be sourced
+
+// How the model arrived at the bull/base/bear cases.
+//   - fundamentals-driven: revenue × margin × multiple bridge using SEC data.
+//   - hybrid: fundamentals for some legs, TreasuryLens assumptions for others.
+//   - fallback-heuristic: the original curated-bands multiple model (sparse data).
+export type ScenarioMethod =
+  | "fundamentals-driven"
+  | "hybrid"
+  | "fallback-heuristic";
+
+// One derivation row: a labelled value with its unit and source badge. Surfaced
+// directly in the "How this was derived" UI.
+export interface ScenarioDerivationRow {
+  key: string; // stable key e.g. "revenueCagr"
+  label: string; // human label e.g. "Revenue CAGR"
+  value: number | null; // numeric value (null when unavailable)
+  unit: "pct" | "usd" | "x" | "price" | "shares" | "ratio" | "none";
+  display: string; // pre-formatted human string e.g. "18.0%", "$1.2T"
+  source: ScenarioSource;
+  note?: string; // optional short clarification
+}
+
+// Fundamentals-driven derivation attached to each case. Every field is the
+// explicit bridge from today's revenue to a target price. Null fields mean the
+// input was unavailable and an assumption/fallback was used instead.
+export interface ScenarioCaseDerivation {
+  // The ordered rows the UI renders (revenue CAGR → future revenue → margin →
+  // earnings proxy → multiple → implied equity value → share bridge → target).
+  rows: ScenarioDerivationRow[];
+  futureRevenue: number | null; // USD, at horizon
+  marginPct: number | null; // terminal operating/net margin used
+  earningsProxy: number | null; // USD, future revenue × margin (op income / net income proxy)
+  valuationMultiple: number | null; // P/E or P/S applied to the earnings/revenue proxy
+  valuationBasis: "P/E" | "P/S" | null; // which multiple basis was used
+  impliedEquityValue: number | null; // USD market cap implied
+  shareCount: number | null; // shares used in the per-share bridge
+  targetPrice: number | null; // implied equity value / shares
+}
+
 export interface ScenarioCaseAssumptions {
   revenueCagrPct: number; // % annualised, over horizon
   terminalMarginPct: number; // % e.g. operating/FCF margin at horizon
@@ -639,6 +700,9 @@ export interface ScenarioCase {
   label: string; // human label e.g. "Bull case"
   assumptions: ScenarioCaseAssumptions;
   outputs: ScenarioCaseOutputs;
+  // Present only on the fundamentals-driven / hybrid path. Null on the pure
+  // fallback-heuristic path (the curated-bands model has no revenue bridge).
+  derivation?: ScenarioCaseDerivation | null;
 }
 
 export type ScenarioClassification =
@@ -651,7 +715,12 @@ export type ScenarioClassification =
 
 export type ScenarioModelType =
   | "curated-bands-v1"
-  | "curated-bands-with-price-v1";
+  | "curated-bands-with-price-v1"
+  // Fundamentals-driven revenue×margin×multiple bridge (V2). The "-hybrid"
+  // variant mixes SEC fundamentals with TreasuryLens assumptions where a leg
+  // was unavailable.
+  | "fundamentals-bridge-v1"
+  | "fundamentals-bridge-hybrid-v1";
 
 export interface ScenarioModel {
   horizonYears: number; // e.g. 5
@@ -668,6 +737,15 @@ export interface ScenarioModel {
   bearDownsidePct: number; // bear.impliedReturnPct (typically negative)
   rewardRiskRatio: number | null; // bullUpside / |bearDownside|, null if denom=0
   disclaimer: string;
+  // V2 derivation metadata. `method` says which path produced the cases;
+  // `coverageConfidence` rolls up how much real fundamental data backed it.
+  // `derivationInputs` lists the shared starting points (current price, TTM
+  // revenue, base margin, shares, base multiple) with source badges, and
+  // `missingInputs` names anything that fell back to an assumption.
+  method?: ScenarioMethod;
+  coverageConfidence?: "high" | "medium" | "low";
+  derivationInputs?: ScenarioDerivationRow[];
+  missingInputs?: string[];
 }
 
 export interface StockPick {
@@ -1939,6 +2017,20 @@ export interface TradeIdeaLong {
   rationale: string[];
   sourceNote: string;
   dataConfidence: DataConfidence;
+  // Scenario derivation surfaced in the "How this was derived" drawer. Carried
+  // straight from the pick's scenarioModel so the Trade Ideas detail view can
+  // show the bridge without re-fetching. Null when no model was attached.
+  scenarioMethod: ScenarioMethod | null;
+  scenarioModelType: ScenarioModelType | null;
+  scenarioCoverage: "high" | "medium" | "low" | null;
+  scenarioMethodology: string | null;
+  scenarioHorizonYears: number | null;
+  scenarioInputs: ScenarioDerivationRow[] | null;
+  scenarioMissingInputs: string[] | null;
+  scenarioModelWarnings: string[] | null;
+  bullDerivation: ScenarioCaseDerivation | null;
+  baseDerivation: ScenarioCaseDerivation | null;
+  bearDerivation: ScenarioCaseDerivation | null;
 }
 
 // V1 supported option structures.

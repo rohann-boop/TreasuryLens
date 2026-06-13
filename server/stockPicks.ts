@@ -4255,6 +4255,13 @@ export async function enrichOne(pick: StockPick): Promise<StockPickKeyMetrics> {
   let operatingMargin: number | null = null;
   let fcfMargin: number | null = null;
   let debtToEquity: number | null = null;
+  // Raw fundamental anchors for the V2 scenario bridge.
+  let revenueTtm: number | null = null;
+  let operatingIncomeTtm: number | null = null;
+  let netIncomeTtm: number | null = null;
+  let netMargin: number | null = null;
+  let epsTtm: number | null = null;
+  let fundamentalsAsOf: string | null = null;
   const metricSources: string[] = [];
 
   // 1) Historical bars from the shared market-data path (Massive → Yahoo).
@@ -4351,6 +4358,21 @@ export async function enrichOne(pick: StockPick): Promise<StockPickKeyMetrics> {
         operatingMargin = f.operatingMargin;
         fcfMargin = f.fcfMargin;
         debtToEquity = f.debtToEquity;
+        netMargin = f.netMargin;
+        if (f.revenue && Number.isFinite(f.revenue.value) && f.revenue.value > 0) {
+          revenueTtm = f.revenue.value;
+        }
+        if (f.operatingIncome && Number.isFinite(f.operatingIncome.value)) {
+          operatingIncomeTtm = f.operatingIncome.value;
+        }
+        if (f.netIncome && Number.isFinite(f.netIncome.value)) {
+          netIncomeTtm = f.netIncome.value;
+        }
+        if (f.eps && Number.isFinite(f.eps.value)) {
+          epsTtm = f.eps.value;
+        }
+        fundamentalsAsOf =
+          f.latestFiling?.periodEnd ?? f.revenue?.end ?? f.anchorDate ?? null;
         if (f.eps && Number.isFinite(f.eps.value) && f.eps.value > 0) {
           secEps = f.eps.value;
         }
@@ -4387,22 +4409,36 @@ export async function enrichOne(pick: StockPick): Promise<StockPickKeyMetrics> {
   //    issuer-asserted count and is the same number used by Polygon-style
   //    market_cap fields. Acceptable accuracy for a watchlist UI; treat as
   //    approximate because the share count is a snapshot, not real-time.
-  if (marketCap == null && price != null && isUS) {
+  if (isUS && (marketCap == null || price != null)) {
     try {
       const sh = await getSharesOutstanding(pick.ticker);
       if (sh) {
         secSharesOutstanding = sh.value;
-        marketCap = price * sh.value;
-        if (!metricSources.includes("sec_edgar")) metricSources.push("sec_edgar");
-        warnings.push(
-          `Market cap derived from SEC shares outstanding (${sh.tag}) × price (approximate).`,
-        );
+        if (marketCap == null && price != null) {
+          marketCap = price * sh.value;
+          if (!metricSources.includes("sec_edgar")) metricSources.push("sec_edgar");
+          warnings.push(
+            `Market cap derived from SEC shares outstanding (${sh.tag}) × price (approximate).`,
+          );
+        }
       }
     } catch {
       // ignore
     }
   }
-  void secSharesOutstanding;
+
+  // Share count for the scenario bridge: prefer the issuer-asserted SEC count;
+  // otherwise back it out of market cap / price so the per-share math still
+  // closes. Null when neither is available.
+  let sharesOutstanding: number | null = secSharesOutstanding;
+  if (
+    sharesOutstanding == null &&
+    marketCap != null &&
+    price != null &&
+    price > 0
+  ) {
+    sharesOutstanding = marketCap / price;
+  }
 
   const metricSource =
     metricSources.length > 0 ? Array.from(new Set(metricSources)).join("+") : "unavailable";
@@ -4433,6 +4469,13 @@ export async function enrichOne(pick: StockPick): Promise<StockPickKeyMetrics> {
     operatingMargin,
     fcfMargin,
     debtToEquity,
+    revenueTtm,
+    operatingIncomeTtm,
+    netIncomeTtm,
+    netMargin,
+    sharesOutstanding,
+    epsTtm,
+    fundamentalsAsOf,
     metricSource,
     metricAsOf: Date.now(),
     metricConfidence,

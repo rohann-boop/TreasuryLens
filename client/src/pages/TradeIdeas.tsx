@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { fmtAgo, fmtPrice, fmtPct } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { ScenarioDerivation } from "@/components/ScenarioDerivation";
 import { WordMark } from "@/components/Logo";
 import { MobileNav } from "@/components/MobileNav";
 import { PrimaryNav } from "@/components/PrimaryNav";
@@ -581,7 +582,7 @@ function LongDetail({ long }: { long: TradeIdeaLong }) {
 
       <div className="grid grid-cols-3 gap-2 text-center">
         <div className="rounded-md border border-border/60 bg-background/40 p-2">
-          <div className="text-[9px] uppercase tracking-widest text-muted-foreground">Bear</div>
+          <div className="text-[9px] uppercase tracking-widest text-muted-foreground">Bear downside</div>
           <div className={cn("text-[13px] font-semibold tabular-nums", pctTone(long.bearDownsidePct))}>
             {fmtPct(long.bearDownsidePct, 0)}
           </div>
@@ -590,7 +591,7 @@ function LongDetail({ long }: { long: TradeIdeaLong }) {
           </div>
         </div>
         <div className="rounded-md border border-border/60 bg-background/40 p-2">
-          <div className="text-[9px] uppercase tracking-widest text-muted-foreground">Base</div>
+          <div className="text-[9px] uppercase tracking-widest text-muted-foreground">Base upside</div>
           <div className={cn("text-[13px] font-semibold tabular-nums", pctTone(long.baseUpsidePct))}>
             {fmtPct(long.baseUpsidePct, 0)}
           </div>
@@ -599,7 +600,7 @@ function LongDetail({ long }: { long: TradeIdeaLong }) {
           </div>
         </div>
         <div className="rounded-md border border-border/60 bg-background/40 p-2">
-          <div className="text-[9px] uppercase tracking-widest text-muted-foreground">Bull</div>
+          <div className="text-[9px] uppercase tracking-widest text-muted-foreground">Bull upside</div>
           <div className={cn("text-[13px] font-semibold tabular-nums", pctTone(long.bullUpsidePct))}>
             {fmtPct(long.bullUpsidePct, 0)}
           </div>
@@ -638,6 +639,19 @@ function LongDetail({ long }: { long: TradeIdeaLong }) {
       </div>
 
       <Bullets label="What would change the view" items={long.whatWouldChangeView} />
+
+      <ScenarioDerivation
+        method={long.scenarioMethod}
+        coverage={long.scenarioCoverage}
+        methodology={long.scenarioMethodology}
+        horizonYears={long.scenarioHorizonYears}
+        inputs={long.scenarioInputs}
+        missingInputs={long.scenarioMissingInputs}
+        modelWarnings={long.scenarioModelWarnings}
+        bull={long.bullDerivation}
+        base={long.baseDerivation}
+        bear={long.bearDerivation}
+      />
 
       <div className="text-[10px] text-muted-foreground leading-relaxed border-t border-border/50 pt-3">
         Source / model: {long.sourceNote} · Data confidence: {long.dataConfidence}. Idea score is a

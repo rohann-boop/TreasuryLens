@@ -263,6 +263,18 @@ function buildLong(pick: StockPick): TradeIdeaLong {
     rationale: rationale.filter(Boolean),
     sourceNote: pick.sourceNote,
     dataConfidence: pick.dataConfidence,
+    // Scenario derivation passthrough for the "How this was derived" drawer.
+    scenarioMethod: sm?.method ?? null,
+    scenarioModelType: sm?.modelType ?? null,
+    scenarioCoverage: sm?.coverageConfidence ?? null,
+    scenarioMethodology: sm?.methodology ?? null,
+    scenarioHorizonYears: sm?.horizonYears ?? null,
+    scenarioInputs: sm?.derivationInputs ?? null,
+    scenarioMissingInputs: sm?.missingInputs ?? null,
+    scenarioModelWarnings: sm?.modelWarnings ?? null,
+    bullDerivation: sm?.bull.derivation ?? null,
+    baseDerivation: sm?.base.derivation ?? null,
+    bearDerivation: sm?.bear.derivation ?? null,
   };
 }
 

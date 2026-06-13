@@ -88,6 +88,7 @@ import {
   TrendingDown,
 } from "lucide-react";
 import { fmtPrice, fmtCompactCurrency, fmtPct } from "@/lib/format";
+import { ScenarioDerivation } from "@/components/ScenarioDerivation";
 import {
   BuffettConvictionPanel,
   SignalConvictionPanel,
@@ -708,6 +709,17 @@ function ScenarioCard({ model }: { model: ScenarioModel }) {
           ))}
         </ul>
       )}
+      <ScenarioDerivation
+        method={model.method}
+        coverage={model.coverageConfidence}
+        methodology={model.methodology}
+        horizonYears={model.horizonYears}
+        inputs={model.derivationInputs}
+        missingInputs={model.missingInputs}
+        bull={model.bull.derivation}
+        base={model.base.derivation}
+        bear={model.bear.derivation}
+      />
       <p className="text-[10px] text-muted-foreground italic">{model.disclaimer}</p>
     </div>
   );

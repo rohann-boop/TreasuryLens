@@ -19,11 +19,15 @@ import type {
   RiskLevel,
   ScenarioCase,
   ScenarioCaseAssumptions,
+  ScenarioCaseDerivation,
   ScenarioCaseOutputs,
   ScenarioClassification,
+  ScenarioDerivationRow,
+  ScenarioMethod,
   ScenarioMethodology,
   ScenarioModel,
   ScenarioPotential,
+  ScenarioSource,
   StockPick,
 } from "@shared/schema";
 
@@ -236,7 +240,10 @@ function makeCase(
   };
 }
 
-export function buildScenarioModel(pick: StockPick): ScenarioModel {
+function buildHeuristicModel(
+  pick: StockPick,
+  fallbackReason: string | null,
+): ScenarioModel {
   const classification0 = classifyFromPotential(pick.scenarioPotential);
   const band = CLASSIFICATION_BANDS[classification0];
   const bullAdj = BUCKET_BULL_ADJ[pick.marketCapBucket] ?? 0;
@@ -284,6 +291,12 @@ export function buildScenarioModel(pick: StockPick): ScenarioModel {
 
   const finalClassification = reclassifyFromBull(bullUpsidePct, classification0);
 
+  if (fallbackReason) {
+    modelWarnings.unshift(
+      `Fallback heuristic in use: ${fallbackReason} Bull/base/bear are curated target-multiple bands, not a fundamentals bridge.`,
+    );
+  }
+
   const methodology = [
     `Deterministic curated-bands model over a ${years}-year horizon.`,
     `Bull/base/bear target multiples come from the curated scenario tag (${pick.scenarioPotential}),`,
@@ -307,7 +320,39 @@ export function buildScenarioModel(pick: StockPick): ScenarioModel {
     bearDownsidePct: round(bearDownsidePct, 1),
     rewardRiskRatio,
     disclaimer: SCENARIO_DISCLAIMER,
+    method: "fallback-heuristic",
+    coverageConfidence: hasPrice ? "low" : "low",
+    derivationInputs: buildHeuristicInputs(pick),
+    missingInputs: fallbackReason ? ["fundamentals bridge inputs"] : [],
   };
+}
+
+// Shared-input rows for the heuristic path so the "How derived" UI still has
+// something concrete to show (price/market cap + the curated tag inputs).
+function buildHeuristicInputs(pick: StockPick): ScenarioDerivationRow[] {
+  const km = pick.keyMetrics ?? null;
+  const rows: ScenarioDerivationRow[] = [];
+  rows.push(
+    priceRow("Current price", km?.price ?? null, km?.priceCurrency ?? null),
+  );
+  rows.push(usdRow("Market cap", km?.marketCap ?? null, km?.marketCap != null ? "market-data" : "unavailable"));
+  rows.push({
+    key: "curatedTag",
+    label: "Curated scenario tag",
+    value: null,
+    unit: "none",
+    display: pick.scenarioPotential,
+    source: "treasurylens-assumption",
+  });
+  rows.push({
+    key: "conviction",
+    label: "Conviction",
+    value: pick.convictionScore,
+    unit: "none",
+    display: `${pick.convictionScore}/100`,
+    source: "treasurylens-assumption",
+  });
+  return rows;
 }
 
 function formatAdj(n: number): string {
@@ -316,20 +361,555 @@ function formatAdj(n: number): string {
   return r > 0 ? `+${r.toFixed(2)}` : r.toFixed(2);
 }
 
+// =============================================================================
+// Fundamentals-driven scenario bridge (V2)
+//
+// When SEC fundamentals exist, we replace the curated-bands multiple with an
+// explicit revenue → margin → earnings → multiple → equity value → per-share
+// bridge. Every input carries a source badge so the UI can show provenance.
+//
+//   future revenue   = revenue_ttm × (1 + cagr)^years
+//   earnings proxy    = future revenue × terminal margin
+//   implied equity    = earnings proxy × exit multiple        (P/E basis)
+//                     | future revenue × exit P/S             (P/S basis, pre-profit)
+//   target price      = implied equity / (shares × (1 + dilution))
+//
+// CAGR, margin and multiple are per-case (bear/base/bull), anchored on the
+// company's own reported growth/margin/P-E where available and nudged by the
+// curated classification. We do NOT claim precision: the disclaimer and source
+// badges make the assumptions explicit.
+// =============================================================================
+
+function fmtUsd(n: number | null): string {
+  if (n == null || !Number.isFinite(n)) return "N/A";
+  const abs = Math.abs(n);
+  const sign = n < 0 ? "-" : "";
+  if (abs >= 1e12) return `${sign}$${(abs / 1e12).toFixed(2)}T`;
+  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(1)}B`;
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(0)}M`;
+  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(0)}K`;
+  return `${sign}$${abs.toFixed(0)}`;
+}
+
+function fmtPriceStr(n: number | null, currency: string | null): string {
+  if (n == null || !Number.isFinite(n)) return "N/A";
+  const cur = currency && currency !== "USD" ? ` ${currency}` : "";
+  return `$${n.toFixed(2)}${cur}`;
+}
+
+function priceRow(label: string, v: number | null, currency: string | null): ScenarioDerivationRow {
+  return {
+    key: label.replace(/\s+/g, "").toLowerCase(),
+    label,
+    value: v,
+    unit: "price",
+    display: fmtPriceStr(v, currency),
+    source: v != null ? "market-data" : "unavailable",
+  };
+}
+
+function usdRow(label: string, v: number | null, source: ScenarioSource): ScenarioDerivationRow {
+  return {
+    key: label.replace(/\s+/g, "").toLowerCase(),
+    label,
+    value: v,
+    unit: "usd",
+    display: fmtUsd(v),
+    source: v != null ? source : "unavailable",
+  };
+}
+
+function pctRow(key: string, label: string, v: number | null, source: ScenarioSource, note?: string): ScenarioDerivationRow {
+  return {
+    key,
+    label,
+    value: v,
+    unit: "pct",
+    display: v != null && Number.isFinite(v) ? `${v.toFixed(1)}%` : "N/A",
+    source: v != null ? source : "unavailable",
+    note,
+  };
+}
+
+function multRow(key: string, label: string, v: number | null, source: ScenarioSource, note?: string): ScenarioDerivationRow {
+  return {
+    key,
+    label,
+    value: v,
+    unit: "x",
+    display: v != null && Number.isFinite(v) ? `${v.toFixed(1)}×` : "N/A",
+    source: v != null ? source : "unavailable",
+    note,
+  };
+}
+
+function sharesRow(v: number | null, source: ScenarioSource): ScenarioDerivationRow {
+  let display = "N/A";
+  if (v != null && Number.isFinite(v)) {
+    if (v >= 1e9) display = `${(v / 1e9).toFixed(2)}B sh`;
+    else if (v >= 1e6) display = `${(v / 1e6).toFixed(1)}M sh`;
+    else display = `${Math.round(v)} sh`;
+  }
+  return {
+    key: "shares",
+    label: "Share count",
+    value: v,
+    unit: "shares",
+    display,
+    source: v != null ? source : "unavailable",
+  };
+}
+
+// Per-case CAGR / margin / multiple tilts relative to the company's own
+// reported anchors. Bear shrinks growth + compresses the multiple; bull
+// expands both. Tilts are widened for higher-classification (3x/5x/spec) names.
+type CaseTilt = {
+  cagrMultiplier: number; // applied to anchor revenue growth
+  cagrFloor: number; // min CAGR % to use when anchor is missing/low
+  marginDelta: number; // ppt change vs current margin
+  multipleMultiplier: number; // applied to anchor P/E (or P/S)
+  dilutionPct: number;
+  execProb: number;
+};
+
+function caseTilts(
+  caseKey: "bear" | "base" | "bull",
+  classification: ScenarioClassification,
+): CaseTilt {
+  const aggressive =
+    classification === "3x potential" ||
+    classification === "5x potential" ||
+    classification === "speculative";
+  const compounder = classification === "compounder";
+  const defensive = classification === "defensive";
+
+  if (caseKey === "bear") {
+    return {
+      cagrMultiplier: defensive ? 0.25 : aggressive ? 0.3 : 0.5,
+      cagrFloor: defensive ? 0 : aggressive ? 3 : 1,
+      marginDelta: defensive ? -2 : aggressive ? -6 : -4,
+      multipleMultiplier: defensive ? 0.85 : aggressive ? 0.55 : 0.7,
+      dilutionPct: aggressive ? 8 : 3,
+      execProb: DEFAULT_EXEC_PROB.bear,
+    };
+  }
+  if (caseKey === "base") {
+    return {
+      cagrMultiplier: defensive ? 0.6 : compounder ? 0.8 : aggressive ? 0.75 : 0.85,
+      cagrFloor: defensive ? 3 : compounder ? 8 : aggressive ? 14 : 10,
+      marginDelta: defensive ? 0 : aggressive ? 2 : 1,
+      multipleMultiplier: 1.0,
+      dilutionPct: aggressive ? 5 : 2,
+      execProb: DEFAULT_EXEC_PROB.base,
+    };
+  }
+  // bull
+  return {
+    cagrMultiplier: defensive ? 1.0 : compounder ? 1.1 : aggressive ? 1.25 : 1.15,
+    cagrFloor: defensive ? 6 : compounder ? 12 : aggressive ? 26 : 18,
+    marginDelta: defensive ? 2 : aggressive ? 8 : 5,
+    multipleMultiplier: defensive ? 1.15 : aggressive ? 1.4 : 1.25,
+    dilutionPct: aggressive ? 4 : 1,
+    execProb: DEFAULT_EXEC_PROB.bull,
+  };
+}
+
+function clampNum(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+interface BridgeInputs {
+  price: number;
+  currency: string | null;
+  revenueTtm: number;
+  shares: number;
+  sharesSource: ScenarioSource;
+  // anchors (may be null → assumption used)
+  anchorGrowthPct: number | null;
+  anchorMarginPct: number | null; // operating preferred, else net
+  marginSource: ScenarioSource;
+  anchorPe: number | null;
+  valuationBasis: "P/E" | "P/S";
+  baseMultiple: number; // P/E if profitable, else P/S
+  multipleSource: ScenarioSource;
+}
+
+function buildFundamentalsCase(
+  caseKey: "bear" | "base" | "bull",
+  classification: ScenarioClassification,
+  inp: BridgeInputs,
+  years: number,
+  pick: StockPick,
+): ScenarioCase {
+  const tilt = caseTilts(caseKey, classification);
+
+  // Revenue CAGR: anchor on reported growth (decaying it toward the floor for
+  // realism), else use the floor as a TreasuryLens assumption.
+  const anchor = inp.anchorGrowthPct;
+  let cagr: number;
+  let cagrSource: ScenarioSource;
+  if (anchor != null && Number.isFinite(anchor)) {
+    cagr = anchor * tilt.cagrMultiplier;
+    // Blend toward the floor so a single hot/cold year doesn't dominate 5y.
+    cagr = cagr * 0.6 + tilt.cagrFloor * 0.4;
+    cagrSource = "sec-fundamentals";
+  } else {
+    cagr = tilt.cagrFloor;
+    cagrSource = "treasurylens-assumption";
+  }
+  cagr = clampNum(cagr, -20, 80);
+
+  const futureRevenue = inp.revenueTtm * Math.pow(1 + cagr / 100, years);
+
+  // Terminal margin: anchor ± case delta.
+  let margin: number;
+  let marginSrc: ScenarioSource;
+  if (inp.anchorMarginPct != null && Number.isFinite(inp.anchorMarginPct)) {
+    margin = inp.anchorMarginPct + tilt.marginDelta;
+    marginSrc = inp.marginSource;
+  } else {
+    // No reported margin (pre-profit): assume a modest terminal margin.
+    margin = clampNum(8 + tilt.marginDelta, 1, 30);
+    marginSrc = "treasurylens-assumption";
+  }
+  margin = clampNum(margin, inp.valuationBasis === "P/S" ? 0 : -10, 60);
+
+  // Exit multiple: anchor × case multiplier.
+  const exitMultiple = clampNum(
+    inp.baseMultiple * tilt.multipleMultiplier,
+    inp.valuationBasis === "P/E" ? 5 : 1,
+    inp.valuationBasis === "P/E" ? 120 : 40,
+  );
+
+  let earningsProxy: number | null;
+  let impliedEquity: number;
+  if (inp.valuationBasis === "P/E") {
+    earningsProxy = futureRevenue * (margin / 100);
+    impliedEquity = earningsProxy * exitMultiple;
+  } else {
+    // Pre-profit / P/S basis: value off revenue. Earnings proxy still shown.
+    earningsProxy = futureRevenue * (margin / 100);
+    impliedEquity = futureRevenue * exitMultiple;
+  }
+  // Floor equity value at zero — negative implied equity is meaningless here.
+  impliedEquity = Math.max(0, impliedEquity);
+
+  const dilutedShares = inp.shares * (1 + tilt.dilutionPct / 100);
+  const targetPrice = dilutedShares > 0 ? impliedEquity / dilutedShares : null;
+
+  const multiple =
+    targetPrice != null && inp.price > 0 ? targetPrice / inp.price : 0;
+  const impliedReturn = (multiple - 1) * 100;
+  const requiredCagr = requiredCagrPct(multiple, years);
+
+  const rows: ScenarioDerivationRow[] = [
+    pctRow("revenueCagr", "Revenue CAGR (est.)", round(cagr, 1), cagrSource, `${years}y annualised`),
+    usdRow("Future revenue (est.)", round(futureRevenue, 0), cagrSource === "sec-fundamentals" ? "sec-fundamentals" : "treasurylens-assumption"),
+    pctRow("terminalMargin", inp.valuationBasis === "P/E" ? "Terminal op. margin (est.)" : "Terminal margin (est.)", round(margin, 1), marginSrc),
+    usdRow(inp.valuationBasis === "P/E" ? "Earnings proxy (est.)" : "Profit proxy (est.)", round(earningsProxy ?? 0, 0), marginSrc === "sec-fundamentals" ? "treasurylens-assumption" : marginSrc),
+    multRow("exitMultiple", inp.valuationBasis === "P/E" ? "Exit P/E (est.)" : "Exit P/S (est.)", round(exitMultiple, 1), inp.multipleSource),
+    usdRow("Implied equity value (est.)", round(impliedEquity, 0), "treasurylens-assumption"),
+    sharesRow(round(dilutedShares, 0), inp.sharesSource),
+    priceRow("Target price (est.)", targetPrice != null ? round(targetPrice, 2) : null, inp.currency),
+  ];
+
+  const derivation: ScenarioCaseDerivation = {
+    rows,
+    futureRevenue: round(futureRevenue, 0),
+    marginPct: round(margin, 1),
+    earningsProxy: round(earningsProxy ?? 0, 0),
+    valuationMultiple: round(exitMultiple, 1),
+    valuationBasis: inp.valuationBasis,
+    impliedEquityValue: round(impliedEquity, 0),
+    shareCount: round(dilutedShares, 0),
+    targetPrice: targetPrice != null ? round(targetPrice, 2) : null,
+  };
+
+  const assumptions: ScenarioCaseAssumptions = {
+    revenueCagrPct: round(cagr, 1),
+    terminalMarginPct: round(margin, 1),
+    exitMultipleChangePct: round((tilt.multipleMultiplier - 1) * 100, 1),
+    dilutionPct: round(tilt.dilutionPct, 1),
+    executionProbability: tilt.execProb,
+    rationale: rationaleForCase(caseKey, pick, inp.valuationBasis),
+  };
+
+  const outputs: ScenarioCaseOutputs = {
+    targetMultipleOfCurrent: round(multiple, 2),
+    impliedReturnPct: round(impliedReturn, 1),
+    targetPrice: targetPrice != null ? round(targetPrice, 2) : null,
+    targetMarketCap: round(impliedEquity, 0),
+    requiredCagrPct: round(requiredCagr, 1),
+    warning: null,
+  };
+
+  return {
+    key: caseKey,
+    label: caseKey === "bear" ? "Bear case" : caseKey === "base" ? "Base case" : "Bull case",
+    assumptions,
+    outputs,
+    derivation,
+  };
+}
+
+function rationaleForCase(
+  caseKey: "bear" | "base" | "bull",
+  pick: StockPick,
+  basis: "P/E" | "P/S",
+): string[] {
+  const valLine =
+    basis === "P/S"
+      ? "Valued on revenue (P/S) — not yet sustainably profitable."
+      : "Valued on an earnings (P/E) bridge from terminal margin.";
+  if (caseKey === "bear") {
+    return [
+      "Growth decays toward the floor; margin compresses and the multiple de-rates.",
+      pick.risks[0] ?? "Idiosyncratic execution risk shows up.",
+      valLine,
+    ];
+  }
+  if (caseKey === "base") {
+    return [
+      "Reported growth persists at a discounted rate; margin and multiple roughly hold.",
+      pick.thesis[0] ?? "Thesis executes at a steady pace.",
+      valLine,
+    ];
+  }
+  return [
+    pick.upsideCase || "Growth re-accelerates and operating leverage lifts margin.",
+    "Multiple re-rates as durable growth becomes consensus.",
+    valLine,
+  ];
+}
+
+// Decide whether we have enough to run the fundamentals bridge, and assemble
+// the shared inputs. Returns null when too sparse (caller falls back).
+function buildBridgeInputs(pick: StockPick): { inputs: BridgeInputs; missing: string[] } | null {
+  const km = pick.keyMetrics ?? null;
+  if (!km) return null;
+  const price = km.price;
+  const revenueTtm = km.revenueTtm ?? null;
+  const shares = km.sharesOutstanding ?? null;
+
+  // Hard requirements: a current price, TTM revenue, and a share count.
+  if (price == null || !Number.isFinite(price) || price <= 0) return null;
+  if (revenueTtm == null || !Number.isFinite(revenueTtm) || revenueTtm <= 0) return null;
+  if (shares == null || !Number.isFinite(shares) || shares <= 0) return null;
+
+  const missing: string[] = [];
+
+  // Margin: prefer operating, then net. Null → assumption later.
+  let anchorMarginPct: number | null = null;
+  let marginSource: ScenarioSource = "treasurylens-assumption";
+  if (km.operatingMargin != null && Number.isFinite(km.operatingMargin)) {
+    anchorMarginPct = km.operatingMargin;
+    marginSource = "sec-fundamentals";
+  } else if (km.netMargin != null && Number.isFinite(km.netMargin)) {
+    anchorMarginPct = km.netMargin;
+    marginSource = "sec-fundamentals";
+  } else {
+    missing.push("operating/net margin");
+  }
+
+  // Valuation basis: P/E when we have a positive P/E and positive margin,
+  // otherwise P/S (pre-profit names). P/S base multiple = marketCap / revenue.
+  const profitable =
+    km.peRatio != null && Number.isFinite(km.peRatio) && km.peRatio > 0 &&
+    (anchorMarginPct == null || anchorMarginPct > 0);
+  let valuationBasis: "P/E" | "P/S";
+  let baseMultiple: number;
+  let multipleSource: ScenarioSource;
+  if (profitable) {
+    valuationBasis = "P/E";
+    baseMultiple = km.peRatio as number;
+    multipleSource = "market-data";
+  } else {
+    valuationBasis = "P/S";
+    const mcap = km.marketCap ?? price * shares;
+    baseMultiple = mcap / revenueTtm;
+    multipleSource = km.marketCap != null ? "market-data" : "treasurylens-assumption";
+    if (km.peRatio == null) missing.push("positive P/E (using P/S basis)");
+  }
+  // Sanity clamp the base multiple.
+  if (valuationBasis === "P/E") baseMultiple = clampNum(baseMultiple, 5, 120);
+  else baseMultiple = clampNum(baseMultiple, 0.5, 40);
+
+  const anchorGrowthPct =
+    km.revenueGrowth != null && Number.isFinite(km.revenueGrowth)
+      ? km.revenueGrowth
+      : null;
+  if (anchorGrowthPct == null) missing.push("reported revenue growth");
+
+  const sharesSource: ScenarioSource =
+    km.sharesOutstanding != null ? "sec-fundamentals" : "market-data";
+
+  return {
+    inputs: {
+      price,
+      currency: km.priceCurrency ?? null,
+      revenueTtm,
+      shares,
+      sharesSource,
+      anchorGrowthPct,
+      anchorMarginPct,
+      marginSource,
+      anchorPe: km.peRatio ?? null,
+      valuationBasis,
+      baseMultiple,
+      multipleSource,
+    },
+    missing,
+  };
+}
+
+function buildFundamentalsModel(
+  pick: StockPick,
+  built: { inputs: BridgeInputs; missing: string[] },
+): ScenarioModel {
+  const classification0 = classifyFromPotential(pick.scenarioPotential);
+  const inp = built.inputs;
+  const years = HORIZON_YEARS;
+
+  const bear = buildFundamentalsCase("bear", classification0, inp, years, pick);
+  const base = buildFundamentalsCase("base", classification0, inp, years, pick);
+  const bull = buildFundamentalsCase("bull", classification0, inp, years, pick);
+
+  const bullUpsidePct = bull.outputs.impliedReturnPct;
+  const bearDownsidePct = bear.outputs.impliedReturnPct;
+  const denom = Math.abs(bearDownsidePct);
+  const rewardRiskRatio = denom > 0.01 ? round(bullUpsidePct / denom, 2) : null;
+
+  const finalClassification = reclassifyFromBull(bullUpsidePct, classification0);
+
+  // Hybrid when any leg fell back to a TreasuryLens assumption.
+  const isHybrid = built.missing.length > 0;
+  const method: ScenarioMethod = isHybrid ? "hybrid" : "fundamentals-driven";
+  const modelType = isHybrid ? "fundamentals-bridge-hybrid-v1" : "fundamentals-bridge-v1";
+
+  // Coverage confidence: high when growth + margin + P/E all reported.
+  let coverage: "high" | "medium" | "low";
+  if (built.missing.length === 0) coverage = "high";
+  else if (built.missing.length <= 1) coverage = "medium";
+  else coverage = "low";
+
+  const modelConfidence: DataConfidence = coverage === "high" ? "approximate" : "low";
+
+  const modelWarnings: string[] = [];
+  if (isHybrid) {
+    modelWarnings.push(
+      `Hybrid model: ${built.missing.join(", ")} not reported — TreasuryLens assumptions used for those legs.`,
+    );
+  }
+  if (inp.valuationBasis === "P/S") {
+    modelWarnings.push(
+      "Valued on a price-to-sales basis (not yet sustainably profitable) — more sensitive to the multiple assumption than an earnings bridge.",
+    );
+  }
+  if (pick.riskLevel === "high" || pick.riskLevel === "very high") {
+    modelWarnings.push(
+      "High-risk name: the bear case may still understate worst-case dilution or going-concern outcomes.",
+    );
+  }
+
+  const inputRows: ScenarioDerivationRow[] = [
+    priceRow("Current price", inp.price, inp.currency),
+    usdRow("TTM revenue", inp.revenueTtm, "sec-fundamentals"),
+    pctRow(
+      "anchorGrowth",
+      "Reported revenue growth",
+      inp.anchorGrowthPct,
+      inp.anchorGrowthPct != null ? "sec-fundamentals" : "treasurylens-assumption",
+      "Latest annual YoY",
+    ),
+    pctRow(
+      "anchorMargin",
+      "Current margin",
+      inp.anchorMarginPct,
+      inp.anchorMarginPct != null ? inp.marginSource : "treasurylens-assumption",
+    ),
+    multRow(
+      "baseMultiple",
+      inp.valuationBasis === "P/E" ? "Current P/E" : "Current P/S",
+      round(inp.baseMultiple, 1),
+      inp.multipleSource,
+    ),
+    sharesRow(inp.shares, inp.sharesSource),
+  ];
+
+  const methodology =
+    `Fundamentals bridge over a ${years}-year horizon. We start from TTM revenue ` +
+    `(${fmtUsd(inp.revenueTtm)}) and grow it at a per-case CAGR anchored on reported revenue growth ` +
+    `(${inp.anchorGrowthPct != null ? `${inp.anchorGrowthPct.toFixed(1)}%` : "assumption"}). ` +
+    `Future revenue × a terminal margin gives an earnings proxy, valued on a ${inp.valuationBasis} ` +
+    `multiple (current ${round(inp.baseMultiple, 1)}×, re-rated per case) to an implied equity value, ` +
+    `then divided by a dilution-adjusted share count to get a target price. Upside/downside are vs the current price. ` +
+    `${isHybrid ? `Hybrid: ${built.missing.join(", ")} used TreasuryLens assumptions. ` : ""}` +
+    `Estimates only — not a forecast.`;
+
+  return {
+    horizonYears: years,
+    modelType,
+    modelConfidence,
+    modelWarnings,
+    methodology,
+    classification: finalClassification,
+    bear,
+    base,
+    bull,
+    bullUpsidePct: round(bullUpsidePct, 1),
+    bearDownsidePct: round(bearDownsidePct, 1),
+    rewardRiskRatio,
+    disclaimer: SCENARIO_DISCLAIMER,
+    method,
+    coverageConfidence: coverage,
+    derivationInputs: inputRows,
+    missingInputs: built.missing,
+  };
+}
+
+// Public entry: try the fundamentals bridge; fall back to the curated-bands
+// heuristic when data is too sparse. Backward compatible — same return shape,
+// same top-level fields (bullUpsidePct, base/bear outputs, classification…).
+export function buildScenarioModel(pick: StockPick): ScenarioModel {
+  let built: { inputs: BridgeInputs; missing: string[] } | null = null;
+  try {
+    built = buildBridgeInputs(pick);
+  } catch {
+    built = null;
+  }
+  if (!built) {
+    const km = pick.keyMetrics ?? null;
+    let reason = "insufficient SEC fundamentals (need price, TTM revenue and share count).";
+    if (!km || km.price == null) reason = "no live price available.";
+    else if (km.revenueTtm == null) reason = "no TTM revenue reported (non-US issuer, ETF, or sparse filer).";
+    else if (km.sharesOutstanding == null) reason = "no share count available.";
+    return buildHeuristicModel(pick, reason);
+  }
+  try {
+    return buildFundamentalsModel(pick, built);
+  } catch {
+    return buildHeuristicModel(pick, "fundamentals bridge failed to compute.");
+  }
+}
+
 export function buildScenarioMethodology(): ScenarioMethodology {
   return {
-    modelType: "curated-bands-with-price-v1",
+    modelType: "fundamentals-bridge-v1",
     horizonYears: HORIZON_YEARS,
     summary:
-      `TreasuryLens scenario models are deterministic and transparent: for each pick we publish a bull/base/bear ` +
-      `target multiple of current price over ${HORIZON_YEARS} years, derived from the curated scenario tag and ` +
-      `adjusted for market-cap bucket, risk level, and conviction. Implied return %, target price, target market ` +
-      `cap, and required CAGR are computed from those multiples — no machine learning, no forecasts.`,
+      `TreasuryLens scenario models are deterministic and transparent. When SEC fundamentals exist we run a ` +
+      `fundamentals bridge over ${HORIZON_YEARS} years: TTM revenue is grown at a per-case CAGR (anchored on the ` +
+      `company's reported growth), a terminal margin yields an earnings proxy, a re-rated P/E or P/S multiple gives ` +
+      `an implied equity value, and a dilution-adjusted share count converts that to a target price. When ` +
+      `fundamentals are too sparse (non-US issuers, ETFs, pre-revenue names) we fall back to the curated-bands ` +
+      `heuristic — a bull/base/bear target multiple from the curated scenario tag — and label the model accordingly. ` +
+      `Every assumption carries a source badge. No machine learning, no forecasts.`,
     notes: [
-      "Bands are illustrative — they describe how a scenario *could* shape up, not where the stock will trade.",
+      "Method is labelled per name: fundamentals-driven, hybrid (some assumptions), or fallback heuristic.",
+      "Estimates are illustrative scenarios — they describe how a case *could* shape up, not where the stock will trade.",
       "Reward/risk = bull case implied return % divided by absolute value of bear case implied return %.",
-      "Required CAGR is the annualised return the bull multiple implies over the horizon — useful as a sanity check.",
-      "Target price/market cap are shown only when a current quote is available; otherwise we expose multiples only.",
+      "Pre-profit names are valued on price-to-sales; profitable names on an earnings (P/E) bridge.",
+      "Source badges show whether each input came from market data, SEC fundamentals, or a TreasuryLens assumption.",
       "This is research, not personalized advice. Do not size positions off these numbers.",
     ],
     classificationBands: [
