@@ -719,6 +719,7 @@ function ScenarioCard({ model }: { model: ScenarioModel }) {
         bull={model.bull.derivation}
         base={model.base.derivation}
         bear={model.bear.derivation}
+        analystEstimates={model.analystEstimates}
       />
       <p className="text-[10px] text-muted-foreground italic">{model.disclaimer}</p>
     </div>

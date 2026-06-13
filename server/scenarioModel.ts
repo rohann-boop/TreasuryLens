@@ -14,9 +14,12 @@
 //   - Reward/risk = bull upside % / |bear downside %|.
 
 import type {
+  AnalystEstimateRow,
+  AnalystEstimates,
   DataConfidence,
   MarketCapBucket,
   RiskLevel,
+  ScenarioAnalystBlock,
   ScenarioCase,
   ScenarioCaseAssumptions,
   ScenarioCaseDerivation,
@@ -274,6 +277,7 @@ function makeCase(
 function buildHeuristicModel(
   pick: StockPick,
   fallbackReason: string | null,
+  analyst: AnalystEstimates | null = null,
 ): ScenarioModel {
   const classification0 = classifyFromPotential(pick.scenarioPotential);
   const band = CLASSIFICATION_BANDS[classification0];
@@ -337,6 +341,10 @@ function buildHeuristicModel(
     `Required CAGR derives from the bull multiple over ${years} years. Reward/risk = bull% / |bear%|.`,
   ].join(" ");
 
+  // On the heuristic path there is no fundamentals bridge to anchor, so analyst
+  // estimates (if any) are surfaced as reference-only context.
+  const analystBlock = buildAnalystBlock(analyst, null);
+
   return {
     horizonYears: years,
     modelType,
@@ -355,6 +363,7 @@ function buildHeuristicModel(
     coverageConfidence: hasPrice ? "low" : "low",
     derivationInputs: buildHeuristicInputs(pick),
     missingInputs: fallbackReason ? ["fundamentals bridge inputs"] : [],
+    analystEstimates: analystBlock,
   };
 }
 
@@ -660,6 +669,10 @@ interface BridgeInputs {
   valuationBasis: "P/E" | "P/S";
   baseMultiple: number; // P/E if profitable, else P/S
   multipleSource: ScenarioSource;
+  // Analyst-estimate-derived near-term revenue CAGR (TTM → forward estimate),
+  // when available. Used to soft-anchor the base-case growth and as a sanity
+  // check, NOT to override the scale-aware caps. Null when no estimate.
+  analystRevenueCagrPct: number | null;
 }
 
 function buildFundamentalsCase(
@@ -679,13 +692,42 @@ function buildFundamentalsCase(
   // fade it toward a bucket/case terminal rate, then clamp the *effective*
   // CAGR by bucket so a mega-cap can't average a small-cap growth rate.
   const anchor = inp.anchorGrowthPct;
+  const analystCagr = inp.analystRevenueCagrPct;
   let cagr: number;
   let cagrSource: ScenarioSource;
   const terminal = TERMINAL_CAGR_BY_BUCKET[bucket][caseKey];
+
+  // Choose the start growth the fade decays from. When an analyst revenue CAGR
+  // is available we blend it with the reported (SEC) growth so consensus
+  // anchors the model without overriding it. Analyst weight is higher in the
+  // base case (it's a near-term consensus number) and lower in the bear case
+  // (analysts rarely model downside). The blended start still passes through
+  // the growth fade and the bucket CAGR caps, so scale-aware constraints (e.g.
+  // mega-cap NVDA) are fully preserved.
+  const ANALYST_WEIGHT: Record<"bear" | "base" | "bull", number> = {
+    bear: 0.25,
+    base: 0.5,
+    bull: 0.4,
+  };
   if (anchor != null && Number.isFinite(anchor)) {
-    const startGrowth = anchor * tilt.cagrMultiplier;
+    let startGrowth = anchor * tilt.cagrMultiplier;
+    if (analystCagr != null && Number.isFinite(analystCagr)) {
+      const w = ANALYST_WEIGHT[caseKey];
+      // Blend the tilted reported start with the (tilt-scaled) analyst CAGR.
+      const analystStart = analystCagr * tilt.cagrMultiplier;
+      startGrowth = startGrowth * (1 - w) + analystStart * w;
+      cagrSource = "analyst-estimate";
+    } else {
+      cagrSource = "sec-fundamentals";
+    }
     cagr = effectiveFadedCagr(startGrowth, terminal, years);
-    cagrSource = "sec-fundamentals";
+  } else if (analystCagr != null && Number.isFinite(analystCagr)) {
+    // No reported growth but an analyst estimate exists: anchor on it directly.
+    const w = ANALYST_WEIGHT[caseKey];
+    const startGrowth =
+      analystCagr * tilt.cagrMultiplier * w + tilt.cagrFloor * (1 - w);
+    cagr = effectiveFadedCagr(startGrowth, terminal, years);
+    cagrSource = "analyst-estimate";
   } else {
     // No reported growth: fade the floor toward terminal too (mild fade).
     cagr = effectiveFadedCagr(tilt.cagrFloor, terminal, years);
@@ -879,7 +921,10 @@ function rationaleForCase(
 
 // Decide whether we have enough to run the fundamentals bridge, and assemble
 // the shared inputs. Returns null when too sparse (caller falls back).
-function buildBridgeInputs(pick: StockPick): { inputs: BridgeInputs; missing: string[] } | null {
+function buildBridgeInputs(
+  pick: StockPick,
+  analyst: AnalystEstimates | null,
+): { inputs: BridgeInputs; missing: string[] } | null {
   const km = pick.keyMetrics ?? null;
   if (!km) return null;
   const price = km.price;
@@ -938,6 +983,31 @@ function buildBridgeInputs(pick: StockPick): { inputs: BridgeInputs; missing: st
   const sharesSource: ScenarioSource =
     km.sharesOutstanding != null ? "sec-fundamentals" : "market-data";
 
+  // Analyst-estimate-derived near-term revenue CAGR. Finnhub estimates are
+  // typically 1-2 years out; we annualise TTM → estimate over the gap in years
+  // (defaulting to 1y when the period is the current/next fiscal year) so the
+  // number is comparable to the reported growth anchor. Sanity-clamped to avoid
+  // a single odd estimate producing a wild CAGR.
+  let analystRevenueCagrPct: number | null = null;
+  if (
+    analyst &&
+    analyst.status === "available" &&
+    analyst.revenueEstimate != null &&
+    Number.isFinite(analyst.revenueEstimate) &&
+    analyst.revenueEstimate > 0 &&
+    revenueTtm > 0
+  ) {
+    const estYear = analyst.revenueEstimateYear;
+    const nowYear = new Date().getUTCFullYear();
+    const yearsOut =
+      estYear != null && estYear > nowYear ? Math.min(estYear - nowYear, 3) : 1;
+    const ratio = analyst.revenueEstimate / revenueTtm;
+    if (ratio > 0) {
+      const cagr = (Math.pow(ratio, 1 / yearsOut) - 1) * 100;
+      analystRevenueCagrPct = clampNum(round(cagr, 1), -40, 120);
+    }
+  }
+
   return {
     inputs: {
       price,
@@ -952,14 +1022,155 @@ function buildBridgeInputs(pick: StockPick): { inputs: BridgeInputs; missing: st
       valuationBasis,
       baseMultiple,
       multipleSource,
+      analystRevenueCagrPct,
     },
     missing,
   };
 }
 
+// Build the analyst-estimate source block for the "How this was derived" UI.
+// Returns null only when no fetch was performed (analyst === undefined). When a
+// fetch produced no usable data we still return a block with status so the UI
+// can show "analyst estimates unavailable" rather than hiding the section.
+//
+// `inp.analystRevenueCagrPct` is the analyst-derived revenue CAGR that actually
+// anchored the bridge (or null on the heuristic path / when no estimate).
+function buildAnalystBlock(
+  analyst: AnalystEstimates | null,
+  inp: BridgeInputs | null,
+): ScenarioAnalystBlock | null {
+  if (!analyst) return null;
+
+  const rows: AnalystEstimateRow[] = [];
+  let anyUsed = false;
+
+  const usedRevenueCagr =
+    inp?.analystRevenueCagrPct != null && Number.isFinite(inp.analystRevenueCagrPct)
+      ? inp.analystRevenueCagrPct
+      : null;
+
+  if (analyst.status === "available") {
+    // Revenue estimate — used to soft-anchor revenue CAGR.
+    if (analyst.revenueEstimate != null) {
+      const used = usedRevenueCagr != null;
+      if (used) anyUsed = true;
+      rows.push({
+        key: "analystRevenue",
+        label: "Analyst revenue estimate",
+        value: analyst.revenueEstimate,
+        unit: "usd",
+        display: fmtUsd(analyst.revenueEstimate),
+        used,
+        note: [
+          analyst.revenuePeriod ? `period ${analyst.revenuePeriod}` : null,
+          analyst.revenueAnalystCount ? `${analyst.revenueAnalystCount} analysts` : null,
+          usedRevenueCagr != null ? `~${usedRevenueCagr}% implied CAGR (soft-anchor)` : null,
+        ]
+          .filter(Boolean)
+          .join(" · ") || undefined,
+      });
+    }
+    // EPS estimate — reference / valuation cross-check only.
+    if (analyst.epsEstimate != null) {
+      rows.push({
+        key: "analystEps",
+        label: "Analyst EPS estimate",
+        value: analyst.epsEstimate,
+        unit: "usd",
+        display: `$${analyst.epsEstimate.toFixed(2)}`,
+        used: false,
+        note: [
+          analyst.epsPeriod ? `period ${analyst.epsPeriod}` : null,
+          analyst.epsAnalystCount ? `${analyst.epsAnalystCount} analysts` : null,
+          "reference / earnings cross-check",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      });
+    }
+    // Price target — reference only; never adopted as bull/base target.
+    if (analyst.priceTarget != null) {
+      const range =
+        analyst.priceTargetLow != null && analyst.priceTargetHigh != null
+          ? ` (range $${analyst.priceTargetLow.toFixed(0)}–$${analyst.priceTargetHigh.toFixed(0)})`
+          : "";
+      rows.push({
+        key: "analystPriceTarget",
+        label: "Analyst price target (mean)",
+        value: analyst.priceTarget,
+        unit: "price",
+        display: `$${analyst.priceTarget.toFixed(2)}${range}`,
+        used: false,
+        note: [
+          analyst.priceTargetAnalystCount ? `${analyst.priceTargetAnalystCount} analysts` : null,
+          analyst.priceTargetAsOf ? `as of ${analyst.priceTargetAsOf}` : null,
+          "reference only — not used as a scenario target",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      });
+    }
+  }
+
+  let message: string;
+  if (analyst.status === "available" && rows.length > 0) {
+    message = anyUsed
+      ? "Analyst estimates anchor the revenue CAGR; EPS and price target are shown for reference."
+      : "Analyst estimates shown for reference. None met the criteria to anchor an assumption.";
+  } else if (analyst.status === "error") {
+    message = analyst.message || "Analyst estimates could not be fetched.";
+  } else {
+    message = analyst.message || "No analyst estimates available for this name.";
+  }
+
+  return {
+    status: analyst.status,
+    source: "finnhub",
+    asOf: analyst.asOf,
+    revenuePeriod: analyst.revenuePeriod,
+    epsPeriod: analyst.epsPeriod,
+    priceTargetAsOf: analyst.priceTargetAsOf,
+    rows,
+    message,
+    anyUsed,
+  };
+}
+
+// A warning when the analyst price target implies a much larger move than the
+// model's own base case — surfaced so the model never silently looks bullish.
+function analystAggressivenessWarning(
+  analyst: AnalystEstimates | null,
+  inp: BridgeInputs,
+  baseTargetPrice: number | null,
+): string | null {
+  if (!analyst || analyst.status !== "available") return null;
+  const warns: string[] = [];
+  if (
+    analyst.priceTarget != null &&
+    inp.price > 0 &&
+    baseTargetPrice != null &&
+    baseTargetPrice > 0
+  ) {
+    const ptUpside = (analyst.priceTarget / inp.price - 1) * 100;
+    const baseUpside = (baseTargetPrice / inp.price - 1) * 100;
+    if (ptUpside - baseUpside > 30) {
+      warns.push(
+        `Analyst price target implies +${round(ptUpside, 0)}% vs the model base case +${round(baseUpside, 0)}% — the Street is more aggressive; target shown for reference only.`,
+      );
+    }
+  }
+  if (inp.analystRevenueCagrPct != null && inp.analystRevenueCagrPct > 40) {
+    warns.push(
+      `Analyst revenue estimate implies ~${round(inp.analystRevenueCagrPct, 0)}% near-term CAGR — an aggressive growth assumption; the model fades and caps it for scale.`,
+    );
+  }
+  return warns.length > 0 ? warns.join(" ") : null;
+}
+
 function buildFundamentalsModel(
   pick: StockPick,
   built: { inputs: BridgeInputs; missing: string[] },
+  analyst: AnalystEstimates | null,
 ): ScenarioModel {
   const classification0 = classifyFromPotential(pick.scenarioPotential);
   const inp = built.inputs;
@@ -1017,6 +1228,11 @@ function buildFundamentalsModel(
     modelWarnings.push(n);
   }
 
+  // Analyst-estimate source block + aggressiveness warning (if any).
+  const analystBlock = buildAnalystBlock(analyst, inp);
+  const aggWarning = analystAggressivenessWarning(analyst, inp, base.outputs.targetPrice);
+  if (aggWarning) modelWarnings.push(aggWarning);
+
   const inputRows: ScenarioDerivationRow[] = [
     priceRow("Current price", inp.price, inp.currency),
     usdRow("TTM revenue", inp.revenueTtm, "sec-fundamentals"),
@@ -1041,6 +1257,19 @@ function buildFundamentalsModel(
     ),
     sharesRow(inp.shares, inp.sharesSource),
   ];
+  // When an analyst estimate anchored the CAGR, surface it as a starting input
+  // with the analyst-estimate badge so provenance is visible at a glance.
+  if (inp.analystRevenueCagrPct != null) {
+    inputRows.push(
+      pctRow(
+        "analystRevenueCagr",
+        "Analyst-implied revenue CAGR",
+        inp.analystRevenueCagrPct,
+        "analyst-estimate",
+        "near-term consensus, soft-anchor",
+      ),
+    );
+  }
 
   const methodology =
     `Fundamentals bridge over a ${years}-year horizon. We start from TTM revenue ` +
@@ -1050,6 +1279,7 @@ function buildFundamentalsModel(
     `multiple (current ${round(inp.baseMultiple, 1)}×, re-rated per case) to an implied equity value, ` +
     `then divided by a dilution-adjusted share count to get a target price. Upside/downside are vs the current price. ` +
     `${isHybrid ? `Hybrid: ${built.missing.join(", ")} used TreasuryLens assumptions. ` : ""}` +
+    `${analystBlock?.anyUsed ? "Analyst revenue consensus soft-anchors the CAGR (faded and scale-capped); EPS and price target are reference-only. " : ""}` +
     `Estimates only — not a forecast.`;
 
   return {
@@ -1070,16 +1300,27 @@ function buildFundamentalsModel(
     coverageConfidence: coverage,
     derivationInputs: inputRows,
     missingInputs: built.missing,
+    analystEstimates: analystBlock,
   };
 }
 
 // Public entry: try the fundamentals bridge; fall back to the curated-bands
 // heuristic when data is too sparse. Backward compatible — same return shape,
 // same top-level fields (bullUpsidePct, base/bear outputs, classification…).
-export function buildScenarioModel(pick: StockPick): ScenarioModel {
+//
+// `analystEstimates` is an optional separate source input. When present and
+// available it soft-anchors the revenue CAGR in the fundamentals bridge and is
+// surfaced as its own block in the derivation UI. It never overrides the
+// scale-aware constraints, and the price target is reference-only. Omitting it
+// preserves the exact prior behaviour (backward compatible).
+export function buildScenarioModel(
+  pick: StockPick,
+  analystEstimates?: AnalystEstimates | null,
+): ScenarioModel {
+  const analyst = analystEstimates ?? null;
   let built: { inputs: BridgeInputs; missing: string[] } | null = null;
   try {
-    built = buildBridgeInputs(pick);
+    built = buildBridgeInputs(pick, analyst);
   } catch {
     built = null;
   }
@@ -1089,12 +1330,12 @@ export function buildScenarioModel(pick: StockPick): ScenarioModel {
     if (!km || km.price == null) reason = "no live price available.";
     else if (km.revenueTtm == null) reason = "no TTM revenue reported (non-US issuer, ETF, or sparse filer).";
     else if (km.sharesOutstanding == null) reason = "no share count available.";
-    return buildHeuristicModel(pick, reason);
+    return buildHeuristicModel(pick, reason, analyst);
   }
   try {
-    return buildFundamentalsModel(pick, built);
+    return buildFundamentalsModel(pick, built, analyst);
   } catch {
-    return buildHeuristicModel(pick, "fundamentals bridge failed to compute.");
+    return buildHeuristicModel(pick, "fundamentals bridge failed to compute.", analyst);
   }
 }
 

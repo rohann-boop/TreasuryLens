@@ -25,6 +25,7 @@ import type {
 import type { AddConvictionIdeaInput } from "@shared/schema";
 import { enrichOne } from "./stockPicks";
 import { buildScenarioModel } from "./scenarioModel";
+import { getAnalystEstimates } from "./analystEstimates";
 import { convictionStore, type CustomConvictionRow } from "./storage";
 import { fetchMassiveTickerDetails } from "./marketData";
 
@@ -1853,9 +1854,15 @@ async function buildResponse(): Promise<ConvictionIdeasResponse> {
         keyMetrics = null;
       }
       const withMetrics: StockPick = { ...base, keyMetrics };
+      const wantsAnalyst =
+        keyMetrics?.revenueTtm != null &&
+        (base.issuerCountry == null || base.issuerCountry === "US");
+      const analystEstimates = wantsAnalyst
+        ? await getAnalystEstimates(base.ticker).catch(() => null)
+        : null;
       let scenarioModel = null;
       try {
-        scenarioModel = buildScenarioModel(withMetrics);
+        scenarioModel = buildScenarioModel(withMetrics, analystEstimates);
       } catch {
         scenarioModel = null;
       }

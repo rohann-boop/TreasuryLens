@@ -746,6 +746,11 @@ export interface ScenarioModel {
   coverageConfidence?: "high" | "medium" | "low";
   derivationInputs?: ScenarioDerivationRow[];
   missingInputs?: string[];
+  // Optional analyst-estimate source block. Present (with an explicit status)
+  // when analyst estimates were attempted for the name; absent on the pure
+  // curated/heuristic path or when no fetch was performed. Estimates anchor or
+  // sanity-check assumptions; the price target is reference-only.
+  analystEstimates?: ScenarioAnalystBlock | null;
 }
 
 export interface StockPick {
@@ -1272,6 +1277,77 @@ export type AddConvictionIdeaInput = z.infer<typeof addConvictionIdeaSchema>;
 // =============================================================================
 
 export type AnalystConsensusStatus = "available" | "unavailable" | "error";
+
+// =============================================================================
+// Analyst estimates — forward-looking consensus figures (revenue, EPS, price
+// target) used as a *separate source input* to the scenario model. Distinct
+// from AnalystConsensus (recommendation trends): these are quantitative
+// estimates that can anchor or sanity-check the fundamentals bridge. Every
+// field is nullable and the block carries an explicit status so the model and
+// UI never fabricate a value when coverage is missing or the credential is
+// absent. NOT a forecast or recommendation.
+// =============================================================================
+
+export type AnalystEstimatesStatus = "available" | "unavailable" | "error";
+
+export interface AnalystEstimates {
+  status: AnalystEstimatesStatus;
+  symbol: string;
+  source: "finnhub";
+  asOf: number; // ms epoch the response was assembled
+  // Forward revenue consensus (USD) and the fiscal period it covers.
+  revenueEstimate: number | null; // USD, mean analyst revenue estimate
+  revenueEstimateYear: number | null; // fiscal year the estimate covers
+  revenuePeriod: string | null; // e.g. "2025" or "2025-12-31"
+  revenueAnalystCount: number | null;
+  // Implied forward revenue CAGR vs TTM revenue, computed by the model when a
+  // revenue anchor exists. Null when not computable. (Filled by scenarioModel.)
+  impliedRevenueCagrPct: number | null;
+  // Forward EPS consensus (USD per share) and its period.
+  epsEstimate: number | null; // USD per share, mean analyst EPS estimate
+  epsEstimateYear: number | null;
+  epsPeriod: string | null;
+  epsAnalystCount: number | null;
+  // Wall-Street price target (mean) and its range, where available.
+  priceTarget: number | null; // mean target price
+  priceTargetHigh: number | null;
+  priceTargetLow: number | null;
+  priceTargetAnalystCount: number | null;
+  priceTargetAsOf: string | null; // provider "lastUpdated" date if present
+  // Human-readable message — always present, especially for non-available cases.
+  message: string;
+}
+
+// One analyst-estimate derivation row for the "How this was derived" UI. Mirrors
+// ScenarioDerivationRow but adds an explicit `used` flag so the UI can show
+// whether an estimate anchored an assumption or is only shown for reference.
+export interface AnalystEstimateRow {
+  key: string;
+  label: string;
+  value: number | null;
+  unit: "pct" | "usd" | "x" | "price" | "shares" | "ratio" | "none";
+  display: string;
+  used: boolean; // true = influenced an assumption; false = reference only
+  note?: string;
+}
+
+// Compact analyst-estimate block attached to a ScenarioModel. Optional so older
+// cached payloads still type-check and the model works with no analyst data.
+export interface ScenarioAnalystBlock {
+  status: AnalystEstimatesStatus;
+  source: "finnhub";
+  asOf: number;
+  // Period labels surfaced as context (e.g. "FY2025").
+  revenuePeriod: string | null;
+  epsPeriod: string | null;
+  priceTargetAsOf: string | null;
+  // The rows the UI renders under the "Analyst estimates" section.
+  rows: AnalystEstimateRow[];
+  // Plain-English summary of how the estimates were (or weren't) used.
+  message: string;
+  // True when at least one estimate actually influenced an assumption.
+  anyUsed: boolean;
+}
 
 export type AnalystConsensusLabel =
   | "Strong Buy"
@@ -2031,6 +2107,10 @@ export interface TradeIdeaLong {
   bullDerivation: ScenarioCaseDerivation | null;
   baseDerivation: ScenarioCaseDerivation | null;
   bearDerivation: ScenarioCaseDerivation | null;
+  // Analyst-estimate source block carried from the scenario model so the Trade
+  // Ideas detail drawer can render the same "Analyst estimates" section. Null
+  // when no analyst data was attached.
+  scenarioAnalystEstimates: ScenarioAnalystBlock | null;
 }
 
 // V1 supported option structures.

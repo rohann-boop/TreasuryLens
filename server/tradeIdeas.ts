@@ -275,6 +275,7 @@ function buildLong(pick: StockPick): TradeIdeaLong {
     bullDerivation: sm?.bull.derivation ?? null,
     baseDerivation: sm?.base.derivation ?? null,
     bearDerivation: sm?.bear.derivation ?? null,
+    scenarioAnalystEstimates: sm?.analystEstimates ?? null,
   };
 }
 

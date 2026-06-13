@@ -651,6 +651,7 @@ function LongDetail({ long }: { long: TradeIdeaLong }) {
         bull={long.bullDerivation}
         base={long.baseDerivation}
         bear={long.bearDerivation}
+        analystEstimates={long.scenarioAnalystEstimates}
       />
 
       <div className="text-[10px] text-muted-foreground leading-relaxed border-t border-border/50 pt-3">

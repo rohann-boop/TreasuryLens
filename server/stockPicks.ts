@@ -28,6 +28,7 @@ import {
 } from "./marketData";
 import { getEquityFundamentals, getSharesOutstanding } from "./secEdgar";
 import { buildScenarioMethodology, buildScenarioModel } from "./scenarioModel";
+import { getAnalystEstimates } from "./analystEstimates";
 
 const THEMES: StockPickThemeInfo[] = [
   {
@@ -4586,7 +4587,17 @@ async function buildResponse(): Promise<StockPicksResponse> {
           fundamentalsHit = true;
         }
         const withMetrics: StockPick = { ...p, keyMetrics: metrics };
-        const scenarioModel = buildScenarioModel(withMetrics);
+        // Fetch analyst estimates only for names where they can meaningfully
+        // inform the bridge (US issuer with reported TTM revenue). The service
+        // is cached and fails gracefully, so a missing credential or uncovered
+        // ticker is a no-op that leaves the model unchanged.
+        const wantsAnalyst =
+          metrics.revenueTtm != null &&
+          (p.issuerCountry == null || p.issuerCountry === "US");
+        const analystEstimates = wantsAnalyst
+          ? await getAnalystEstimates(p.ticker).catch(() => null)
+          : null;
+        const scenarioModel = buildScenarioModel(withMetrics, analystEstimates);
         // Keep `scenarioPotential` aligned with classification where they
         // diverge so badges and labels remain consistent.
         const aligned: StockPick = {

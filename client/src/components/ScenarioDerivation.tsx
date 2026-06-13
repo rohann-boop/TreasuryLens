@@ -8,6 +8,7 @@
 import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type {
+  ScenarioAnalystBlock,
   ScenarioCaseDerivation,
   ScenarioDerivationRow,
   ScenarioMethod,
@@ -149,6 +150,80 @@ function CaseBridge({
   );
 }
 
+// Analyst-estimates section. Shows revenue/EPS/price-target estimate rows with
+// a per-row "used" vs "reference" badge, the analyst source badge, and an
+// explicit unavailable/error state so the UI never implies coverage that isn't
+// there. Distinct from the SEC/market/assumption rows above it.
+function AnalystSection({ analyst }: { analyst: ScenarioAnalystBlock }) {
+  const available = analyst.status === "available" && analyst.rows.length > 0;
+  return (
+    <div data-testid="analyst-estimates-section">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+          Analyst estimates
+        </span>
+        <span className="flex items-center gap-1">
+          <SourceBadge source="analyst-estimate" />
+          {!available && (
+            <span
+              className="rounded-sm bg-muted px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-muted-foreground"
+              title={analyst.message}
+              data-testid="analyst-estimates-unavailable"
+            >
+              {analyst.status === "error" ? "Error" : "Unavailable"}
+            </span>
+          )}
+        </span>
+      </div>
+
+      {available ? (
+        <>
+          {analyst.rows.map((r) => (
+            <div
+              key={r.key}
+              className="flex items-center justify-between gap-2 py-1 border-b border-border/40 last:border-0"
+              data-testid={`analyst-row-${r.key}`}
+            >
+              <span className="text-[11px] text-muted-foreground">
+                {r.label}
+                {r.note ? (
+                  <span className="text-[10px] text-muted-foreground/70"> · {r.note}</span>
+                ) : null}
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="text-[11px] font-medium tabular-nums text-foreground">
+                  {r.display}
+                </span>
+                <span
+                  className={`inline-block rounded-sm px-1 py-px text-[9px] font-semibold uppercase tracking-wide ${
+                    r.used
+                      ? "bg-violet-500/15 text-violet-500"
+                      : "bg-muted text-muted-foreground"
+                  }`}
+                  title={
+                    r.used
+                      ? "This estimate anchored a model assumption"
+                      : "Shown for reference only — not used as a model target"
+                  }
+                >
+                  {r.used ? "Used" : "Reference"}
+                </span>
+              </span>
+            </div>
+          ))}
+          <p className="mt-1 text-[10px] text-muted-foreground/80 italic">
+            {analyst.message}
+          </p>
+        </>
+      ) : (
+        <p className="text-[11px] text-muted-foreground italic" data-testid="analyst-estimates-message">
+          {analyst.message}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export interface ScenarioDerivationProps {
   method: ScenarioMethod | null | undefined;
   coverage?: "high" | "medium" | "low" | null;
@@ -160,6 +235,7 @@ export interface ScenarioDerivationProps {
   bull?: ScenarioCaseDerivation | null;
   base?: ScenarioCaseDerivation | null;
   bear?: ScenarioCaseDerivation | null;
+  analystEstimates?: ScenarioAnalystBlock | null;
   defaultOpen?: boolean;
 }
 
@@ -178,6 +254,7 @@ export function ScenarioDerivation(props: ScenarioDerivationProps) {
     bull,
     base,
     bear,
+    analystEstimates,
   } = props;
 
   const hasBridge = Boolean(bull || base || bear);
@@ -225,6 +302,8 @@ export function ScenarioDerivation(props: ScenarioDerivationProps) {
               ))}
             </div>
           )}
+
+          {analystEstimates && <AnalystSection analyst={analystEstimates} />}
 
           {hasBridge ? (
             <div className="grid gap-3 sm:grid-cols-3">
