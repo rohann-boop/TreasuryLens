@@ -24,11 +24,15 @@
 //      at most.
 
 import type {
+  AnalystEstimates,
   EquityFundamentals,
   EquityRevenueResponse,
   FundamentalValue,
+  RevenueBridge,
+  RevenueBridgeYear,
   RevenuePoint,
 } from "@shared/schema";
+import { getAnalystEstimates } from "./analystEstimates";
 
 const SEC_USER_AGENT = "TreasuryLens rohanr@me.com";
 const HEADERS: Record<string, string> = {
@@ -824,6 +828,196 @@ function collectRevenueEntries(
   return { entries: merged, unit };
 }
 
+// =============================================================================
+// Revenue bridge — a deterministic, year-by-year revenue walk built from three
+// labelled sources, in priority order:
+//   1. SEC actuals      — reported annual revenue (10-K) for the recent past.
+//   2. Analyst estimates — forward annual consensus where a provider returns it
+//                          (anchors the near-term FY2026E/FY2027E years).
+//   3. TreasuryLens model — a growth-fade extrapolation that fills the horizon
+//                          once analyst coverage runs out. No LLM; the fade is a
+//                          fixed template so it is cheap and reproducible.
+// Every year carries a `source` badge so the UI never blurs the line between a
+// reported fact, a consensus number and a TreasuryLens assumption.
+//
+// The fade decays the most recent observed YoY growth toward a terminal rate
+// scaled by company size (bigger companies revert toward GDP-plus). It mirrors
+// the scenario model's intent but is kept self-contained here so the revenue
+// panel does not depend on the heavier scenario pipeline.
+// =============================================================================
+
+// Number of forward years (analyst + model) we aim to show beyond the last
+// reported actual, and how many historical actuals to include for context.
+const BRIDGE_FORWARD_YEARS = 4;
+const BRIDGE_ACTUAL_YEARS = 3;
+
+// Terminal YoY growth the model fade decays toward, by revenue scale. Larger
+// businesses mean-revert lower. Picked deterministically from latest revenue.
+function terminalGrowthForScale(latestRevenue: number): number {
+  const b = latestRevenue;
+  if (b >= 200e9) return 5; // mega
+  if (b >= 50e9) return 7; // large
+  if (b >= 10e9) return 9; // mid
+  if (b >= 1e9) return 11; // small
+  return 13; // micro
+}
+
+function clampGrowth(pct: number): number {
+  // Keep model growth in a sane band so a single noisy print can't explode the
+  // walk. Bounds are intentionally wide; the fade does the real shaping.
+  return Math.max(-25, Math.min(60, pct));
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function yoyPct(curr: number | null, prev: number | null): number | null {
+  if (curr == null || prev == null || !Number.isFinite(curr) || !Number.isFinite(prev) || prev === 0) {
+    return null;
+  }
+  return ((curr - prev) / Math.abs(prev)) * 100;
+}
+
+function buildRevenueBridge(
+  annual: RevenuePoint[],
+  estimates: AnalystEstimates,
+): RevenueBridge {
+  // Actuals: the most recent reported fiscal years, oldest-first. We need at
+  // least one to seed the bridge; without it there is nothing to walk forward.
+  const actuals = annual
+    .filter((p) => p.value != null && Number.isFinite(p.value))
+    .slice(-Math.max(BRIDGE_ACTUAL_YEARS, 2));
+  if (actuals.length === 0) {
+    return {
+      status: "unavailable",
+      years: [],
+      estimateSource: null,
+      estimateStatus: estimates.status ?? null,
+      modelNote: "",
+      note: "A revenue bridge needs at least one reported annual figure from SEC filings.",
+    };
+  }
+
+  const years: RevenueBridgeYear[] = [];
+  for (let i = 0; i < actuals.length; i++) {
+    const p = actuals[i];
+    const fy = p.fy ?? Number(p.end.slice(0, 4));
+    const prev = i > 0 ? actuals[i - 1].value : null;
+    years.push({
+      fy,
+      label: `FY${fy}`,
+      value: p.value,
+      growthPct: i > 0 ? round2(yoyPct(p.value, prev) ?? NaN) : null,
+      source: "sec-actual",
+      note: p.form ? `Reported in ${p.form}` : "SEC reported actual",
+    });
+  }
+
+  const lastActual = actuals[actuals.length - 1];
+  const lastActualFy = lastActual.fy ?? Number(lastActual.end.slice(0, 4));
+  let prevValue = lastActual.value as number;
+  let lastFilledFy = lastActualFy;
+
+  // Analyst-estimate years: forward annual consensus rows for fiscal years
+  // strictly after the last reported actual. These anchor the near-term walk.
+  const analystYears =
+    estimates.status === "available"
+      ? [...(estimates.revenueByYear ?? [])]
+          .filter((r) => r.fy > lastActualFy && r.value > 0)
+          .sort((a, b) => a.fy - b.fy)
+      : [];
+  let estimateSource: string | null = null;
+  for (const r of analystYears) {
+    if (years.length - actuals.length >= BRIDGE_FORWARD_YEARS) break;
+    // Fill any gap years between the last filled year and this estimate with a
+    // straight-line interpolation labelled as model, so the walk stays
+    // contiguous rather than skipping fiscal years.
+    for (let gapFy = lastFilledFy + 1; gapFy < r.fy; gapFy++) {
+      if (years.length - actuals.length >= BRIDGE_FORWARD_YEARS) break;
+      const steps = r.fy - lastFilledFy;
+      const idx = gapFy - lastFilledFy;
+      const interp = prevValue + ((r.value - prevValue) * idx) / steps;
+      years.push({
+        fy: gapFy,
+        label: `FY${gapFy}E`,
+        value: round2(interp),
+        growthPct: round2(yoyPct(interp, prevValue) ?? NaN),
+        source: "treasurylens-model",
+        note: "Interpolated between reported and consensus years",
+      });
+      prevValue = interp;
+    }
+    if (years.length - actuals.length >= BRIDGE_FORWARD_YEARS) break;
+    estimateSource = estimates.source;
+    years.push({
+      fy: r.fy,
+      label: `FY${r.fy}E`,
+      value: r.value,
+      growthPct: round2(yoyPct(r.value, prevValue) ?? NaN),
+      source: "analyst-estimate",
+      analystCount: r.analystCount,
+      note:
+        r.analystCount != null
+          ? `Consensus of ${r.analystCount} analyst${r.analystCount === 1 ? "" : "s"}`
+          : "Analyst consensus estimate",
+    });
+    prevValue = r.value;
+    lastFilledFy = r.fy;
+  }
+
+  // TreasuryLens model years: extend with a growth fade until we reach the
+  // forward-year target. The fade starts from the most recent realised YoY
+  // growth (analyst if present, else the last actual's YoY) and decays toward a
+  // size-scaled terminal rate.
+  const forwardCount = years.length - actuals.length;
+  if (forwardCount < BRIDGE_FORWARD_YEARS) {
+    // Seed growth: the YoY of the last filled year, else the last actual YoY.
+    let startGrowth =
+      years[years.length - 1].growthPct ??
+      yoyPct(lastActual.value, actuals.length >= 2 ? actuals[actuals.length - 2].value : null) ??
+      terminalGrowthForScale(prevValue);
+    startGrowth = clampGrowth(startGrowth);
+    const terminal = terminalGrowthForScale(prevValue);
+    const remaining = BRIDGE_FORWARD_YEARS - forwardCount;
+    for (let k = 1; k <= remaining; k++) {
+      // Linear fade from start → terminal across the remaining model years.
+      const t = remaining > 1 ? (k - 1) / (remaining - 1) : 1;
+      const g = clampGrowth(startGrowth + (terminal - startGrowth) * t);
+      const fy = lastFilledFy + 1;
+      const value = prevValue * (1 + g / 100);
+      years.push({
+        fy,
+        label: `FY${fy}E`,
+        value: round2(value),
+        growthPct: round2(g),
+        source: "treasurylens-model",
+        note: "TreasuryLens growth-fade model (no analyst coverage)",
+      });
+      prevValue = value;
+      lastFilledFy = fy;
+    }
+  }
+
+  const hasAnalyst = years.some((y) => y.source === "analyst-estimate");
+  const hasModel = years.some((y) => y.source === "treasurylens-model");
+  const modelNote = hasModel
+    ? "TreasuryLens model years fade the most recent revenue growth toward a size-scaled terminal rate; they are assumptions, not forecasts."
+    : "";
+  const note = hasAnalyst
+    ? "Bridge anchors near-term years on analyst revenue consensus; later years are TreasuryLens model assumptions."
+    : "No analyst revenue consensus was available; forward years are TreasuryLens model assumptions only.";
+
+  return {
+    status: "available",
+    years,
+    estimateSource,
+    estimateStatus: estimates.status ?? null,
+    modelNote,
+    note,
+  };
+}
+
 export async function getEquityRevenue(
   ticker: string,
 ): Promise<EquityRevenueResponse> {
@@ -931,6 +1125,40 @@ export async function getEquityRevenue(
     if (prev !== 0) annualGrowthPct = ((curr - prev) / Math.abs(prev)) * 100;
   }
 
+  // Build the year-by-year revenue bridge. Analyst estimates are fetched here
+  // (their own 6h cache keeps this cheap and avoids a fan-out on ticker
+  // switches); they degrade cleanly to a model-only bridge when unavailable or
+  // not entitled. A provider failure must not break the historical panel, so we
+  // fall back to empty estimates on error.
+  let estimates: AnalystEstimates;
+  try {
+    estimates = await getAnalystEstimates(t);
+  } catch {
+    estimates = {
+      status: "error",
+      symbol: t,
+      source: "finnhub",
+      asOf: now,
+      revenueEstimate: null,
+      revenueEstimateYear: null,
+      revenuePeriod: null,
+      revenueAnalystCount: null,
+      revenueByYear: [],
+      impliedRevenueCagrPct: null,
+      epsEstimate: null,
+      epsEstimateYear: null,
+      epsPeriod: null,
+      epsAnalystCount: null,
+      priceTarget: null,
+      priceTargetHigh: null,
+      priceTargetLow: null,
+      priceTargetAnalystCount: null,
+      priceTargetAsOf: null,
+      message: "Analyst estimates could not be fetched.",
+    };
+  }
+  const bridge = buildRevenueBridge(annual, estimates);
+
   const out: EquityRevenueResponse = {
     ticker: t,
     status: "available",
@@ -947,11 +1175,21 @@ export async function getEquityRevenue(
     asOf: now,
     note: "Historical revenue from SEC EDGAR companyfacts (annual from 10-K, quarterly from 10-Q). TTM is the sum of the last four reported quarters when available.",
     projections: {
-      status: "unavailable",
-      source: null,
-      points: [],
-      note: "Revenue projections unavailable with current free data sources. Forward estimates require a paid provider; the API shape is ready to populate when one is added.",
+      status: bridge.years.some((y) => y.source === "analyst-estimate")
+        ? "available"
+        : "unavailable",
+      source: bridge.estimateSource,
+      points: bridge.years
+        .filter((y) => y.source === "analyst-estimate" && y.value != null)
+        .map((y) => ({
+          fy: y.fy,
+          label: y.label,
+          value: y.value as number,
+          source: bridge.estimateSource ?? "analyst",
+        })),
+      note: bridge.note,
     },
+    bridge,
   };
   revenueCache.set(t, { at: now, data: out });
   return out;

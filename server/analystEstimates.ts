@@ -15,8 +15,20 @@
 // /stock/eps-estimate and /stock/price-target are premium on some plans. We
 // attempt them and treat a 402/403 as "unavailable on this tier" — the app
 // continues to work exactly as before when they are not entitled.
+//
+// Provider interface note: `getAnalystEstimates(ticker) => Promise<AnalystEstimates>`
+// is the only contract downstream code (scenarioModel, the secEdgar revenue
+// bridge, and the Revenue Intelligence UI) depends on. A richer paid provider
+// (e.g. Visible Alpha, FactSet, Refinitiv) can be added by implementing the same
+// signature and populating `revenueByYear` / the scalar estimate fields — the
+// `status`/`message` degradation contract and the UI stay unchanged. Do NOT
+// assume any premium entitlement here; the free tier remains the default.
 
-import type { AnalystEstimates, AnalystEstimatesStatus } from "@shared/schema";
+import type {
+  AnalystEstimates,
+  AnalystEstimatesStatus,
+  AnalystRevenueYear,
+} from "@shared/schema";
 import { getFinnhubJson, hasFinnhubCredential } from "./finnhubClient";
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6h — estimates update slowly
@@ -34,6 +46,7 @@ function emptyEstimates(symbol: string): AnalystEstimates {
     revenueEstimateYear: null,
     revenuePeriod: null,
     revenueAnalystCount: null,
+    revenueByYear: [],
     impliedRevenueCagrPct: null,
     epsEstimate: null,
     epsEstimateYear: null,
@@ -103,9 +116,30 @@ async function fetchRevenueEstimate(
   if (res.kind === "premium") return "premium";
   if (res.kind === "ok") {
     const data = (res.json as { data?: EstimateRow[] })?.data ?? [];
+    // Collect every forward annual row (current year onward) so the revenue
+    // bridge can anchor several near-term years from consensus, not just one.
+    // revenueAvg is in millions of USD on Finnhub.
+    const currentYear = new Date().getUTCFullYear();
+    const byYear: AnalystRevenueYear[] = [];
+    const seenFy = new Set<number>();
+    for (const r of data) {
+      const fy = yearFromPeriod(r.period);
+      const revM = numOrNull(r.revenueAvg);
+      if (fy == null || revM == null || fy < currentYear) continue;
+      if (seenFy.has(fy)) continue;
+      seenFy.add(fy);
+      byYear.push({
+        fy,
+        period: typeof r.period === "string" ? r.period : String(fy),
+        value: revM * 1e6,
+        analystCount: numOrNull(r.numberAnalysts),
+      });
+    }
+    byYear.sort((a, b) => a.fy - b.fy);
+    out.revenueByYear = byYear;
+
     const row = pickForwardRow(data);
     if (row) {
-      // revenueAvg is in millions of USD on Finnhub.
       const revM = numOrNull(row.revenueAvg);
       out.revenueEstimate = revM != null ? revM * 1e6 : null;
       out.revenuePeriod = typeof row.period === "string" ? row.period : null;

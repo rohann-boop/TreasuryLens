@@ -22,6 +22,8 @@ import type {
   ConvictionRole,
   ConvictionRoleInfo,
   EquityRevenueResponse,
+  RevenueBridgeSource,
+  RevenueBridgeYear,
   ScenarioModel,
 } from "@shared/schema";
 import { CONVICTION_CHART_RANGES } from "@shared/schema";
@@ -138,6 +140,110 @@ const REVIEW_LABEL: Record<string, string> = {
 function perfTone(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "text-muted-foreground";
   return v >= 0 ? "text-pos" : "text-neg";
+}
+
+// Deterministic, template-driven research summary for the selected ticker.
+// Built entirely from the already-loaded idea fields (scenario model,
+// classification, key metrics) so it renders the instant a ticker is clicked —
+// no LLM call and no extra network request. Framed as model/research context,
+// never as a prediction or recommendation. Returns 2-3 short sentences, or a
+// graceful pending line when the idea is too sparse to summarise.
+function buildTickerNarrative(idea: ConvictionIdea): {
+  sentences: string[];
+  pending: boolean;
+} {
+  const name = idea.companyName && idea.companyName !== idea.ticker
+    ? idea.companyName
+    : idea.ticker;
+  const theme = idea.themes?.[0] ?? idea.sectionLabel ?? null;
+  const sm = idea.scenarioModel ?? null;
+  const km = idea.keyMetrics ?? null;
+
+  const sentences: string[] = [];
+
+  // Sentence 1 — what it is and how the model frames it.
+  const lead = theme
+    ? `${idea.ticker} (${name}) sits in the ${theme} theme`
+    : `${idea.ticker} (${name})`;
+  if (sm) {
+    sentences.push(
+      `${lead}; TreasuryLens classifies it as a ${sm.classification} idea over a ${sm.horizonYears}-year horizon.`,
+    );
+  } else {
+    sentences.push(`${lead}.`);
+  }
+
+  // Sentence 2 — scenario band (base / bull / bear) with explicit framing.
+  if (sm) {
+    const base = sm.base?.outputs?.impliedReturnPct;
+    const bull = sm.bullUpsidePct;
+    const bear = sm.bearDownsidePct;
+    const parts: string[] = [];
+    if (base != null && Number.isFinite(base)) parts.push(`base ${fmtPct(base, 0)}`);
+    if (bull != null && Number.isFinite(bull)) parts.push(`bull ${fmtPct(bull, 0)}`);
+    if (bear != null && Number.isFinite(bear)) parts.push(`bear ${fmtPct(bear, 0)}`);
+    if (parts.length > 0) {
+      const conf = sm.coverageConfidence ?? sm.modelConfidence;
+      sentences.push(
+        `The hypothetical scenario model spans ${parts.join(" / ")} implied return (${conf ?? "approximate"} data coverage).`,
+      );
+    }
+  }
+
+  // Sentence 3 — revenue growth context where available, else outcome framing.
+  const rev = km?.revenueGrowth;
+  if (rev != null && Number.isFinite(rev)) {
+    const dir = rev >= 0 ? "growing" : "contracting";
+    sentences.push(
+      `Reported revenue is ${dir} about ${fmtPct(rev, 0)} year-over-year; ${idea.targetOutcome.toLowerCase()}.`,
+    );
+  } else if (idea.targetOutcome) {
+    sentences.push(`Target framing: ${idea.targetOutcome}.`);
+  }
+
+  // Sparse idea (e.g. freshly added custom ticker with no scenario/metrics).
+  if (!sm && !km && idea.thesisPending) {
+    return {
+      sentences: [
+        `${idea.ticker} (${name}) was just added; market data, scenario model and analyst context load automatically. A fuller research summary will appear once that data resolves.`,
+      ],
+      pending: true,
+    };
+  }
+
+  return { sentences, pending: false };
+}
+
+// The research-context narrative card. Renders at the top of the detail pane,
+// immediately under the snapshot, so the model's read on the ticker is the
+// first prose a user sees on click. Deterministic; no network call.
+function TickerNarrative({ idea }: { idea: ConvictionIdea }) {
+  const { sentences, pending } = buildTickerNarrative(idea);
+  if (sentences.length === 0) return null;
+  return (
+    <div
+      className="rounded-md border border-border/70 bg-card/40 p-3 space-y-1.5"
+      data-testid="idea-narrative"
+    >
+      <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <Sparkles className="h-3.5 w-3.5 text-primary/80" aria-hidden />
+        Research summary
+        <span className="ml-1 rounded-sm bg-muted px-1 py-px text-[9px] font-medium normal-case tracking-normal text-muted-foreground">
+          {pending ? "Pending" : "Model context"}
+        </span>
+      </div>
+      <p
+        className="text-sm leading-relaxed text-foreground/90"
+        data-testid="idea-narrative-text"
+      >
+        {sentences.join(" ")}
+      </p>
+      <p className="text-[10px] text-muted-foreground italic">
+        Deterministic summary of model inputs — not a prediction, target, or
+        recommendation.
+      </p>
+    </div>
+  );
 }
 
 function MetricCard({
@@ -525,7 +631,90 @@ function RevenueHeadline({ ticker }: { ticker: string }) {
   );
 }
 
-function RevenuePanel({ ticker }: { ticker: string }) {
+// Per-row provenance badge for the revenue bridge. Light/dark friendly; uses
+// theme tokens so the four sources are visually distinct without hard-coded
+// colors. Labels are deliberately short to fit the table cell.
+const BRIDGE_SOURCE_META: Record<
+  RevenueBridgeSource,
+  { label: string; cls: string }
+> = {
+  "sec-actual": {
+    label: "SEC actual",
+    cls: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
+  },
+  "analyst-estimate": {
+    label: "Analyst est.",
+    cls: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30",
+  },
+  "treasurylens-model": {
+    label: "TL model",
+    cls: "bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/30",
+  },
+  unavailable: {
+    label: "Unavailable",
+    cls: "bg-muted text-muted-foreground border-border/60",
+  },
+};
+
+function BridgeSourceBadge({
+  source,
+  analystCount,
+}: {
+  source: RevenueBridgeSource;
+  analystCount?: number | null;
+}) {
+  const meta = BRIDGE_SOURCE_META[source] ?? BRIDGE_SOURCE_META.unavailable;
+  return (
+    <span
+      className={`inline-flex items-center rounded-sm border px-1 py-px text-[9px] font-medium ${meta.cls}`}
+      data-testid={`bridge-source-${source}`}
+    >
+      {meta.label}
+      {source === "analyst-estimate" && analystCount != null && analystCount > 0
+        ? ` · ${analystCount}`
+        : ""}
+    </span>
+  );
+}
+
+// A compact KPI card for the Revenue Intelligence header strip. Renders a
+// transparent "—" when the value is unavailable rather than fabricating one.
+function RevenueKpi({
+  label,
+  value,
+  sub,
+  tone,
+  testId,
+}: {
+  label: string;
+  value: string;
+  sub?: string | null;
+  tone?: string;
+  testId: string;
+}) {
+  return (
+    <div
+      className="rounded border border-border/60 bg-background/40 px-2 py-2"
+      data-testid={testId}
+    >
+      <div className="text-[9px] uppercase tracking-wide text-muted-foreground">
+        {label}
+      </div>
+      <div className={`text-sm font-semibold tabular-nums ${tone ?? "text-foreground"}`}>
+        {value}
+      </div>
+      {sub && <div className="text-[10px] text-muted-foreground">{sub}</div>}
+    </div>
+  );
+}
+
+function RevenuePanel({
+  ticker,
+  keyMetrics,
+}: {
+  ticker: string;
+  keyMetrics?: ConvictionIdea["keyMetrics"] | null;
+}) {
   const query = useQuery<EquityRevenueResponse>({
     queryKey: ["/api/conviction-ideas/revenue", ticker],
     enabled: !!ticker,
@@ -536,35 +725,53 @@ function RevenuePanel({ ticker }: { ticker: string }) {
   const quarterly = data?.quarterly ?? [];
   const hasSeries = annual.length > 0 || quarterly.length > 0;
   const available = data?.status === "available" && hasSeries;
+  const bridge = data?.bridge;
+
+  // Latest reported annual revenue (annual is ascending → last is newest).
+  const latestAnnual = annual.length > 0 ? annual[annual.length - 1] : null;
+
+  // Top growth year across the bridge — the highest YoY growth row, used as the
+  // "growth driver" KPI when no segment-level driver is available. Honest: it is
+  // labelled as the fastest-growth year, not a fabricated segment.
+  const topGrowthYear = useMemo(() => {
+    if (!bridge || bridge.years.length === 0) return null;
+    let best: RevenueBridgeYear | null = null;
+    for (const y of bridge.years) {
+      if (y.growthPct == null) continue;
+      if (best == null || (best.growthPct ?? -Infinity) < y.growthPct) best = y;
+    }
+    return best;
+  }, [bridge]);
+
+  // Build a tidy narrative summary sentence for the panel from resolved data.
+  const revNarrative = useMemo(() => {
+    if (!available || !data) return null;
+    const parts: string[] = [];
+    if (latestAnnual)
+      parts.push(
+        `${data.entityName ?? ticker} reported ${fmtCompactCurrency(latestAnnual.value, currency)} in ${latestAnnual.label} revenue`,
+      );
+    if (data.annualGrowthPct != null)
+      parts.push(
+        `${data.annualGrowthPct >= 0 ? "up" : "down"} ${fmtPct(Math.abs(data.annualGrowthPct), 0)} YoY`,
+      );
+    let lead = parts.join(", ");
+    if (lead) lead += ".";
+    const fwd =
+      bridge && bridge.years.some((y) => y.source === "analyst-estimate")
+        ? ` Forward years blend analyst consensus (${bridge.estimateSource ?? "estimate"}) with a TreasuryLens growth-fade model.`
+        : bridge && bridge.years.some((y) => y.source === "treasurylens-model")
+          ? " Forward years are TreasuryLens model estimates (no analyst consensus available)."
+          : "";
+    return (lead + fwd).trim() || null;
+  }, [available, data, latestAnnual, currency, ticker, bridge]);
 
   return (
     <div className="space-y-3" data-testid="idea-revenue-card">
-      {available && (
-        <div className="flex items-center justify-end" data-testid="revenue-ttm">
-          <div className="text-[11px] text-muted-foreground">
-            TTM:{" "}
-            <span className="font-semibold text-foreground">
-              {data?.ttmRevenue != null ? fmtCompactCurrency(data.ttmRevenue, currency) : "—"}
-            </span>
-            {data?.ttmIsAnnualFallback && data?.ttmRevenue != null && (
-              <span className="ml-1 text-muted-foreground">(latest FY)</span>
-            )}
-            {data?.annualGrowthPct != null && (
-              <span className={`ml-2 ${perfTone(data.annualGrowthPct)}`}>
-                YoY {fmtPct(data.annualGrowthPct, 0)}
-              </span>
-            )}
-          </div>
-        </div>
-      )}
-
       {query.isLoading ? (
-        <Skeleton className="h-[140px] rounded-md" data-testid="revenue-loading" />
+        <Skeleton className="h-[160px] rounded-md" data-testid="revenue-loading" />
       ) : query.isError ? (
-        <div
-          className="text-xs text-muted-foreground"
-          data-testid="revenue-error"
-        >
+        <div className="text-xs text-muted-foreground" data-testid="revenue-error">
           Revenue unavailable: {(query.error as Error)?.message ?? "unknown"}
         </div>
       ) : !available ? (
@@ -580,13 +787,79 @@ function RevenuePanel({ ticker }: { ticker: string }) {
         </div>
       ) : (
         <div className="space-y-3" data-testid="revenue-body">
+          {/* Summary sentence */}
+          {revNarrative && (
+            <p
+              className="text-xs leading-relaxed text-foreground/90"
+              data-testid="revenue-narrative"
+            >
+              {revNarrative}
+            </p>
+          )}
+
+          {/* KPI cards */}
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" data-testid="revenue-kpis">
+            <RevenueKpi
+              label="Latest FY rev."
+              value={
+                latestAnnual ? fmtCompactCurrency(latestAnnual.value, currency) : "—"
+              }
+              sub={latestAnnual?.label ?? null}
+              testId="kpi-latest-annual"
+            />
+            <RevenueKpi
+              label={data?.ttmIsAnnualFallback ? "Revenue (FY)" : "TTM rev."}
+              value={
+                data?.ttmRevenue != null
+                  ? fmtCompactCurrency(data.ttmRevenue, currency)
+                  : "—"
+              }
+              sub={
+                data?.annualGrowthPct != null
+                  ? `YoY ${fmtPct(data.annualGrowthPct, 0)}`
+                  : null
+              }
+              tone={data?.annualGrowthPct != null ? perfTone(data.annualGrowthPct) : undefined}
+              testId="kpi-ttm"
+            />
+            <RevenueKpi
+              label="Op. margin"
+              value={
+                keyMetrics?.operatingMargin != null
+                  ? fmtPct(keyMetrics.operatingMargin, 0)
+                  : "—"
+              }
+              sub={
+                keyMetrics?.operatingIncomeTtm != null
+                  ? fmtCompactCurrency(keyMetrics.operatingIncomeTtm, currency)
+                  : keyMetrics?.operatingMargin == null
+                    ? "unavailable"
+                    : null
+              }
+              testId="kpi-op-margin"
+            />
+            <RevenueKpi
+              label="Fastest growth yr"
+              value={
+                topGrowthYear && topGrowthYear.growthPct != null
+                  ? fmtPct(topGrowthYear.growthPct, 0)
+                  : "—"
+              }
+              sub={topGrowthYear?.label ?? "unavailable"}
+              tone={
+                topGrowthYear?.growthPct != null
+                  ? perfTone(topGrowthYear.growthPct)
+                  : undefined
+              }
+              testId="kpi-top-driver"
+            />
+          </div>
+
+          {/* Annual revenue chart (actual reported series). */}
           {annual.length > 0 && (
             <div className="h-[140px]" data-testid="revenue-chart">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={annual}
-                  margin={{ top: 6, right: 8, left: 4, bottom: 0 }}
-                >
+                <BarChart data={annual} margin={{ top: 6, right: 8, left: 4, bottom: 0 }}>
                   <CartesianGrid
                     stroke="hsl(var(--border))"
                     strokeOpacity={0.4}
@@ -627,56 +900,114 @@ function RevenuePanel({ ticker }: { ticker: string }) {
             </div>
           )}
 
-          {quarterly.length > 0 && (
-            <div className="overflow-x-auto" data-testid="revenue-table">
-              <table className="w-full text-[11px]">
-                <thead>
-                  <tr className="text-muted-foreground">
-                    <th className="text-left font-medium py-1 pr-2">Quarter</th>
-                    <th className="text-right font-medium py-1">Revenue</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...quarterly].reverse().map((p) => (
-                    <tr
-                      key={p.end}
-                      className="border-t border-border/50"
-                      data-testid={`revenue-row-${p.end}`}
-                    >
-                      <td className="py-1 pr-2 text-foreground/90">{p.label}</td>
-                      <td className="py-1 text-right font-medium text-foreground">
-                        {fmtCompactCurrency(p.value, currency)}
-                      </td>
+          {/* Year-by-year revenue bridge: actuals → analyst estimates → model,
+              with a source badge and YoY growth on every row. */}
+          {bridge && bridge.status === "available" && bridge.years.length > 0 ? (
+            <div className="space-y-1" data-testid="revenue-bridge">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                Revenue bridge
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="text-muted-foreground">
+                      <th className="text-left font-medium py-1 pr-2">Year</th>
+                      <th className="text-right font-medium py-1 pr-2">Revenue</th>
+                      <th className="text-right font-medium py-1 pr-2">YoY</th>
+                      <th className="text-right font-medium py-1">Source</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {bridge.years.map((y, i) => (
+                      <tr
+                        key={`${y.fy}-${y.source}-${i}`}
+                        className="border-t border-border/50"
+                        data-testid={`bridge-row-${y.fy}-${i}`}
+                      >
+                        <td className="py-1 pr-2 text-foreground/90">{y.label}</td>
+                        <td className="py-1 pr-2 text-right font-medium text-foreground tabular-nums">
+                          {y.value != null ? fmtCompactCurrency(y.value, currency) : "—"}
+                        </td>
+                        <td
+                          className={`py-1 pr-2 text-right tabular-nums ${y.growthPct != null ? perfTone(y.growthPct) : "text-muted-foreground"}`}
+                        >
+                          {y.growthPct != null ? fmtPct(y.growthPct, 0, true) : "—"}
+                        </td>
+                        <td className="py-1 text-right">
+                          <BridgeSourceBadge
+                            source={y.source}
+                            analystCount={y.analystCount}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {bridge.modelNote && (
+                <p className="text-[10px] text-muted-foreground italic" data-testid="bridge-model-note">
+                  {bridge.modelNote}
+                </p>
+              )}
+            </div>
+          ) : (
+            <div
+              className="rounded border border-dashed border-border/60 bg-background/30 px-3 py-2 text-[11px] text-muted-foreground"
+              data-testid="revenue-bridge-unavailable"
+            >
+              <span className="font-semibold text-foreground/90">Forward bridge:</span>{" "}
+              {bridge?.note ??
+                data?.projections?.note ??
+                "Forward revenue bridge unavailable with current data sources."}
             </div>
           )}
+
+          {/* Quarterly detail (reported). */}
+          {quarterly.length > 0 && (
+            <details className="group" data-testid="revenue-quarterly">
+              <summary className="cursor-pointer text-[10px] uppercase tracking-wide text-muted-foreground">
+                Quarterly detail
+              </summary>
+              <div className="overflow-x-auto pt-1" data-testid="revenue-table">
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="text-muted-foreground">
+                      <th className="text-left font-medium py-1 pr-2">Quarter</th>
+                      <th className="text-right font-medium py-1">Revenue</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...quarterly].reverse().map((p) => (
+                      <tr
+                        key={p.end}
+                        className="border-t border-border/50"
+                        data-testid={`revenue-row-${p.end}`}
+                      >
+                        <td className="py-1 pr-2 text-foreground/90">{p.label}</td>
+                        <td className="py-1 text-right font-medium text-foreground tabular-nums">
+                          {fmtCompactCurrency(p.value, currency)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          )}
+
+          {/* Segment breakdown — free SEC company-facts does not expose a
+              reliable per-segment revenue split, so we surface a transparent
+              unavailable state rather than fabricating one. */}
+          <div
+            className="rounded border border-dashed border-border/60 bg-background/30 px-3 py-2 text-[11px] text-muted-foreground"
+            data-testid="revenue-segments-unavailable"
+          >
+            <span className="font-semibold text-foreground/90">Segments:</span>{" "}
+            Segment-level revenue breakdown is unavailable from free SEC company-facts
+            for this ticker.
+          </div>
         </div>
       )}
-
-      {/* Projections — always rendered so the unavailable state is explicit. */}
-      <div
-        className="rounded border border-dashed border-border/60 bg-background/30 px-3 py-2 text-[11px] text-muted-foreground"
-        data-testid="revenue-projections"
-      >
-        <span className="font-semibold text-foreground/90">Projections:</span>{" "}
-        {data?.projections?.status === "available" &&
-        data.projections.points.length > 0 ? (
-          <span data-testid="revenue-projections-available">
-            {data.projections.points
-              .map((p) => `${p.label} ${fmtCompactCurrency(p.value, currency)}`)
-              .join(" · ")}
-            {data.projections.source ? ` · source: ${data.projections.source}` : ""}
-          </span>
-        ) : (
-          <span data-testid="revenue-projections-unavailable">
-            {data?.projections?.note ??
-              "Revenue projections unavailable with current free data sources."}
-          </span>
-        )}
-      </div>
 
       {available && (
         <p className="text-[10px] text-muted-foreground" data-testid="revenue-source-note">
@@ -690,7 +1021,13 @@ function RevenuePanel({ ticker }: { ticker: string }) {
 // Revenue rendered as a default-collapsed accordion row matching the signal
 // stack. Owns its own open state; expands only on user click/tap. Preserves all
 // revenue content (TTM, annual bar chart, quarterly table, projections).
-function RevenueSection({ ticker }: { ticker: string }) {
+function RevenueSection({
+  ticker,
+  keyMetrics,
+}: {
+  ticker: string;
+  keyMetrics?: ConvictionIdea["keyMetrics"] | null;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <SignalSection
@@ -701,7 +1038,7 @@ function RevenueSection({ ticker }: { ticker: string }) {
       onToggle={() => setOpen((o) => !o)}
       headline={<RevenueHeadline ticker={ticker} />}
     >
-      <RevenuePanel ticker={ticker} />
+      <RevenuePanel ticker={ticker} keyMetrics={keyMetrics} />
     </SignalSection>
   );
 }
@@ -1311,6 +1648,11 @@ function IdeaDetail({
         )}
       </div>
 
+      {/* Deterministic research narrative — model's read on the ticker, rendered
+          from already-loaded idea data (no network) so it appears instantly on
+          click, between the snapshot and the chart/accordion stack. */}
+      <TickerNarrative idea={idea} />
+
       {/* Chart-first market section — price + moving averages with breakout
           status/markers, placed immediately under the snapshot so the graph
           and breakout read are visible before any thesis text. */}
@@ -1325,7 +1667,7 @@ function IdeaDetail({
 
       {/* Revenue / fundamentals (current + historical from SEC EDGAR) — a
           default-collapsed accordion row; expands only on user click/tap. */}
-      <RevenueSection ticker={idea.ticker} />
+      <RevenueSection ticker={idea.ticker} keyMetrics={idea.keyMetrics} />
 
       {/* Thesis / what must be true. For freshly added custom tickers with no
           authored research yet, show a clear pending state instead. */}

@@ -1196,6 +1196,47 @@ export interface RevenueProjectionPoint {
   source: string; // labelled source of the estimate
 }
 
+// Source attribution for a single year in the revenue bridge. Every bridge row
+// carries one so the UI can badge provenance explicitly and never blur the line
+// between reported actuals, analyst consensus and TreasuryLens modelling.
+//   sec-actual     — reported revenue from an SEC 10-K (historical fact)
+//   analyst-estimate — forward consensus from an analyst-estimate provider
+//   treasurylens-model — TreasuryLens growth-fade model year (no analyst cover)
+//   unavailable    — a year we cannot fill from any source
+export type RevenueBridgeSource =
+  | "sec-actual"
+  | "analyst-estimate"
+  | "treasurylens-model"
+  | "unavailable";
+
+// One year in the year-by-year revenue bridge. `value` is absolute revenue in
+// the response currency; `growthPct` is YoY vs. the prior bridge year (null for
+// the first row or when the prior value is zero). `source` badges provenance.
+export interface RevenueBridgeYear {
+  fy: number;
+  label: string; // e.g. "FY2024", "FY2026E"
+  value: number | null;
+  growthPct: number | null;
+  source: RevenueBridgeSource;
+  analystCount?: number | null; // # analysts when source = analyst-estimate
+  note?: string | null;
+}
+
+// A year-by-year revenue bridge: reported history → analyst-estimate years →
+// TreasuryLens model years. Deterministic and template-driven (no LLM). The
+// `status` is "available" when at least one actual year resolved; otherwise the
+// historical panel's status governs and `years` is empty. `modelNote` explains
+// how the model years were derived; `estimateSource` labels the analyst source
+// when present so a future paid provider can swap in without a UI change.
+export interface RevenueBridge {
+  status: "available" | "unavailable";
+  years: RevenueBridgeYear[]; // ascending by fiscal year
+  estimateSource: string | null; // e.g. "finnhub" when analyst years present
+  estimateStatus: AnalystEstimatesStatus | null; // analyst-estimate fetch status
+  modelNote: string; // how TreasuryLens model years were derived
+  note: string; // overall human-readable note
+}
+
 export interface EquityRevenueResponse {
   ticker: string;
   status: RevenueStatus;
@@ -1223,6 +1264,11 @@ export interface EquityRevenueResponse {
     points: RevenueProjectionPoint[];
     note: string;
   };
+  // Year-by-year revenue bridge: reported actuals → analyst-estimate years →
+  // TreasuryLens model years, each with a source badge. Optional so older
+  // cached payloads still type-check; absent on not-available/not-meaningful
+  // tickers (the historical `status` governs there).
+  bridge?: RevenueBridge;
 }
 
 // Payload to add a user-defined conviction idea. Kept intentionally small —
@@ -1290,6 +1336,15 @@ export type AnalystConsensusStatus = "available" | "unavailable" | "error";
 
 export type AnalystEstimatesStatus = "available" | "unavailable" | "error";
 
+// One forward annual revenue consensus point from an analyst-estimate provider.
+// `value` is absolute USD; `analystCount` is the # of analysts in the consensus.
+export interface AnalystRevenueYear {
+  fy: number;
+  period: string; // raw provider period, e.g. "2026" or "2026-12-31"
+  value: number; // USD, absolute
+  analystCount: number | null;
+}
+
 export interface AnalystEstimates {
   status: AnalystEstimatesStatus;
   symbol: string;
@@ -1300,6 +1355,11 @@ export interface AnalystEstimates {
   revenueEstimateYear: number | null; // fiscal year the estimate covers
   revenuePeriod: string | null; // e.g. "2025" or "2025-12-31"
   revenueAnalystCount: number | null;
+  // All forward annual revenue estimates returned by the provider (USD,
+  // absolute), ascending by fiscal year. Lets the revenue bridge anchor several
+  // near-term years from consensus rather than a single point. Empty when the
+  // provider returned no usable forward annual rows.
+  revenueByYear: AnalystRevenueYear[];
   // Implied forward revenue CAGR vs TTM revenue, computed by the model when a
   // revenue anchor exists. Null when not computable. (Filled by scenarioModel.)
   impliedRevenueCagrPct: number | null;
