@@ -86,6 +86,10 @@ import {
   ChevronDown,
   TrendingUp,
   TrendingDown,
+  Building2,
+  Gauge,
+  Beaker,
+  Users,
 } from "lucide-react";
 import { fmtPrice, fmtCompactCurrency, fmtPct } from "@/lib/format";
 import { ScenarioDerivation } from "@/components/ScenarioDerivation";
@@ -95,6 +99,15 @@ import {
   RiskConvictionPanel,
   ActionSignalPanel,
   AnalystConsensusPanel,
+  QuantBacktestPanel,
+  QuantScoreBlock,
+  SignalSection,
+  ModelActionHeadline,
+  QuantScoreHeadline,
+  ScenarioHeadline,
+  BuffettHeadline,
+  AnalystHeadline,
+  BacktestHeadline,
   useIdeaSignal,
   useIdeaBuffett,
   useIdeaActionSignal,
@@ -930,6 +943,151 @@ interface WatchlistGroupData {
   ideas: ConvictionIdea[];
 }
 
+// The six expandable signal rows for the selected ticker. Each row reads the
+// same shared per-ticker query cache as its headline (no duplicate fetches) and
+// owns its own open/closed state. Model Action and Scenario default open; the
+// rest start collapsed so the stack reads as a compact summary first.
+type SignalRowKey =
+  | "action"
+  | "quant"
+  | "scenario"
+  | "buffett"
+  | "analyst"
+  | "backtest";
+
+// Quant Score body — pulls the quant block out of the shared action-signal
+// payload so it can live in its own row without re-fetching.
+function QuantScoreRowBody({ ticker }: { ticker: string }) {
+  const { data, isLoading, isError } = useIdeaActionSignal(ticker);
+  if (isLoading) {
+    return (
+      <Skeleton className="h-[160px] rounded-md" data-testid="quant-score-row-loading" />
+    );
+  }
+  if (isError || !data || !data.quantScore) {
+    return (
+      <p className="text-xs text-muted-foreground" data-testid="quant-score-row-empty">
+        Quant score unavailable for this ticker.
+      </p>
+    );
+  }
+  return <QuantScoreBlock q={data.quantScore} />;
+}
+
+function SignalStack({ idea }: { idea: ConvictionIdea }) {
+  const [open, setOpen] = useState<Record<SignalRowKey, boolean>>({
+    action: true,
+    quant: false,
+    scenario: true,
+    buffett: false,
+    analyst: false,
+    backtest: false,
+  });
+  const toggle = (key: SignalRowKey) =>
+    setOpen((o) => ({ ...o, [key]: !o[key] }));
+
+  const ticker = idea.ticker;
+
+  return (
+    <div className="space-y-2" data-testid="idea-signal-stack">
+      {/* Model Action — the single consolidated final-decision row. Folds the
+          legacy buy/sell timing signal and the risk read into its body via the
+          panel's `supporting` slot so there are no competing action rows. */}
+      <SignalSection
+        icon={Sparkles}
+        title="Model Action"
+        testId="signal-row-action"
+        open={open.action}
+        onToggle={() => toggle("action")}
+        headline={<ModelActionHeadline ticker={ticker} />}
+      >
+        <ActionSignalPanel
+          ticker={ticker}
+          headless
+          include={{ quantScore: false, conviction: false, backtest: false }}
+          supporting={
+            <div className="space-y-3 pt-1">
+              <SignalConvictionPanel ticker={ticker} headless />
+              <RiskConvictionPanel ticker={ticker} headless />
+            </div>
+          }
+        />
+      </SignalSection>
+
+      {/* Quant Score — score + band, factor breakdown in the body. */}
+      <SignalSection
+        icon={Gauge}
+        title="Quant Score"
+        testId="signal-row-quant"
+        open={open.quant}
+        onToggle={() => toggle("quant")}
+        headline={<QuantScoreHeadline ticker={ticker} />}
+      >
+        <QuantScoreRowBody ticker={ticker} />
+      </SignalSection>
+
+      {/* Scenario upside / downside — bear/base/bull plus the full "How this
+          was derived" derivation UI inside the body. */}
+      <SignalSection
+        icon={Target}
+        title="Scenario Upside / Downside"
+        testId="signal-row-scenario"
+        open={open.scenario}
+        onToggle={() => toggle("scenario")}
+        headline={<ScenarioHeadline model={idea.scenarioModel} />}
+      >
+        {idea.scenarioModel ? (
+          <ScenarioCard model={idea.scenarioModel} />
+        ) : (
+          <p
+            className="text-sm text-muted-foreground"
+            data-testid="idea-scenario-card"
+          >
+            Scenario model unavailable for this idea.
+          </p>
+        )}
+      </SignalSection>
+
+      {/* Buffett quality check — kept as a separate quality lens, not a trading
+          signal. */}
+      <SignalSection
+        icon={Building2}
+        title="Buffett Quality Check"
+        testId="signal-row-buffett"
+        open={open.buffett}
+        onToggle={() => toggle("buffett")}
+        headline={<BuffettHeadline ticker={ticker} />}
+      >
+        <BuffettConvictionPanel ticker={ticker} headless />
+      </SignalSection>
+
+      {/* Analyst consensus (Finnhub). */}
+      <SignalSection
+        icon={Users}
+        title="Analyst Consensus"
+        testId="signal-row-analyst"
+        open={open.analyst}
+        onToggle={() => toggle("analyst")}
+        headline={<AnalystHeadline ticker={ticker} />}
+      >
+        <AnalystConsensusPanel ticker={ticker} headless />
+      </SignalSection>
+
+      {/* Backtest evidence — universe-wide technical-only validation. */}
+      <SignalSection
+        icon={Beaker}
+        title="Backtest Evidence"
+        testId="signal-row-backtest"
+        open={open.backtest}
+        onToggle={() => toggle("backtest")}
+        headline={<BacktestHeadline />}
+      >
+        <QuantBacktestPanel headless />
+      </SignalSection>
+    </div>
+  );
+}
+
 function IdeaDetail({
   idea,
   onRemove,
@@ -1135,36 +1293,13 @@ function IdeaDetail({
         <ConvictionChart ticker={idea.ticker} />
       </div>
 
-      {/* Compact action / analyst / risk / Buffett cards — the rules-based read
-          on the ticker, directly after the chart. */}
-      <div className="space-y-4" data-testid="idea-insight-cards">
-        {/* Primary, explainable Action Signal — folds the rules-based factors
-            plus analyst consensus into one auditable verdict. */}
-        <ActionSignalPanel ticker={idea.ticker} />
-        {/* Analyst consensus (Finnhub) — sits next to the action/risk cards. */}
-        <AnalystConsensusPanel ticker={idea.ticker} />
-        {/* Legacy buy / sell + confidence timing signal (kept available). */}
-        <SignalConvictionPanel ticker={idea.ticker} />
-        {/* Risk assessment (rules-based, derived from the signal model) */}
-        <RiskConvictionPanel ticker={idea.ticker} />
-        {/* Buffett Index — business quality & valuation */}
-        <BuffettConvictionPanel ticker={idea.ticker} />
-      </div>
+      {/* Collapsible signal stack — one accordion row per lens, each with an
+          at-a-glance headline and an expandable body. Model Action and Scenario
+          default open; the rest start collapsed. */}
+      <SignalStack idea={idea} />
 
       {/* Revenue / fundamentals (current + historical from SEC EDGAR) */}
       <RevenuePanel ticker={idea.ticker} />
-
-      {/* Scenario card */}
-      {idea.scenarioModel ? (
-        <ScenarioCard model={idea.scenarioModel} />
-      ) : (
-        <div
-          className="rounded-md border border-border/70 bg-card/40 p-3 text-sm text-muted-foreground"
-          data-testid="idea-scenario-card"
-        >
-          Scenario model unavailable for this idea.
-        </div>
-      )}
 
       {/* Thesis / what must be true. For freshly added custom tickers with no
           authored research yet, show a clear pending state instead. */}

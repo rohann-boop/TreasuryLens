@@ -24,8 +24,9 @@ import type {
   QuantBacktestResponse,
   QuantBacktestWindow,
   QuantBacktestVerdict,
+  ScenarioModel,
 } from "@shared/schema";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { fmtPrice, fmtPct } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -216,6 +217,78 @@ export function deriveRisk(signal: ModelSignal | undefined): DerivedRisk {
   else level = "Low";
 
   return { level, riskScore: Math.round(score), reasons: reasons.slice(0, 4), flags: flags.slice(0, 4) };
+}
+
+// =============================================================================
+// SignalSection — a reusable collapsible row for the detail-pane signal stack.
+// Each row shows an icon, a title, an at-a-glance headline summary (rendered to
+// the right of the title) and an accessible expand/collapse toggle with a
+// chevron. The body is mounted only when open. Light/dark compatible: it reuses
+// the same card / border tokens as the rest of the detail pane. Collapse state
+// is controlled by the parent so the whole stack can be coordinated.
+// =============================================================================
+export function SignalSection({
+  icon: Icon,
+  title,
+  headline,
+  open,
+  onToggle,
+  testId,
+  children,
+}: {
+  icon: typeof Building2;
+  title: string;
+  // Compact at-a-glance summary shown in the header when collapsed *and* open.
+  headline?: React.ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  testId: string;
+  children: React.ReactNode;
+}) {
+  const regionId = `${testId}-body`;
+  return (
+    <div
+      className="rounded-md border border-border/70 bg-card/40"
+      data-testid={testId}
+      data-state={open ? "open" : "closed"}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-controls={regionId}
+        data-testid={`${testId}-toggle`}
+        className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-muted/40 rounded-md transition-colors"
+      >
+        {open ? (
+          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+        ) : (
+          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+        )}
+        <Icon className="h-3.5 w-3.5 shrink-0 text-primary/80" aria-hidden />
+        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground shrink-0">
+          {title}
+        </span>
+        {headline != null && (
+          <span
+            className="ml-auto flex items-center gap-2 min-w-0 justify-end flex-wrap"
+            data-testid={`${testId}-headline`}
+          >
+            {headline}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div
+          id={regionId}
+          className="border-t border-border/60 p-3 space-y-3"
+          data-testid={`${testId}-content`}
+        >
+          {children}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // =============================================================================
@@ -412,7 +485,13 @@ function ListColumn({ title, items, empty }: { title: string; items: string[]; e
   );
 }
 
-export function BuffettConvictionPanel({ ticker }: { ticker: string }) {
+export function BuffettConvictionPanel({
+  ticker,
+  headless = false,
+}: {
+  ticker: string;
+  headless?: boolean;
+}) {
   const query = useIdeaBuffett(ticker);
   const data = query.data;
 
@@ -426,23 +505,29 @@ export function BuffettConvictionPanel({ ticker }: { ticker: string }) {
 
   return (
     <div
-      className="rounded-md border border-border/70 bg-card/40 p-3 space-y-3"
+      className={
+        headless
+          ? "space-y-3"
+          : "rounded-md border border-border/70 bg-card/40 p-3 space-y-3"
+      }
       data-testid="buffett-index-panel"
     >
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          <Building2 className="h-3.5 w-3.5 text-primary/80" aria-hidden />
-          Buffett Index — business quality &amp; valuation
+      {!headless && (
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <Building2 className="h-3.5 w-3.5 text-primary/80" aria-hidden />
+            Buffett Index — business quality &amp; valuation
+          </div>
+          {data && (
+            <span
+              className={cn("text-[11px] uppercase tracking-wide tabular-nums", scoreTone(data.overallScore))}
+              data-testid="buffett-score-header"
+            >
+              {data.overallScore == null ? "N/A" : `${data.overallScore.toFixed(0)} / 100`}
+            </span>
+          )}
         </div>
-        {data && (
-          <span
-            className={cn("text-[11px] uppercase tracking-wide tabular-nums", scoreTone(data.overallScore))}
-            data-testid="buffett-score-header"
-          >
-            {data.overallScore == null ? "N/A" : `${data.overallScore.toFixed(0)} / 100`}
-          </span>
-        )}
-      </div>
+      )}
 
       {query.isLoading ? (
         <Skeleton className="h-[160px] rounded-md" data-testid="buffett-loading" />
@@ -546,7 +631,13 @@ function confidenceTone(c: ConfidenceLabel): string {
 
 // The composite score (0-100) doubles as the model's confidence percentage:
 // it is the weighted ensemble strength behind the signal.
-export function SignalConvictionPanel({ ticker }: { ticker: string }) {
+export function SignalConvictionPanel({
+  ticker,
+  headless = false,
+}: {
+  ticker: string;
+  headless?: boolean;
+}) {
   const query = useIdeaSignal(ticker);
   const signal = query.data;
 
@@ -566,35 +657,41 @@ export function SignalConvictionPanel({ ticker }: { ticker: string }) {
 
   return (
     <div
-      className="rounded-md border border-border/70 bg-card/40 p-3 space-y-3"
+      className={
+        headless
+          ? "space-y-3"
+          : "rounded-md border border-border/70 bg-card/40 p-3 space-y-3"
+      }
       data-testid="signal-indicator"
     >
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          <Beaker className="h-3.5 w-3.5 text-primary/80" aria-hidden />
-          Buy / sell signal (rules-based model)
-        </div>
-        {signal && (
-          <div className="flex items-center gap-2">
-            <span
-              className={cn(
-                "inline-flex items-center gap-1 rounded border text-[11px] font-semibold tracking-wide uppercase px-2 py-0.5",
-                signalTone(signal.signal),
-              )}
-              data-testid="signal-label"
-            >
-              <span className="h-1.5 w-1.5 rounded-full bg-current" />
-              {signal.signal}
-            </span>
-            <span
-              className={cn("text-[11px] uppercase tracking-wide tabular-nums", confidenceTone(signal.confidence))}
-              data-testid="signal-confidence"
-            >
-              {signal.confidence} · {confidencePct}%
-            </span>
+      {!headless && (
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <Beaker className="h-3.5 w-3.5 text-primary/80" aria-hidden />
+            Buy / sell signal (rules-based model)
           </div>
-        )}
-      </div>
+          {signal && (
+            <div className="flex items-center gap-2">
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 rounded border text-[11px] font-semibold tracking-wide uppercase px-2 py-0.5",
+                  signalTone(signal.signal),
+                )}
+                data-testid="signal-label"
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                {signal.signal}
+              </span>
+              <span
+                className={cn("text-[11px] uppercase tracking-wide tabular-nums", confidenceTone(signal.confidence))}
+                data-testid="signal-confidence"
+              >
+                {signal.confidence} · {confidencePct}%
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       {query.isLoading ? (
         <Skeleton className="h-[120px] rounded-md" data-testid="signal-loading" />
@@ -763,44 +860,56 @@ function riskMeterTone(score: number | null): string {
   return "bg-pos";
 }
 
-export function RiskConvictionPanel({ ticker }: { ticker: string }) {
+export function RiskConvictionPanel({
+  ticker,
+  headless = false,
+}: {
+  ticker: string;
+  headless?: boolean;
+}) {
   const query = useIdeaSignal(ticker);
   const signal = query.data;
   const risk = useMemo(() => deriveRisk(signal), [signal]);
 
   return (
     <div
-      className="rounded-md border border-border/70 bg-card/40 p-3 space-y-3"
+      className={
+        headless
+          ? "space-y-3"
+          : "rounded-md border border-border/70 bg-card/40 p-3 space-y-3"
+      }
       data-testid="risk-indicator"
     >
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          <Gauge className="h-3.5 w-3.5 text-primary/80" aria-hidden />
-          Risk assessment (rules-based)
-        </div>
-        {signal && (
-          <div className="flex items-center gap-2">
-            <span
-              className={cn(
-                "inline-flex items-center gap-1 rounded border text-[11px] font-semibold tracking-wide uppercase px-2 py-0.5",
-                riskTone(risk.level),
-              )}
-              data-testid="risk-level"
-            >
-              <span className="h-1.5 w-1.5 rounded-full bg-current" />
-              {risk.level} risk
-            </span>
-            {risk.riskScore != null && (
-              <span
-                className="text-[11px] uppercase tracking-wide tabular-nums text-muted-foreground"
-                data-testid="risk-score"
-              >
-                {risk.riskScore}/100
-              </span>
-            )}
+      {!headless && (
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <Gauge className="h-3.5 w-3.5 text-primary/80" aria-hidden />
+            Risk assessment (rules-based)
           </div>
-        )}
-      </div>
+          {signal && (
+            <div className="flex items-center gap-2">
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 rounded border text-[11px] font-semibold tracking-wide uppercase px-2 py-0.5",
+                  riskTone(risk.level),
+                )}
+                data-testid="risk-level"
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                {risk.level} risk
+              </span>
+              {risk.riskScore != null && (
+                <span
+                  className="text-[11px] uppercase tracking-wide tabular-nums text-muted-foreground"
+                  data-testid="risk-score"
+                >
+                  {risk.riskScore}/100
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {query.isLoading ? (
         <Skeleton className="h-[110px] rounded-md" data-testid="risk-loading" />
@@ -920,42 +1029,54 @@ const REC_BANDS: {
   { key: "strongSell", label: "Strong Sell", tone: "bg-neg" },
 ];
 
-export function AnalystConsensusPanel({ ticker }: { ticker: string }) {
+export function AnalystConsensusPanel({
+  ticker,
+  headless = false,
+}: {
+  ticker: string;
+  headless?: boolean;
+}) {
   const query = useIdeaAnalystConsensus(ticker);
   const data = query.data;
   const available = data?.status === "available";
 
   return (
     <div
-      className="rounded-md border border-border/70 bg-card/40 p-3 space-y-3"
+      className={
+        headless
+          ? "space-y-3"
+          : "rounded-md border border-border/70 bg-card/40 p-3 space-y-3"
+      }
       data-testid="analyst-consensus-panel"
     >
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          <Users2 className="h-3.5 w-3.5 text-primary/80" aria-hidden />
-          Analyst consensus (Finnhub)
-        </div>
-        {available && (
-          <div className="flex items-center gap-2">
-            <span
-              className={cn(
-                "inline-flex items-center gap-1 rounded border text-[11px] font-semibold tracking-wide uppercase px-2 py-0.5",
-                consensusTone(data!.consensusLabel),
-              )}
-              data-testid="analyst-consensus-label"
-            >
-              <span className="h-1.5 w-1.5 rounded-full bg-current" />
-              {data!.consensusLabel ?? "—"}
-            </span>
-            <span
-              className="text-[11px] uppercase tracking-wide tabular-nums text-muted-foreground"
-              data-testid="analyst-consensus-count"
-            >
-              {data!.totalAnalysts} analysts
-            </span>
+      {!headless && (
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <Users2 className="h-3.5 w-3.5 text-primary/80" aria-hidden />
+            Analyst consensus (Finnhub)
           </div>
-        )}
-      </div>
+          {available && (
+            <div className="flex items-center gap-2">
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 rounded border text-[11px] font-semibold tracking-wide uppercase px-2 py-0.5",
+                  consensusTone(data!.consensusLabel),
+                )}
+                data-testid="analyst-consensus-label"
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                {data!.consensusLabel ?? "—"}
+              </span>
+              <span
+                className="text-[11px] uppercase tracking-wide tabular-nums text-muted-foreground"
+                data-testid="analyst-consensus-count"
+              >
+                {data!.totalAnalysts} analysts
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       {query.isLoading ? (
         <Skeleton className="h-[120px] rounded-md" data-testid="analyst-consensus-loading" />
@@ -1284,7 +1405,7 @@ function PillCard({
   );
 }
 
-function ConvictionSignalBlock({ c }: { c: ConvictionSignal }) {
+export function ConvictionSignalBlock({ c }: { c: ConvictionSignal }) {
   const bt = c.backtest;
   if (c.insufficientEvidence) {
     return (
@@ -1550,7 +1671,7 @@ function QuantFactorRow({ f }: { f: QuantFactor }) {
   );
 }
 
-function QuantScoreBlock({ q }: { q: QuantScore }) {
+export function QuantScoreBlock({ q }: { q: QuantScore }) {
   const insufficient = q.overall == null;
   return (
     <div
@@ -1780,38 +1901,53 @@ function toneClass(n: number | null): string {
 // Universe-wide technical-only Backtest v1. Multiple point-in-time windows
 // (3M/6M/1Y/2Y where data exists) each with several threshold cohorts. Honest
 // "Technical-only" framing + limitations are always surfaced.
-export function QuantBacktestPanel({ open = false }: { open?: boolean }) {
+export function QuantBacktestPanel({
+  open = false,
+  headless = false,
+}: {
+  open?: boolean;
+  // When headless, the parent (e.g. an accordion row) supplies the toggle and
+  // chrome; the panel always fetches and renders the body directly.
+  headless?: boolean;
+}) {
   const [expanded, setExpanded] = useState(open);
-  const query = useQuantBacktest(expanded);
+  const active = headless || expanded;
+  const query = useQuantBacktest(active);
   const data = query.data;
   return (
     <div
-      className="rounded-md border border-border/70 bg-card/40 p-3 space-y-2"
+      className={
+        headless
+          ? "space-y-2"
+          : "rounded-md border border-border/70 bg-card/40 p-3 space-y-2"
+      }
       data-testid="quant-backtest-panel"
     >
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center justify-between gap-2 text-left"
-        data-testid="quant-backtest-toggle"
-      >
-        <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          <BarChart3 className="h-3.5 w-3.5 text-primary/80" aria-hidden />
-          Backtest v1 — technical-only validation
-        </span>
-        <span className="flex items-center gap-2">
-          {!expanded && (
-            <span className="text-[10px] text-muted-foreground">Tap to run</span>
-          )}
-          {expanded ? (
-            <ChevronDown className="h-4 w-4 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="h-4 w-4 text-muted-foreground" />
-          )}
-        </span>
-      </button>
+      {!headless && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="flex w-full items-center justify-between gap-2 text-left"
+          data-testid="quant-backtest-toggle"
+        >
+          <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <BarChart3 className="h-3.5 w-3.5 text-primary/80" aria-hidden />
+            Backtest v1 — technical-only validation
+          </span>
+          <span className="flex items-center gap-2">
+            {!expanded && (
+              <span className="text-[10px] text-muted-foreground">Tap to run</span>
+            )}
+            {expanded ? (
+              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+            )}
+          </span>
+        </button>
+      )}
 
-      {!expanded ? (
+      {!active ? (
         <p className="text-[11px] text-muted-foreground leading-relaxed">
           The full quant score is not validated yet. A lightweight technical-only
           backtest (price/momentum only, no fundamental or analyst look-ahead) runs
@@ -1896,41 +2032,62 @@ function fmtPctVal(n: number | null): string {
   return `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
 }
 
-export function ActionSignalPanel({ ticker }: { ticker: string }) {
+export function ActionSignalPanel({
+  ticker,
+  headless = false,
+  // Which nested blocks to render inline. Defaults to all-true for the legacy
+  // full-card usage. The Dashboard accordion turns these off and renders Quant
+  // Score / Scenario / Backtest as their own discrete rows from the same data.
+  include = { quantScore: true, conviction: true, backtest: true },
+  // Supporting detail rendered after the triggers — used by the Dashboard to
+  // fold the legacy buy/sell signal + risk view into the Model Action body.
+  supporting,
+}: {
+  ticker: string;
+  headless?: boolean;
+  include?: { quantScore?: boolean; conviction?: boolean; backtest?: boolean };
+  supporting?: React.ReactNode;
+}) {
   const query = useIdeaActionSignal(ticker);
   const data = query.data;
 
   return (
     <div
-      className="rounded-md border border-border/70 bg-card/40 p-3 space-y-3"
+      className={
+        headless
+          ? "space-y-3"
+          : "rounded-md border border-border/70 bg-card/40 p-3 space-y-3"
+      }
       data-testid="action-signal-panel"
     >
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          <Sparkles className="h-3.5 w-3.5 text-primary/80" aria-hidden />
-          Action signal (rules-based research)
-        </div>
-        {data && (
-          <div className="flex items-center gap-2">
-            <span
-              className={cn(
-                "inline-flex items-center gap-1 rounded border text-[11px] font-semibold tracking-wide uppercase px-2 py-0.5",
-                actionTone(data.action),
-              )}
-              data-testid="action-signal-label"
-            >
-              <span className="h-1.5 w-1.5 rounded-full bg-current" />
-              {data.action}
-            </span>
-            <span
-              className={cn("text-[11px] uppercase tracking-wide tabular-nums", confidenceTone(data.confidence))}
-              data-testid="action-signal-confidence"
-            >
-              {data.confidence} · {data.compositeScore}
-            </span>
+      {!headless && (
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <Sparkles className="h-3.5 w-3.5 text-primary/80" aria-hidden />
+            Action signal (rules-based research)
           </div>
-        )}
-      </div>
+          {data && (
+            <div className="flex items-center gap-2">
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 rounded border text-[11px] font-semibold tracking-wide uppercase px-2 py-0.5",
+                  actionTone(data.action),
+                )}
+                data-testid="action-signal-label"
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                {data.action}
+              </span>
+              <span
+                className={cn("text-[11px] uppercase tracking-wide tabular-nums", confidenceTone(data.confidence))}
+                data-testid="action-signal-confidence"
+              >
+                {data.confidence} · {data.compositeScore}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       {query.isLoading ? (
         <Skeleton className="h-[200px] rounded-md" data-testid="action-signal-loading" />
@@ -1944,11 +2101,11 @@ export function ActionSignalPanel({ ticker }: { ticker: string }) {
             {data.summary}
           </p>
 
-          {data.quantScore && <QuantScoreBlock q={data.quantScore} />}
+          {include.quantScore && data.quantScore && <QuantScoreBlock q={data.quantScore} />}
 
-          {data.conviction && <ConvictionSignalBlock c={data.conviction} />}
+          {include.conviction && data.conviction && <ConvictionSignalBlock c={data.conviction} />}
 
-          <QuantBacktestPanel />
+          {include.backtest && <QuantBacktestPanel />}
 
           {data.notes.length > 0 && (
             <ul className="space-y-0.5 text-[10px] text-amber-500" data-testid="action-signal-notes">
@@ -2033,6 +2190,8 @@ export function ActionSignalPanel({ ticker }: { ticker: string }) {
           <div className="text-[10px] text-muted-foreground" data-testid="action-signal-legacy">
             Legacy timing signal: <span className="font-medium text-foreground/80">{data.legacySignal}</span>
           </div>
+
+          {supporting}
         </>
       )}
 
@@ -2045,5 +2204,163 @@ export function ActionSignalPanel({ ticker }: { ticker: string }) {
         </span>
       </p>
     </div>
+  );
+}
+
+// =============================================================================
+// At-a-glance headline summaries for the detail-pane signal accordion. Each one
+// reads the same shared per-ticker query cache as its panel body (no extra
+// fetch) and renders a compact verdict pill / score for the collapsed row. They
+// degrade to a muted "—" / "Loading" / "N/A" while pending or unavailable.
+// =============================================================================
+
+function HeadlinePill({ label, className, testId }: { label: string; className: string; testId?: string }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded border text-[11px] font-semibold tracking-wide uppercase px-2 py-0.5",
+        className,
+      )}
+      data-testid={testId}
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-current" />
+      {label}
+    </span>
+  );
+}
+
+function HeadlineMuted({ children }: { children: React.ReactNode }) {
+  return <span className="text-[11px] text-muted-foreground tabular-nums">{children}</span>;
+}
+
+// Model Action — the consolidated final decision (Hold / Starter / Add / Trim /
+// Avoid) with its confidence. Reads the action-signal cache.
+export function ModelActionHeadline({ ticker }: { ticker: string }) {
+  const { data, isLoading, isError } = useIdeaActionSignal(ticker);
+  if (isLoading) return <HeadlineMuted>Loading…</HeadlineMuted>;
+  if (isError || !data) return <HeadlineMuted>Unavailable</HeadlineMuted>;
+  return (
+    <>
+      <HeadlinePill label={data.action} className={actionTone(data.action)} testId="headline-action-label" />
+      <HeadlineMuted>
+        {data.confidence} · {data.compositeScore}
+      </HeadlineMuted>
+    </>
+  );
+}
+
+// Quant Score — score and band, e.g. "74/100 Constructive".
+export function QuantScoreHeadline({ ticker }: { ticker: string }) {
+  const { data, isLoading, isError } = useIdeaActionSignal(ticker);
+  if (isLoading) return <HeadlineMuted>Loading…</HeadlineMuted>;
+  if (isError || !data || !data.quantScore) return <HeadlineMuted>N/A</HeadlineMuted>;
+  const q = data.quantScore;
+  return (
+    <>
+      <span className="text-[11px] font-semibold tabular-nums text-foreground" data-testid="headline-quant-score">
+        {q.overall == null ? "—" : q.overall}
+        <span className="text-[10px] font-normal text-muted-foreground">/100</span>
+      </span>
+      <HeadlinePill label={q.bandLabel} className={quantBandTone(q.band)} testId="headline-quant-band" />
+    </>
+  );
+}
+
+// Scenario — Bear / Base / Bull implied returns plus the derivation method,
+// e.g. "Bear -18% · Base +42% · Bull +110% · Fundamentals-driven".
+export function ScenarioHeadline({ model }: { model: ScenarioModel | null | undefined }) {
+  if (!model) return <HeadlineMuted>Unavailable</HeadlineMuted>;
+  const pct = (v: number) => `${v >= 0 ? "+" : ""}${Math.round(v)}%`;
+  const methodLabel =
+    model.method === "fundamentals-driven"
+      ? "Fundamentals-driven"
+      : model.method === "hybrid"
+        ? "Hybrid"
+        : model.method === "fallback-heuristic"
+          ? "Heuristic"
+          : null;
+  return (
+    <>
+      <span className="text-[11px] tabular-nums" data-testid="headline-scenario-cases">
+        <span className="text-neg">Bear {pct(model.bear.outputs.impliedReturnPct)}</span>
+        <span className="text-muted-foreground"> · </span>
+        <span className="text-foreground">Base {pct(model.base.outputs.impliedReturnPct)}</span>
+        <span className="text-muted-foreground"> · </span>
+        <span className="text-pos">Bull {pct(model.bull.outputs.impliedReturnPct)}</span>
+      </span>
+      {methodLabel && (
+        <span className="text-[10px] uppercase tracking-wide text-muted-foreground" data-testid="headline-scenario-method">
+          {methodLabel}
+        </span>
+      )}
+    </>
+  );
+}
+
+// Buffett — quality/value verdict. Reuses the panel's own `label` (e.g. "High
+// quality, expensive" / "Mixed" / "Pass") plus the score, or a "not meaningful"
+// state for ETFs / funds / non-operating issuers.
+export function BuffettHeadline({ ticker }: { ticker: string }) {
+  const { data, isLoading, isError } = useIdeaBuffett(ticker);
+  if (isLoading) return <HeadlineMuted>Loading…</HeadlineMuted>;
+  if (isError || !data) return <HeadlineMuted>Unavailable</HeadlineMuted>;
+  if (!buffettScoreIsMeaningful(data)) {
+    return <HeadlineMuted>Insufficient data</HeadlineMuted>;
+  }
+  return (
+    <>
+      <span className="text-[11px] font-medium text-foreground" data-testid="headline-buffett-label">
+        {data.label}
+      </span>
+      <span
+        className={cn("text-[11px] uppercase tracking-wide tabular-nums", scoreTone(data.overallScore))}
+        data-testid="headline-buffett-score"
+      >
+        {data.overallScore == null ? "N/A" : `${data.overallScore.toFixed(0)}/100`}
+      </span>
+    </>
+  );
+}
+
+// Analyst Consensus — Buy/Hold/Sell verdict and analyst count / bullish percent.
+export function AnalystHeadline({ ticker }: { ticker: string }) {
+  const { data, isLoading, isError } = useIdeaAnalystConsensus(ticker);
+  if (isLoading) return <HeadlineMuted>Loading…</HeadlineMuted>;
+  if (isError || !data || data.status !== "available") {
+    return <HeadlineMuted>No coverage</HeadlineMuted>;
+  }
+  return (
+    <>
+      <HeadlinePill
+        label={data.consensusLabel ?? "—"}
+        className={consensusTone(data.consensusLabel)}
+        testId="headline-analyst-label"
+      />
+      <HeadlineMuted>
+        {data.totalAnalysts} analysts
+        {data.bullishPercent != null ? ` · ${data.bullishPercent}% bull` : ""}
+      </HeadlineMuted>
+    </>
+  );
+}
+
+// Backtest Evidence — the universe-wide technical-only validation badge, e.g.
+// "Technical-only" + run / not-run state. Reads the shared backtest cache only
+// if it has already been fetched (it is lazy), otherwise shows "Technical-only".
+export function BacktestHeadline() {
+  const data = queryClient.getQueryData<QuantBacktestResponse>(["/api/quant-score/backtest"]);
+  if (!data) {
+    return <HeadlineMuted>Technical-only</HeadlineMuted>;
+  }
+  return (
+    <>
+      <span
+        className="inline-flex items-center rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-500"
+        data-testid="headline-backtest-badge"
+      >
+        {data.validationBadge}
+      </span>
+      <HeadlineMuted>{data.tested ? "Run" : "Not validated"}</HeadlineMuted>
+    </>
   );
 }
