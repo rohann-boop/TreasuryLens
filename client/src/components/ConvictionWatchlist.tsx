@@ -1378,6 +1378,19 @@ function ForwardGrowthScenario({
         )}
       </div>
 
+      {/* Implied price from this revenue scenario — NOT a price target.
+          Reuses the selected case's existing margin / multiple / share bridge
+          (with the server's scale-aware caps baked in) and re-prices it onto the
+          terminal revenue currently shown above, including any user tweaks. */}
+      <ImpliedPriceBridge
+        model={model}
+        activeCase={activeCase}
+        terminalRevenue={target}
+        horizonFy={baseFy + forward.length}
+        currency={currency}
+        userTweaked={userTweaked}
+      />
+
       {model.methodology && (
         <p
           className="text-[10px] text-muted-foreground leading-relaxed"
@@ -1386,6 +1399,255 @@ function ForwardGrowthScenario({
           {model.methodology}
         </p>
       )}
+    </div>
+  );
+}
+
+// ── Implied price from this revenue scenario ────────────────────────────────
+// An output panel that translates the terminal revenue of the selected forward
+// scenario into an implied stock price, reusing the *existing* fundamentals
+// bridge from the scenario model rather than inventing a new valuation. This is
+// explicitly NOT a price target — it is the arithmetic consequence of "if this
+// revenue scenario plays out, and the model's margin / multiple / share-count
+// assumptions hold, here is the price that falls out."
+//
+// How it stays consistent with the server model:
+//   • Each case carries a fundamentals derivation: futureRevenue, marginPct,
+//     earningsProxy, valuationMultiple (P/E or P/S), impliedEquityValue,
+//     shareCount and targetPrice — already constrained by the server's scale-
+//     aware margin/multiple caps AND the bucket return cap.
+//   • We derive an effective "price per $ of terminal revenue" from that
+//     constrained derivation (targetPrice ÷ derivation.futureRevenue). Because
+//     the server bridge is linear in revenue after its caps fire, scaling that
+//     factor onto the user's terminal revenue reapplies the same margin,
+//     multiple, share count and caps — no separate, unconstrained model.
+//   • Earnings/profit proxy and implied equity value are re-expressed the same
+//     way so every line in the bridge moves together when revenue changes.
+//
+// Fallbacks: if the case has no fundamentals derivation (pure curated-bands /
+// heuristic path) or the required fields are missing, we show "Unavailable"
+// rather than fabricating numbers.
+function ImpliedPriceBridge({
+  model,
+  activeCase,
+  terminalRevenue,
+  horizonFy,
+  currency,
+  userTweaked,
+}: {
+  model: ScenarioModel;
+  activeCase: ForwardScenarioKey;
+  terminalRevenue: number | null;
+  horizonFy: number;
+  currency: string;
+  userTweaked: boolean;
+}) {
+  const caseObj = model[activeCase];
+  const der = caseObj?.derivation ?? null;
+
+  // Current price comes from the shared derivation inputs (priceRow keys its row
+  // "currentprice"). Used only for the upside/downside read — never fabricated.
+  const currentPrice = useMemo(() => {
+    const row = (model.derivationInputs ?? []).find(
+      (r) => r.key === "currentprice",
+    );
+    return row?.value != null && Number.isFinite(row.value) ? row.value : null;
+  }, [model.derivationInputs]);
+
+  // The model needs a fundamentals derivation with a usable revenue→price link.
+  const modelFutureRev = der?.futureRevenue ?? null;
+  const modelTargetPrice = der?.targetPrice ?? null;
+  const canPrice =
+    der != null &&
+    modelFutureRev != null &&
+    modelFutureRev > 0 &&
+    modelTargetPrice != null &&
+    Number.isFinite(modelTargetPrice) &&
+    terminalRevenue != null &&
+    terminalRevenue > 0;
+
+  if (!canPrice) {
+    return (
+      <div
+        className="rounded border border-dashed border-border/60 bg-background/30 px-3 py-2.5 space-y-1"
+        data-testid="implied-price-bridge-unavailable"
+      >
+        <RevenueSectionHeader
+          title="Implied price from this revenue scenario"
+          right={<ForwardSourceBadge source="unavailable" />}
+        />
+        <p className="text-[11px] text-muted-foreground">
+          An implied price needs the fundamentals bridge (terminal revenue,
+          margin, multiple and share count) from the scenario model. That bridge
+          is unavailable for this ticker, so no implied price is shown — rather
+          than a fabricated one.
+        </p>
+      </div>
+    );
+  }
+
+  // Effective price per $1 of terminal revenue, taken from the constrained
+  // server derivation. This carries the margin, multiple, dilution-adjusted
+  // share count AND the server's return/multiple caps with it.
+  const pricePerRevenue = modelTargetPrice! / modelFutureRev!;
+  // Scale factor between the user/displayed terminal revenue and the model's.
+  const revScale = terminalRevenue! / modelFutureRev!;
+
+  const impliedPrice = terminalRevenue! * pricePerRevenue;
+  const impliedEquity =
+    der!.impliedEquityValue != null ? der!.impliedEquityValue * revScale : null;
+  const earningsProxy =
+    der!.earningsProxy != null ? der!.earningsProxy * revScale : null;
+  const upsidePct =
+    currentPrice != null && currentPrice > 0
+      ? (impliedPrice / currentPrice - 1) * 100
+      : null;
+
+  const basis = der!.valuationBasis; // "P/E" | "P/S" | null
+  const marginPct = der!.marginPct;
+  const multiple = der!.valuationMultiple;
+  const shareCount = der!.shareCount;
+
+  // Provenance/label: model-derived by default; user-driven once tweaked. The
+  // copy makes the "not a target" framing unmissable in both states.
+  const scenarioLabel = userTweaked
+    ? `User scenario · ${FORWARD_CASE_META[activeCase].label}`
+    : `${FORWARD_CASE_META[activeCase].label} case`;
+
+  const fmtMoney = (v: number | null) =>
+    v != null ? fmtCompactCurrency(v, currency) : "—";
+  const fmtMult = (v: number | null, suffix: string) =>
+    v != null && Number.isFinite(v) ? `${v.toFixed(1)}× ${suffix}` : "—";
+
+  // Ordered bridge rows: revenue → margin → earnings proxy → multiple →
+  // equity value → share basis → implied price.
+  const rows: { label: string; value: string; hint?: string }[] = [
+    {
+      label: `FY${horizonFy} revenue`,
+      value: fmtMoney(terminalRevenue),
+      hint: "terminal",
+    },
+    {
+      label: basis === "P/E" ? "Operating margin" : "Margin",
+      value: marginPct != null ? fmtPct(marginPct, 1, false) : "—",
+    },
+    {
+      label: basis === "P/E" ? "Implied op. income" : "Profit proxy",
+      value: fmtMoney(earningsProxy),
+    },
+    {
+      label: "Valuation multiple",
+      value:
+        multiple != null
+          ? fmtMult(multiple, basis ?? "×")
+          : "—",
+    },
+    {
+      label: "Implied equity value",
+      value: fmtMoney(impliedEquity),
+    },
+    {
+      label: "Share count",
+      value:
+        shareCount != null && Number.isFinite(shareCount)
+          ? shareCount >= 1e9
+            ? `${(shareCount / 1e9).toFixed(2)}B sh`
+            : shareCount >= 1e6
+              ? `${(shareCount / 1e6).toFixed(1)}M sh`
+              : `${Math.round(shareCount)} sh`
+          : "—",
+      hint: "dilution-adj.",
+    },
+  ];
+
+  return (
+    <div
+      className="rounded border border-border/60 bg-background/40 p-2.5 space-y-2.5"
+      data-testid="implied-price-bridge"
+    >
+      <RevenueSectionHeader
+        title="Implied price from this revenue scenario"
+        hint={scenarioLabel}
+        right={
+          <ForwardSourceBadge
+            source={userTweaked ? "user-scenario" : "treasurylens-model"}
+          />
+        }
+      />
+
+      {/* Headline: implied price + upside/downside vs current price */}
+      <div className="flex items-end justify-between gap-3 flex-wrap">
+        <div>
+          <div className="text-[9px] uppercase tracking-wide text-muted-foreground">
+            Implied price
+          </div>
+          <div
+            className={`text-lg font-semibold tabular-nums ${FORWARD_CASE_META[activeCase].tone}`}
+            data-testid="implied-price-value"
+          >
+            {fmtPrice(impliedPrice, currency)}
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-[9px] uppercase tracking-wide text-muted-foreground">
+            vs current {currentPrice != null ? fmtPrice(currentPrice, currency) : "—"}
+          </div>
+          <div
+            className={`text-sm font-semibold tabular-nums ${upsidePct != null ? perfTone(upsidePct) : "text-muted-foreground"}`}
+            data-testid="implied-price-upside"
+          >
+            {upsidePct != null ? fmtPct(upsidePct, 1, true) : "—"}
+          </div>
+        </div>
+      </div>
+
+      {/* The bridge, line by line */}
+      <div className="overflow-x-auto" data-testid="implied-price-rows">
+        <table className="w-full text-[11px]">
+          <tbody>
+            {rows.map((r) => (
+              <tr
+                key={r.label}
+                className="border-t border-border/40"
+                data-testid={`implied-row-${r.label.replace(/\s+/g, "-").toLowerCase()}`}
+              >
+                <td className="py-1 pr-2 text-muted-foreground">
+                  {r.label}
+                  {r.hint ? (
+                    <span className="ml-1 text-[9px] text-muted-foreground/70">
+                      {r.hint}
+                    </span>
+                  ) : null}
+                </td>
+                <td className="py-1 text-right font-medium text-foreground tabular-nums">
+                  {r.value}
+                </td>
+              </tr>
+            ))}
+            <tr className="border-t border-border/60">
+              <td className="py-1 pr-2 font-medium text-foreground/90">
+                Implied price
+              </td>
+              <td
+                className={`py-1 text-right font-semibold tabular-nums ${FORWARD_CASE_META[activeCase].tone}`}
+              >
+                {fmtPrice(impliedPrice, currency)}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p className="text-[10px] text-muted-foreground leading-relaxed">
+        <span className="font-semibold text-foreground/80">
+          Scenario output, not a price target.
+        </span>{" "}
+        This is the price implied by applying the {scenarioLabel.toLowerCase()}{" "}
+        margin, {basis ?? "valuation"} multiple and dilution-adjusted share count
+        to the terminal revenue above — with the model's scale-aware caps. Change
+        the assumptions and it moves with them. It is not a prediction or a
+        recommendation.
+      </p>
     </div>
   );
 }
