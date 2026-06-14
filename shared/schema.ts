@@ -1271,6 +1271,84 @@ export interface EquityRevenueResponse {
   bridge?: RevenueBridge;
 }
 
+// =============================================================================
+// Segment revenue intelligence
+//
+// Per-segment revenue / operating-income breakdown for a single issuer, with
+// multi-year history so the UI can render mix %, YoY growth and a 3-year trend.
+// Sources are labelled explicitly so the UI never blurs a reported fact with a
+// derived or unavailable value:
+//   finance-segments       — a finance data connector (deferred; see segments.ts)
+//   sec-segments           — extracted from the issuer's XBRL 10-K segment axis
+//   treasurylens-normalized — TreasuryLens-derived field (e.g. mix %, profit mix)
+//   unavailable            — no reliable segment data for this issuer
+// =============================================================================
+export type SegmentSource =
+  | "finance-segments"
+  | "sec-segments"
+  | "treasurylens-normalized"
+  | "unavailable";
+
+export type SegmentStatus =
+  | "available" // at least one segment with revenue resolved
+  | "not-available" // no CIK/filing mapping, or no segment axis in filings
+  | "not-meaningful"; // ETF/fund/single-segment issuer — a breakdown is not meaningful
+
+// One fiscal-year data point for a single segment. All monetary values are
+// absolute in the response currency. `null` means the source did not report
+// that field for that year (rendered as "—", never fabricated).
+export interface SegmentYearPoint {
+  fy: number;
+  label: string; // e.g. "FY2025"
+  end: string; // period-end YYYY-MM-DD
+  revenue: number | null;
+  operatingIncome: number | null;
+}
+
+// A normalized segment row: the most recent year's headline figures plus the
+// derived mix/growth/margin fields and a multi-year history for sparklines.
+export interface SegmentRow {
+  name: string; // human-readable segment name (member name normalized)
+  rawMember: string | null; // original XBRL member (for debugging/provenance)
+  // Latest fiscal-year figures.
+  revenue: number | null;
+  operatingIncome: number | null;
+  // Derived (TreasuryLens-normalized) fields. Null when inputs are missing.
+  revenueMixPct: number | null; // segment revenue / total segment revenue
+  revenueYoYPct: number | null; // latest FY vs. prior FY revenue growth
+  operatingMarginPct: number | null; // operating income / revenue
+  profitMixPct: number | null; // segment OP income / total segment OP income
+  // "Punch" = profit contribution relative to revenue share (profit mix minus
+  // revenue mix, in percentage points). Positive = punches above its weight.
+  punchPpts: number | null;
+  // Ascending-by-fy history (latest last) for 3-yr trend rendering. May hold a
+  // single point when only one year is reported (UI shows trend unavailable).
+  history: SegmentYearPoint[];
+  source: SegmentSource;
+}
+
+export interface SegmentBreakdownResponse {
+  ticker: string;
+  status: SegmentStatus;
+  source: SegmentSource; // dominant source for the resolved rows
+  currency: string; // typically "USD"
+  fiscalYear: number | null; // latest fiscal year the headline figures reflect
+  periodEnd: string | null; // latest period-end the figures reflect
+  segments: SegmentRow[]; // resolved segment rows (empty when not available)
+  // Totals across resolved segments for the latest year (denominators used for
+  // mix %); null when no segments resolved.
+  totalRevenue: number | null;
+  totalOperatingIncome: number | null;
+  hasMultiYear: boolean; // true when ≥2 fiscal years resolved (trends renderable)
+  // Confidence in the breakdown: "high" for direct reported segment facts,
+  // "medium" when partially derived, "low" otherwise. Honest signal for the UI.
+  confidence: "high" | "medium" | "low" | null;
+  cik: string | null;
+  entityName: string | null;
+  asOf: number; // epoch ms the response was built
+  note: string; // human-readable status / source note
+}
+
 // Payload to add a user-defined conviction idea. Kept intentionally small —
 // ONLY the ticker is required. Everything else (name, theme, role, conviction)
 // is optional: the server infers the display name from market data when it can

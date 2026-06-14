@@ -26,6 +26,8 @@ import type {
   RevenueBridgeSource,
   RevenueBridgeYear,
   ScenarioModel,
+  SegmentBreakdownResponse,
+  SegmentRow,
 } from "@shared/schema";
 import { CONVICTION_CHART_RANGES } from "@shared/schema";
 import { Button } from "@/components/ui/button";
@@ -943,6 +945,278 @@ function GrowthGoing({
   );
 }
 
+// Tiny inline sparkline for a segment's multi-year revenue history. Renders a
+// single polyline scaled to the segment's own min/max. Returns a transparent
+// "trend unavailable" dash when fewer than 2 points exist — never fabricated.
+function SegmentSparkline({
+  values,
+  up,
+}: {
+  values: number[];
+  up: boolean | null;
+}) {
+  if (values.length < 2) {
+    return (
+      <span className="text-[10px] text-muted-foreground" title="Trend needs ≥2 reported years">
+        —
+      </span>
+    );
+  }
+  const w = 56;
+  const h = 16;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const pts = values
+    .map((v, i) => {
+      const x = (i / (values.length - 1)) * (w - 2) + 1;
+      const y = h - 1 - ((v - min) / span) * (h - 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  const stroke = up == null ? "currentColor" : up ? "#10b981" : "#f43f5e";
+  return (
+    <svg width={w} height={h} className="overflow-visible" aria-hidden="true">
+      <polyline
+        points={pts}
+        fill="none"
+        stroke={stroke}
+        strokeWidth={1.25}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+// Source badge for the segment breakdown, mirroring the bridge source badges so
+// provenance reads consistently across the Revenue Intelligence section.
+const SEGMENT_SOURCE_META: Record<string, { label: string; cls: string }> = {
+  "finance-segments": {
+    label: "Finance segments",
+    cls: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30",
+  },
+  "sec-segments": {
+    label: "SEC segments",
+    cls: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
+  },
+  "treasurylens-normalized": {
+    label: "TL normalized",
+    cls: "bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/30",
+  },
+  unavailable: {
+    label: "Unavailable",
+    cls: "bg-muted text-muted-foreground border-border/60",
+  },
+};
+
+function SegmentSourceBadge({ source }: { source: string }) {
+  const meta = SEGMENT_SOURCE_META[source] ?? SEGMENT_SOURCE_META.unavailable;
+  return (
+    <span
+      className={`inline-flex items-center rounded-sm border px-1 py-px text-[9px] font-medium ${meta.cls}`}
+      data-testid={`segment-source-${source}`}
+    >
+      {meta.label}
+    </span>
+  );
+}
+
+// Segment Breakdown — the Hybrid artifact table: Segment, Revenue, Mix, YoY,
+// OP Margin, Profit Mix, Punch, 3-Yr Trend. Replaces the old "unavailable"
+// state when real segment data resolves; otherwise renders a polished
+// unavailable note. Never fabricates: unavailable fields render as "—".
+function SegmentBreakdown({
+  ticker,
+  currency,
+}: {
+  ticker: string;
+  currency: string;
+}) {
+  const { data, isLoading, isError } = useQuery<SegmentBreakdownResponse>({
+    queryKey: ["/api/conviction-ideas/segments", ticker],
+    enabled: !!ticker,
+  });
+
+  if (isLoading) {
+    return <Skeleton className="h-[120px] rounded-md" data-testid="segments-loading" />;
+  }
+
+  const available =
+    !isError && data?.status === "available" && (data.segments?.length ?? 0) > 0;
+
+  if (!available) {
+    return (
+      <div
+        className="rounded border border-dashed border-border/60 bg-background/30 px-3 py-2 text-[11px] text-muted-foreground"
+        data-testid="revenue-segments-unavailable"
+      >
+        <span className="font-semibold text-foreground/90">Segment breakdown:</span>{" "}
+        {data?.note ??
+          "Segment-level revenue split is unavailable for this ticker. The bridge above reflects total reported revenue, not illustrative segment data."}
+      </div>
+    );
+  }
+
+  const cur = data!.currency || currency;
+  const fmtMoney = (v: number | null) =>
+    v != null ? fmtCompactCurrency(v, cur) : "—";
+  const fmtPctCell = (v: number | null) => (v != null ? fmtPct(v, 0) : "—");
+
+  return (
+    <div className="space-y-2" data-testid="revenue-segments-table">
+      <RevenueSectionHeader
+        title="Segment breakdown"
+        hint={
+          data!.fiscalYear != null
+            ? `Latest FY${data!.fiscalYear} reported segments`
+            : "Reported segments"
+        }
+        right={<SegmentSourceBadge source={data!.source} />}
+      />
+      <div className="overflow-x-auto">
+        <table className="w-full text-[10px] tabular-nums" data-testid="segments-grid">
+          <thead>
+            <tr className="text-muted-foreground text-left">
+              <th className="py-1 pr-2 font-medium">Segment</th>
+              <th className="py-1 px-1.5 font-medium text-right">Revenue</th>
+              <th className="py-1 px-1.5 font-medium text-right">Mix</th>
+              <th className="py-1 px-1.5 font-medium text-right">YoY</th>
+              <th className="py-1 px-1.5 font-medium text-right">OP Margin</th>
+              <th className="py-1 px-1.5 font-medium text-right">Profit Mix</th>
+              <th className="py-1 px-1.5 font-medium text-right">Punch</th>
+              <th className="py-1 pl-1.5 font-medium text-right">3-Yr Trend</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data!.segments.map((s: SegmentRow) => {
+              const revHist = s.history
+                .map((p) => p.revenue)
+                .filter((v): v is number => v != null);
+              const trendUp =
+                s.revenueYoYPct != null ? s.revenueYoYPct >= 0 : null;
+              return (
+                <tr
+                  key={s.rawMember ?? s.name}
+                  className="border-t border-border/40"
+                  data-testid={`segment-row-${s.name}`}
+                >
+                  <td className="py-1 pr-2 text-foreground/90 whitespace-nowrap max-w-[10rem] truncate" title={s.name}>
+                    {s.name}
+                  </td>
+                  <td className="py-1 px-1.5 text-right font-semibold text-foreground">
+                    {fmtMoney(s.revenue)}
+                  </td>
+                  <td className="py-1 px-1.5 text-right text-muted-foreground">
+                    {fmtPctCell(s.revenueMixPct)}
+                  </td>
+                  <td className={`py-1 px-1.5 text-right ${s.revenueYoYPct != null ? perfTone(s.revenueYoYPct) : "text-muted-foreground"}`}>
+                    {fmtPctCell(s.revenueYoYPct)}
+                  </td>
+                  <td className="py-1 px-1.5 text-right text-muted-foreground">
+                    {fmtPctCell(s.operatingMarginPct)}
+                  </td>
+                  <td className="py-1 px-1.5 text-right text-muted-foreground">
+                    {fmtPctCell(s.profitMixPct)}
+                  </td>
+                  <td className={`py-1 px-1.5 text-right ${s.punchPpts != null ? perfTone(s.punchPpts) : "text-muted-foreground"}`}>
+                    {s.punchPpts != null
+                      ? `${s.punchPpts >= 0 ? "+" : ""}${s.punchPpts.toFixed(1)}`
+                      : "—"}
+                  </td>
+                  <td className="py-1 pl-1.5 text-right">
+                    <div className="flex justify-end">
+                      <SegmentSparkline values={revHist} up={trendUp} />
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[10px] text-muted-foreground" data-testid="segments-note">
+        {data!.note}
+        {data!.confidence ? ` · Confidence: ${data!.confidence}` : ""}
+        {!data!.hasMultiYear ? " · Trend unavailable (single year reported)" : ""}
+      </p>
+    </div>
+  );
+}
+
+// "Where growth came from" — segment attribution variant. When reliable
+// multi-year segment history exists, attribute the latest-year revenue change
+// to each segment's YoY dollar delta. Renders the same horizontal-bar layout as
+// the total-revenue fallback so the section reads consistently.
+function GrowthCameFromSegments({
+  segments,
+  currency,
+}: {
+  segments: SegmentRow[];
+  currency: string;
+}) {
+  const deltas = useMemo(() => {
+    const out: { label: string; delta: number; growthPct: number | null }[] = [];
+    for (const s of segments) {
+      const hist = s.history.filter((p) => p.revenue != null);
+      if (hist.length < 2) continue;
+      const cur = hist[hist.length - 1].revenue!;
+      const prev = hist[hist.length - 2].revenue!;
+      out.push({
+        label: s.name,
+        delta: cur - prev,
+        growthPct: prev !== 0 ? ((cur - prev) / prev) * 100 : null,
+      });
+    }
+    // Largest absolute contribution first.
+    out.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+    return out;
+  }, [segments]);
+
+  if (deltas.length === 0) return null;
+  const maxAbs = Math.max(...deltas.map((d) => Math.abs(d.delta)), 1);
+
+  return (
+    <div className="space-y-2" data-testid="revenue-growth-came-from-segments">
+      <RevenueSectionHeader
+        title="Where growth came from"
+        hint="Latest-FY revenue change by segment"
+        right={<SegmentSourceBadge source="sec-segments" />}
+      />
+      <div className="space-y-1.5">
+        {deltas.map((d) => {
+          const pct = Math.min(100, (Math.abs(d.delta) / maxAbs) * 100);
+          const up = d.delta >= 0;
+          return (
+            <div
+              key={d.label}
+              className="grid grid-cols-[7rem_1fr_5rem] items-center gap-2"
+              data-testid={`growth-came-seg-${d.label}`}
+            >
+              <span className="text-[10px] text-muted-foreground truncate" title={d.label}>
+                {d.label}
+              </span>
+              <div className="h-3 rounded-sm bg-muted/50 overflow-hidden">
+                <div
+                  className={`h-full rounded-sm ${up ? "bg-emerald-500/70" : "bg-rose-500/70"}`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              <span className={`text-[10px] text-right tabular-nums ${perfTone(d.delta)}`}>
+                {up ? "+" : "−"}
+                {fmtCompactCurrency(Math.abs(d.delta), currency)}
+                {d.growthPct != null && (
+                  <span className="text-muted-foreground"> ({fmtPct(d.growthPct, 0)})</span>
+                )}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function RevenuePanel({
   ticker,
   keyMetrics,
@@ -956,6 +1230,28 @@ function RevenuePanel({
     queryKey: ["/api/conviction-ideas/revenue", ticker],
     enabled: !!ticker,
   });
+  // Segment breakdown shares one query for both the table and the
+  // "Where growth came from" attribution decision (single network round-trip).
+  const segmentsQuery = useQuery<SegmentBreakdownResponse>({
+    queryKey: ["/api/conviction-ideas/segments", ticker],
+    enabled: !!ticker,
+  });
+  const segments = segmentsQuery.data;
+  // Use segment attribution only when reliable multi-year segment history
+  // exists; otherwise fall back to the truthful total-revenue YoY bridge.
+  const segmentAttributionRows = useMemo(() => {
+    if (
+      segments?.status !== "available" ||
+      !segments.hasMultiYear ||
+      (segments.segments?.length ?? 0) < 2
+    ) {
+      return null;
+    }
+    const usable = segments.segments.filter(
+      (s) => s.history.filter((p) => p.revenue != null).length >= 2,
+    );
+    return usable.length >= 2 ? usable : null;
+  }, [segments]);
   const data = query.data;
   const currency = data?.currency ?? "USD";
   const annual = data?.annual ?? [];
@@ -1106,9 +1402,19 @@ function RevenuePanel({
             className="rounded-md border border-border/60 bg-background/30 p-3 space-y-3"
             data-testid="revenue-history-card"
           >
-          {/* YoY contribution bars built from reported actuals only. */}
-          {bridge && bridge.status === "available" && (
-            <GrowthCameFrom bridge={bridge} currency={currency} />
+          {/* YoY contribution: prefer real segment attribution when reliable
+              multi-year segment history exists; otherwise fall back to the
+              truthful total-revenue YoY bridge. */}
+          {segmentAttributionRows ? (
+            <GrowthCameFromSegments
+              segments={segmentAttributionRows}
+              currency={currency}
+            />
+          ) : (
+            bridge &&
+            bridge.status === "available" && (
+              <GrowthCameFrom bridge={bridge} currency={currency} />
+            )
           )}
 
           {/* Annual revenue chart (actual reported series). */}
@@ -1279,17 +1585,15 @@ function RevenuePanel({
             )}
           </div>
 
-          {/* Segment breakdown — free SEC company-facts does not expose a
-              reliable per-segment revenue split, so we surface a transparent
-              unavailable state rather than fabricating one. */}
+          {/* Segment breakdown — real per-segment revenue / operating income
+              extracted from the issuer's 10-K XBRL segment axis (Hybrid-artifact
+              table). Falls back to a polished unavailable state for
+              ETFs/funds/foreign/single-segment issuers. No fabricated data. */}
           <div
-            className="rounded border border-dashed border-border/60 bg-background/30 px-3 py-2 text-[11px] text-muted-foreground"
-            data-testid="revenue-segments-unavailable"
+            className="rounded-md border border-border/60 bg-background/30 p-3"
+            data-testid="revenue-segments-card"
           >
-            <span className="font-semibold text-foreground/90">Segment breakdown:</span>{" "}
-            Segment-level revenue split is unavailable from free SEC company-facts
-            for this ticker. The bridge above reflects total reported revenue, not
-            illustrative segment data.
+            <SegmentBreakdown ticker={ticker} currency={currency} />
           </div>
         </div>
       )}

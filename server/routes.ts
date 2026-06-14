@@ -7,6 +7,7 @@ import type { Bar } from "./indicators";
 import { computeSignal, parseSignalConfig, DEFAULT_CONFIG } from "./signals";
 import { computeBuffettIndex } from "./buffett";
 import { getEquityFundamentals, getEquityRevenue } from "./secEdgar";
+import { getSegmentBreakdown } from "./segments";
 import { getManagementGovernance } from "./secGovernance";
 import { getThirteenFSummary } from "./sec13f";
 import { getPoliticiansSummary } from "./politicians";
@@ -565,6 +566,24 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Invalid ticker." });
       }
       res.json(await getEquityRevenue(ticker));
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // Segment-level revenue / operating-income breakdown for a single conviction
+  // idea (by ticker). Provider-abstracted: a finance connector would be first
+  // priority but is deferred (no server-side credentials in the deployed
+  // runtime — see server/segments.ts), so this resolves from SEC 10-K XBRL
+  // segment-axis facts. Returns graceful not-available / not-meaningful states
+  // for ETFs/funds/foreign/single-segment issuers. Cached server-side (6h).
+  app.get("/api/conviction-ideas/segments/:ticker", async (req, res) => {
+    try {
+      const ticker = String(req.params.ticker ?? "").trim();
+      if (!ticker || !/^[A-Za-z0-9.\-]{1,12}$/.test(ticker)) {
+        return res.status(400).json({ message: "Invalid ticker." });
+      }
+      res.json(await getSegmentBreakdown(ticker));
     } catch (e) {
       res.status(500).json({ message: (e as Error).message });
     }
