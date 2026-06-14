@@ -412,9 +412,6 @@ export default function InvestmentGroups() {
                     </h2>
                     <div className="flex items-center gap-2 flex-wrap">
                       <Badge>{group.riskProfile}</Badge>
-                      {group.avgConvictionScore != null && (
-                        <Badge>Avg score {group.avgConvictionScore}</Badge>
-                      )}
                       {group.validation && (
                         <span
                           className={cn(
@@ -561,7 +558,6 @@ function MemberCard({ m }: { m: InvestmentGroupMember }) {
       </p>
 
       <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] tabular-nums">
-        <Factor label="Score" value={String(f.convictionScore)} />
         <Factor label="Upside" value={fmtPct0(f.upsidePct)} tone="text-pos" />
         <Factor
           label="Downside"

@@ -723,14 +723,6 @@ function ScenarioCard({ model }: { model: ScenarioModel }) {
           <Target className="h-3.5 w-3.5 text-primary/80" aria-hidden />
           Scenario model ({model.horizonYears}y, {model.classification})
         </div>
-        <div className="text-[11px] text-muted-foreground">
-          Reward/risk:{" "}
-          <span className="font-semibold text-foreground">
-            {model.rewardRiskRatio != null
-              ? `${model.rewardRiskRatio.toFixed(2)}×`
-              : "—"}
-          </span>
-        </div>
       </div>
       <div className="grid grid-cols-3 gap-2">
         {cases.map(({ c, color }) => (
@@ -1296,13 +1288,14 @@ function IdeaDetail({
             testId="metric-perf12m"
           />
           <MetricCard
-            label="Reward / risk"
+            label="Base upside"
             value={
-              idea.scenarioModel?.rewardRiskRatio != null
-                ? `${idea.scenarioModel.rewardRiskRatio.toFixed(2)}×`
+              idea.scenarioModel?.base.outputs.impliedReturnPct != null
+                ? fmtPct(idea.scenarioModel.base.outputs.impliedReturnPct, 0)
                 : "N/A"
             }
-            testId="metric-rewardrisk"
+            tone={perfTone(idea.scenarioModel?.base.outputs.impliedReturnPct)}
+            testId="metric-base-upside"
           />
         </div>
 

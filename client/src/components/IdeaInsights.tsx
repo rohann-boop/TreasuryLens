@@ -742,7 +742,7 @@ export function SignalConvictionPanel({
           </div>
 
           {/* Levels */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" data-testid="signal-levels">
+          <div className="grid grid-cols-3 gap-2" data-testid="signal-levels">
             <div className="rounded border border-border/60 bg-background/40 px-2.5 py-2">
               <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground">
                 <TrendingDown className="h-3 w-3" /> Stop
@@ -757,12 +757,6 @@ export function SignalConvictionPanel({
               </div>
               <div className="tabular-nums font-semibold text-sm mt-0.5 text-pos">
                 {fmtPrice(signal.targetPrice, "USD")}
-              </div>
-            </div>
-            <div className="rounded border border-border/60 bg-background/40 px-2.5 py-2">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Reward / risk</div>
-              <div className="tabular-nums font-semibold text-sm mt-0.5">
-                {signal.rewardRiskRatio != null ? `${signal.rewardRiskRatio.toFixed(2)}×` : "—"}
               </div>
             </div>
             <div className="rounded border border-border/60 bg-background/40 px-2.5 py-2">
@@ -1445,15 +1439,6 @@ export function ConvictionSignalBlock({ c }: { c: ConvictionSignal }) {
         <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
           Conviction signal — scenario read
         </div>
-        {c.estimatedRewardRisk != null && (
-          <div className="text-[10px] text-muted-foreground" data-testid="conviction-reward-risk">
-            Est. reward/risk{" "}
-            <span className="font-semibold tabular-nums text-foreground/90">
-              {c.estimatedRewardRisk.toFixed(2)}×
-            </span>{" "}
-            <span className="opacity-70">(scenario estimate, not a fixed target)</span>
-          </div>
-        )}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">

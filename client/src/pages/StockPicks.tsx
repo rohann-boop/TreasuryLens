@@ -98,8 +98,7 @@ type SortKey =
   | "baseUpside"
   | "risk"
   | "bullUpside"
-  | "bearDownside"
-  | "rewardRisk";
+  | "bearDownside";
 
 const RISK_ORDER = ["low", "moderate", "elevated", "high", "very high"];
 
@@ -157,11 +156,6 @@ function pctTone(p: number | null | undefined): string {
 function fmtRatio(p: number | null | undefined, digits = 2): string {
   if (p == null || !Number.isFinite(p)) return "—";
   return p.toFixed(digits);
-}
-
-function fmtRewardRisk(r: number | null | undefined): string {
-  if (r == null || !Number.isFinite(r)) return "—";
-  return `${r.toFixed(2)}×`;
 }
 
 function fmtMultiple(m: number | null | undefined): string {
@@ -828,7 +822,7 @@ function ScenarioPanel({ pick }: { pick: StockPick }) {
           <span className="capitalize">{sm.modelConfidence}</span>
         </div>
       </div>
-      <div className="grid grid-cols-3 gap-2 text-[11px]">
+      <div className="grid grid-cols-2 gap-2 text-[11px]">
         <div>
           <div className="text-muted-foreground">Bull upside</div>
           <div
@@ -845,15 +839,6 @@ function ScenarioPanel({ pick }: { pick: StockPick }) {
             data-testid="scenario-bear-downside"
           >
             {fmtSignedPct(sm.bearDownsidePct, 0)}
-          </div>
-        </div>
-        <div>
-          <div className="text-muted-foreground">Reward / risk</div>
-          <div
-            className="tabular-nums font-medium"
-            data-testid="scenario-reward-risk"
-          >
-            {fmtRewardRisk(sm.rewardRiskRatio)}
           </div>
         </div>
       </div>
@@ -1018,7 +1003,7 @@ function PicksTable({
   selectedTicker: string | null;
   onSelect: (ticker: string) => void;
 }) {
-  const [sortKey, setSortKey] = useState<SortKey>("rewardRisk");
+  const [sortKey, setSortKey] = useState<SortKey>("baseUpside");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   const onSort = (k: SortKey) => {
@@ -1103,12 +1088,6 @@ function PicksTable({
           return compareNullableNum(
             a.scenarioModel?.bearDownsidePct,
             b.scenarioModel?.bearDownsidePct,
-            sortDir,
-          );
-        case "rewardRisk":
-          return compareNullableNum(
-            a.scenarioModel?.rewardRiskRatio,
-            b.scenarioModel?.rewardRiskRatio,
             sortDir,
           );
       }
@@ -1265,17 +1244,6 @@ function PicksTable({
             </th>
             <th className="px-3 py-2 text-right">
               <SortHeader
-                label="R/R"
-                k="rewardRisk"
-                active={sortKey}
-                dir={sortDir}
-                onSort={onSort}
-                align="right"
-                testId="picks-sort-reward-risk"
-              />
-            </th>
-            <th className="px-3 py-2 text-right">
-              <SortHeader
                 label="Base %"
                 k="baseUpside"
                 active={sortKey}
@@ -1367,12 +1335,6 @@ function PicksTable({
                   data-testid={`picks-cell-bear-downside-${p.ticker}`}
                 >
                   {fmtSignedPct(p.scenarioModel?.bearDownsidePct, 0)}
-                </td>
-                <td
-                  className="px-3 py-2 text-right tabular-nums text-muted-foreground"
-                  data-testid={`picks-cell-reward-risk-${p.ticker}`}
-                >
-                  {fmtRewardRisk(p.scenarioModel?.rewardRiskRatio)}
                 </td>
                 <td
                   className={`px-3 py-2 text-right tabular-nums ${pctTone(p.scenarioModel?.base.outputs.impliedReturnPct)}`}

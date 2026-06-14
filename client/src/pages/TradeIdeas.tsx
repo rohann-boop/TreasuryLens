@@ -270,7 +270,7 @@ function FilterChips<T extends string | number>({
 type LongSortKey =
   | "ideaScore"
   | "ticker"
-  | "rewardRisk"
+  | "baseUpside"
   | "bull"
   | "risk"
   | "entry";
@@ -309,8 +309,8 @@ function LongsTable({
       switch (sortKey) {
         case "ticker":
           return compareStr(a.ticker, b.ticker, sortDir);
-        case "rewardRisk":
-          return compareNum(a.rewardRisk, b.rewardRisk, sortDir);
+        case "baseUpside":
+          return compareNum(a.baseUpsidePct, b.baseUpsidePct, sortDir);
         case "bull":
           return compareNum(a.bullUpsidePct, b.bullUpsidePct, sortDir);
         case "risk":
@@ -344,8 +344,8 @@ function LongsTable({
               <SortHeader label="Ticker" k="ticker" active={sortKey} dir={sortDir} onSort={onSort} />
             </th>
             <th className="px-3 py-2 text-left hidden sm:table-cell">Upside</th>
-            <th className="px-3 py-2 text-left hidden md:table-cell">
-              <SortHeader label="R/R" k="rewardRisk" active={sortKey} dir={sortDir} onSort={onSort} />
+            <th className="px-3 py-2 text-right hidden md:table-cell">
+              <SortHeader label="Base" k="baseUpside" active={sortKey} dir={sortDir} onSort={onSort} align="right" />
             </th>
             <th className="px-3 py-2 text-left">
               <SortHeader label="Entry" k="entry" active={sortKey} dir={sortDir} onSort={onSort} />
@@ -380,8 +380,8 @@ function LongsTable({
               <td className="px-3 py-2 hidden sm:table-cell">
                 <UpsideBadge value={r.upsideClass} />
               </td>
-              <td className="px-3 py-2 hidden md:table-cell tabular-nums text-[11px] text-foreground/90">
-                {r.rewardRisk != null ? `${r.rewardRisk.toFixed(2)}×` : "—"}
+              <td className={cn("px-3 py-2 hidden md:table-cell text-right tabular-nums text-[11px]", pctTone(r.baseUpsidePct))}>
+                {fmtPct(r.baseUpsidePct, 0)}
               </td>
               <td className="px-3 py-2 text-[11px] text-foreground/90">{r.entryLabel}</td>
               <td className={cn("px-3 py-2 text-right tabular-nums hidden md:table-cell", pctTone(r.bullUpsidePct))}>
@@ -601,9 +601,9 @@ function LongDetail({ long }: { long: TradeIdeaLong }) {
           Price <span className="text-foreground tabular-nums">{fmtPrice(long.price, cur)}</span>
         </span>
         <span className="text-muted-foreground">
-          Reward/Risk{" "}
+          Base upside{" "}
           <span className="text-foreground tabular-nums">
-            {long.rewardRisk != null ? `${long.rewardRisk.toFixed(1)}x` : "—"}
+            {fmtPct(long.baseUpsidePct, 0)}
           </span>
         </span>
         <span className="text-muted-foreground">
