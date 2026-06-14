@@ -63,7 +63,7 @@ export default function Dashboard() {
         <div className="flex items-center gap-3 min-w-0">
           <WordMark />
           <span className="hidden md:inline text-[11px] text-muted-foreground border-l border-border pl-3">
-            Watchlist &amp; conviction ideas
+            Watchlist &amp; research ideas
           </span>
         </div>
         <div className="flex items-center gap-2">

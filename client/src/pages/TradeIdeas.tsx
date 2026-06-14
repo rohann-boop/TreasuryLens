@@ -160,20 +160,6 @@ function MultipleBadge({ option }: { option: TradeIdeaOption }) {
   );
 }
 
-function ConvictionBar({ score }: { score: number }) {
-  const clamped = Math.max(0, Math.min(100, score));
-  const tone =
-    clamped >= 70 ? "bg-pos" : clamped >= 50 ? "bg-primary" : clamped >= 30 ? "bg-warn" : "bg-neg";
-  return (
-    <div className="flex items-center gap-2">
-      <div className="w-14 h-1.5 rounded bg-muted/40 overflow-hidden">
-        <div className={cn("h-full", tone)} style={{ width: `${clamped}%` }} />
-      </div>
-      <span className="tabular-nums text-[11px] text-muted-foreground">{clamped}</span>
-    </div>
-  );
-}
-
 function SortHeader<K extends string>({
   label,
   k,
@@ -284,7 +270,7 @@ function FilterChips<T extends string | number>({
 type LongSortKey =
   | "ideaScore"
   | "ticker"
-  | "conviction"
+  | "rewardRisk"
   | "bull"
   | "risk"
   | "entry";
@@ -323,8 +309,8 @@ function LongsTable({
       switch (sortKey) {
         case "ticker":
           return compareStr(a.ticker, b.ticker, sortDir);
-        case "conviction":
-          return compareNum(a.convictionScore, b.convictionScore, sortDir);
+        case "rewardRisk":
+          return compareNum(a.rewardRisk, b.rewardRisk, sortDir);
         case "bull":
           return compareNum(a.bullUpsidePct, b.bullUpsidePct, sortDir);
         case "risk":
@@ -359,7 +345,7 @@ function LongsTable({
             </th>
             <th className="px-3 py-2 text-left hidden sm:table-cell">Upside</th>
             <th className="px-3 py-2 text-left hidden md:table-cell">
-              <SortHeader label="Conviction" k="conviction" active={sortKey} dir={sortDir} onSort={onSort} />
+              <SortHeader label="R/R" k="rewardRisk" active={sortKey} dir={sortDir} onSort={onSort} />
             </th>
             <th className="px-3 py-2 text-left">
               <SortHeader label="Entry" k="entry" active={sortKey} dir={sortDir} onSort={onSort} />
@@ -394,8 +380,8 @@ function LongsTable({
               <td className="px-3 py-2 hidden sm:table-cell">
                 <UpsideBadge value={r.upsideClass} />
               </td>
-              <td className="px-3 py-2 hidden md:table-cell">
-                <ConvictionBar score={r.convictionScore} />
+              <td className="px-3 py-2 hidden md:table-cell tabular-nums text-[11px] text-foreground/90">
+                {r.rewardRisk != null ? `${r.rewardRisk.toFixed(2)}×` : "—"}
               </td>
               <td className="px-3 py-2 text-[11px] text-foreground/90">{r.entryLabel}</td>
               <td className={cn("px-3 py-2 text-right tabular-nums hidden md:table-cell", pctTone(r.bullUpsidePct))}>
@@ -655,9 +641,9 @@ function LongDetail({ long }: { long: TradeIdeaLong }) {
       />
 
       <div className="text-[10px] text-muted-foreground leading-relaxed border-t border-border/50 pt-3">
-        Source / model: {long.sourceNote} · Data confidence: {long.dataConfidence}. Idea score is a
-        transparent blend of conviction, scenario reward/risk, entry quality and base-case room.
-        Research only — not financial advice.
+        Source / model: {long.sourceNote} · Data confidence: {long.dataConfidence}. Model Score is a
+        transparent blend of scenario reward/risk, base-case room, entry quality, catalyst/actionability
+        and a downside guardrail — model-derived inputs only. Research only — not financial advice.
       </div>
     </div>
   );
@@ -865,10 +851,11 @@ export default function TradeIdeas() {
             Trade Ideas
           </h1>
           <p className="text-[12px] text-muted-foreground leading-relaxed max-w-3xl">
-            The most actionable ideas distilled from the curated universe. <b>Longs</b> ranks equity
-            ideas by conviction, entry quality and scenario reward/risk. <b>Options</b> converts those
-            same theses into ranked bullish structures, surfacing modeled 2x/3x scenarios. These are
-            research ideas, not personalized financial advice.
+            The most model-ranked ideas distilled from the curated universe. <b>Longs</b> ranks equity
+            ideas by a computed Model Score — scenario reward/risk, base-case room, entry quality and
+            catalyst/actionability. <b>Options</b> converts those same theses into ranked bullish
+            structures, surfacing modeled 2x/3x scenarios. These are research ideas, not personalized
+            financial advice.
           </p>
           <div className="flex items-start gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-600 dark:text-amber-400 max-w-3xl">
             <ShieldAlert className="h-3.5 w-3.5 mt-0.5 shrink-0" aria-hidden />

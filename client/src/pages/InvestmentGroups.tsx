@@ -199,7 +199,7 @@ export default function InvestmentGroups() {
             Investment Groups
           </h1>
           <p className="text-[12px] text-muted-foreground leading-relaxed max-w-3xl">
-            Turn the Quant / conviction universe into{" "}
+            Turn the Quant / model-scored universe into{" "}
             <span className="font-medium text-foreground/90">
               explainable research baskets
             </span>
@@ -214,8 +214,8 @@ export default function InvestmentGroups() {
           >
             <ShieldAlert className="h-3.5 w-3.5 mt-0.5 shrink-0" aria-hidden />
             <span>
-              Baskets are assembled deterministically from curated conviction
-              scores, the scenario model and trailing performance. Validation
+              Baskets are assembled deterministically from the model score, the
+              scenario model and trailing performance. Validation
               badges come from a technical-only backtest of the momentum/risk
               slice — they do not validate these baskets as portfolios.
             </span>
@@ -279,7 +279,7 @@ export default function InvestmentGroups() {
             <div className="space-y-1.5" data-testid="control-min-score">
               <div className="flex items-center justify-between gap-2">
                 <label className="text-[12px] font-medium text-foreground/90">
-                  Minimum Quant / conviction score
+                  Minimum model score
                 </label>
                 <span className="text-[12px] tabular-nums font-semibold text-foreground/90">
                   {minScore}
@@ -291,7 +291,7 @@ export default function InvestmentGroups() {
                 max={100}
                 step={5}
                 onValueChange={(v) => setMinScore(v[0] ?? 0)}
-                aria-label="Minimum conviction score"
+                aria-label="Minimum model score"
               />
             </div>
 

@@ -95,7 +95,7 @@ type SortKey =
   | "perf6m"
   | "perf12m"
   | "scenario"
-  | "conviction"
+  | "baseUpside"
   | "risk"
   | "bullUpside"
   | "bearDownside"
@@ -252,31 +252,6 @@ function RiskBadge({ value }: { value: string }) {
     >
       {value}
     </span>
-  );
-}
-
-function ConvictionBar({ score }: { score: number }) {
-  const clamped = Math.max(0, Math.min(100, score));
-  const tone =
-    clamped >= 70
-      ? "bg-pos"
-      : clamped >= 50
-      ? "bg-primary"
-      : clamped >= 30
-      ? "bg-warn"
-      : "bg-neg";
-  return (
-    <div className="flex items-center gap-2">
-      <div className="w-16 h-1.5 rounded bg-muted/40 overflow-hidden">
-        <div
-          className={`h-full ${tone}`}
-          style={{ width: `${clamped}%` }}
-        />
-      </div>
-      <span className="tabular-nums text-[11px] text-muted-foreground">
-        {clamped}
-      </span>
-    </div>
   );
 }
 
@@ -1043,7 +1018,7 @@ function PicksTable({
   selectedTicker: string | null;
   onSelect: (ticker: string) => void;
 }) {
-  const [sortKey, setSortKey] = useState<SortKey>("conviction");
+  const [sortKey, setSortKey] = useState<SortKey>("rewardRisk");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   const onSort = (k: SortKey) => {
@@ -1110,8 +1085,12 @@ function PicksTable({
           );
         case "scenario":
           return compareStr(a.scenarioPotential, b.scenarioPotential, sortDir);
-        case "conviction":
-          return compareNum(a.convictionScore, b.convictionScore, sortDir);
+        case "baseUpside":
+          return compareNullableNum(
+            a.scenarioModel?.base.outputs.impliedReturnPct,
+            b.scenarioModel?.base.outputs.impliedReturnPct,
+            sortDir,
+          );
         case "risk":
           return compareOrdered(a.riskLevel, b.riskLevel, RISK_ORDER, sortDir);
         case "bullUpside":
@@ -1295,14 +1274,15 @@ function PicksTable({
                 testId="picks-sort-reward-risk"
               />
             </th>
-            <th className="px-3 py-2 text-left">
+            <th className="px-3 py-2 text-right">
               <SortHeader
-                label="Conviction"
-                k="conviction"
+                label="Base %"
+                k="baseUpside"
                 active={sortKey}
                 dir={sortDir}
                 onSort={onSort}
-                testId="picks-sort-conviction"
+                align="right"
+                testId="picks-sort-base-upside"
               />
             </th>
             <th className="px-3 py-2 text-left">
@@ -1394,8 +1374,11 @@ function PicksTable({
                 >
                   {fmtRewardRisk(p.scenarioModel?.rewardRiskRatio)}
                 </td>
-                <td className="px-3 py-2">
-                  <ConvictionBar score={p.convictionScore} />
+                <td
+                  className={`px-3 py-2 text-right tabular-nums ${pctTone(p.scenarioModel?.base.outputs.impliedReturnPct)}`}
+                  data-testid={`picks-cell-base-upside-${p.ticker}`}
+                >
+                  {fmtSignedPct(p.scenarioModel?.base.outputs.impliedReturnPct, 0)}
                 </td>
                 <td className="px-3 py-2">
                   <RiskBadge value={p.riskLevel} />

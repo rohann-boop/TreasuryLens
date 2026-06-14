@@ -179,11 +179,14 @@ function invalidationLevel(pick: StockPick): number | null {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Long idea score
+// Long idea score (Model Score)
 //
-// A transparent 0-100 blend that rewards: conviction, entry quality, a healthy
-// scenario reward/risk, and meaningful base-case room — penalising names whose
-// only appeal is a low-probability bull tail. NOT a price predictor.
+// A transparent 0-100 blend driven by computed, model-derived inputs: scenario
+// reward/risk, base-case room, entry quality and catalyst/actionability — with
+// a downside guardrail so names whose only appeal is a low-probability bull tail
+// are penalised. The manual conviction score is NOT a visible ranking input; it
+// is retained only as a faint internal tiebreaker so legacy ordering stays
+// stable when the computed inputs are otherwise equal. NOT a price predictor.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function rewardRiskPoints(rr: number | null): number {
@@ -198,31 +201,65 @@ function baseRoomPoints(baseUpsidePct: number | null): number {
   return clamp(30 + baseUpsidePct, 0, 95);
 }
 
+// Catalyst / actionability points: a name with concrete near-term "what must be
+// true" catalysts and an attractive/fair entry is more actionable than one
+// resting on a distant story. Blends catalyst presence with entry quality.
+function catalystPoints(pick: StockPick, entryQuality: EntryQuality): number {
+  const hasCat = pick.whatMustBeTrue.length > 0;
+  const catBase = hasCat ? clamp(45 + pick.whatMustBeTrue.length * 12, 45, 85) : 35;
+  const entryBlend = ENTRY_QUALITY_POINTS[entryQuality];
+  return clamp(catBase * 0.6 + entryBlend * 0.4, 0, 95);
+}
+
+// Downside guardrail points: reward shallower bear-case drawdowns and lower risk
+// levels so the ranking favours setups with contained downside.
+function downsideGuardPoints(pick: StockPick): number {
+  const bearDown = pick.scenarioModel?.bearDownsidePct ?? null;
+  let pts = bearDown == null ? 55 : clamp(85 + bearDown, 10, 95); // bearDown is negative
+  if (pick.riskLevel === "low") pts += 8;
+  else if (pick.riskLevel === "high" || pick.riskLevel === "very high") pts -= 8;
+  return clamp(pts, 0, 95);
+}
+
 function buildLong(pick: StockPick): TradeIdeaLong {
   const sm = pick.scenarioModel ?? null;
   const km = pick.keyMetrics ?? null;
   const entry = deriveEntryQuality(pick);
 
-  const convictionPts = clamp(pick.convictionScore, 0, 100);
   const entryPts = ENTRY_QUALITY_POINTS[entry.quality];
   const rrPts = rewardRiskPoints(sm?.rewardRiskRatio ?? null);
   const baseRoom = baseRoomPoints(sm?.base.outputs.impliedReturnPct ?? null);
+  const catalystPts = catalystPoints(pick, entry.quality);
+  const guardPts = downsideGuardPoints(pick);
 
-  // Weighted blend. Conviction and reward/risk lead; entry quality and base-case
-  // room round it out so we favour actionable setups over pure long-tail bets.
-  const ideaScore = round(
-    convictionPts * 0.4 + rrPts * 0.25 + entryPts * 0.2 + baseRoom * 0.15,
-    0,
-  );
+  // Model Score — a weighted blend of computed/model-derived inputs only.
+  // Scenario reward/risk leads, followed by base-case room, entry quality,
+  // catalyst/actionability and a downside guardrail. Manual conviction is NOT
+  // an input. A faint conviction tiebreaker is applied separately below so the
+  // headline score never reads as a manual-conviction proxy.
+  const computedScore =
+    rrPts * 0.3 +
+    baseRoom * 0.22 +
+    entryPts * 0.2 +
+    catalystPts * 0.18 +
+    guardPts * 0.1;
+  // Tiebreaker only: nudges by at most ±1 point on a 0-100 scale.
+  const convictionTiebreak = (clamp(pick.convictionScore, 0, 100) - 50) / 50;
+  const ideaScore = round(clamp(computedScore + convictionTiebreak, 0, 100), 0);
 
   const rationale: string[] = [];
-  rationale.push(`Conviction ${pick.convictionScore}/100 (${pick.riskLevel} risk).`);
   if (sm?.rewardRiskRatio != null) {
     rationale.push(
       `Scenario reward/risk ~${sm.rewardRiskRatio.toFixed(1)}x (bull ${Math.round(sm.bullUpsidePct)}% vs bear ${Math.round(sm.bearDownsidePct)}%).`,
     );
   }
+  if (sm?.base.outputs.impliedReturnPct != null) {
+    rationale.push(`Base case implies ~${Math.round(sm.base.outputs.impliedReturnPct)}% room.`);
+  }
   rationale.push(`Entry read: ${entry.label}. ${entry.rationale[0] ?? ""}`.trim());
+  if (pick.whatMustBeTrue.length > 0) {
+    rationale.push(`${pick.whatMustBeTrue.length} tracked catalyst(s) (${pick.riskLevel} risk).`);
+  }
   if (pick.upsideCase) rationale.push(`Upside case: ${pick.upsideCase}`);
 
   const whatWouldChange =
@@ -743,7 +780,7 @@ async function buildResponse(): Promise<TradeIdeasResponse> {
     },
     methodology: {
       longs:
-        "Each long idea reuses the curated conviction score, risk level and the deterministic scenario model (bull/base/bear target multiples and reward/risk) from Stock Picks. Idea score = 40% conviction + 25% scenario reward/risk + 20% entry quality + 15% base-case room. Entry quality is derived from trailing 6m momentum vs remaining base-case upside. Nothing is forecast; ranking is a transparent weighted blend.",
+        "Each long idea is ranked by a computed Model Score derived from the deterministic scenario model (bull/base/bear target multiples and reward/risk) and trailing data from Stock Picks — no manual conviction input. Model Score = 30% scenario reward/risk + 22% base-case room + 20% entry quality + 18% catalyst/actionability + 10% downside guardrail. Entry quality is derived from trailing 6m momentum vs remaining base-case upside; the downside guardrail rewards contained bear-case drawdowns and lower risk levels. Nothing is forecast; ranking is a transparent weighted blend of model-derived inputs.",
       options:
         "Option structures are MODELED FALLBACKS — no live option chain is wired. Premiums use an ATM proxy (0.4 · price · vol · √T) where vol is a risk-level proxy; strikes are placed off current price and the scenario targets. Max risk/reward, breakeven, an estimated profit probability (lognormal drift toward the base case) and a bull payoff multiple on capital at risk are computed per structure. Ideas are ranked by a payoff-adjusted actionability score (45% thesis score + 35% est. profit probability + 20% capped payoff multiple) so defined-risk, higher-probability structures outrank low-odds long shots. 2x/3x flags mean the modeled bull payoff on risk reaches ≥2x/≥3x — a scenario, not a promise.",
     },

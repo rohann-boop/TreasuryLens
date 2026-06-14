@@ -40,7 +40,7 @@ const riskRank = (r: RiskLevel | null): number =>
   r == null ? RISK_ORDER.length : RISK_ORDER.indexOf(r);
 
 const DISCLAIMER =
-  "Investment Groups are model-driven research baskets, not personalized financial advice, not a portfolio, and not a recommendation. They are assembled deterministically from the curated conviction universe (conviction score, scenario model, themes, risk level and trailing price performance). Validation badges come from a technical-only backtest of the momentum/risk slice of the model — they do NOT validate these baskets as portfolios. Investments can lose value.";
+  "Investment Groups are model-driven research baskets, not personalized financial advice, not a portfolio, and not a recommendation. They are assembled deterministically from the curated universe (model score, scenario model, themes, risk level and trailing price performance). Validation badges come from a technical-only backtest of the momentum/risk slice of the model — they do NOT validate these baskets as portfolios. Investments can lose value.";
 
 // A normalised view of one universe idea with the factor reads the templates
 // rank on. Pure data — no I/O.
@@ -140,9 +140,9 @@ const TEMPLATES: TemplateDef[] = [
     id: "core-compounders",
     name: "Core Compounders",
     blurb:
-      "High conviction, durable compounders with a constructive trend and lower relative risk.",
+      "Durable compounders with a strong model score, a constructive trend and lower relative risk.",
     modelLens:
-      "Ranks the universe on curated conviction score and a compounder/defensive scenario classification, tilted toward lower risk and a steady trend.",
+      "Ranks the universe on the model score and a compounder/defensive scenario classification, tilted toward lower risk and a steady trend.",
     presetId: "risk-control",
     themeMatch: (c) =>
       c.classification === "compounder" || c.classification === "defensive",
@@ -162,14 +162,14 @@ const TEMPLATES: TemplateDef[] = [
       return score;
     },
     rationale: (c) =>
-      `Conviction ${c.convictionScore}/100, ${c.classification ?? "n/a"} profile, ${c.riskLevel ?? "n/a"} risk — a durable-compounder candidate.`,
+      `Model score ${c.convictionScore}/100, ${c.classification ?? "n/a"} profile, ${c.riskLevel ?? "n/a"} risk — a durable-compounder candidate.`,
     whyTheseNames: [
-      "Highest curated conviction scores with a compounder or defensive scenario classification.",
+      "Highest model scores with a compounder or defensive scenario classification.",
       "Risk-tilted: lower-risk names are preferred so the basket leans toward durability over upside.",
       "A constructive (non-negative) trend adds a small fit bonus; momentum is not the primary driver.",
     ],
     whatWouldChange: [
-      "Raising the minimum conviction score tightens the basket to only the strongest-conviction names.",
+      "Raising the minimum model score tightens the basket to only the strongest-scoring names.",
       "Lowering the max risk tolerance drops the more volatile compounders.",
       "A name being re-classified away from compounder/defensive would lower its fit and could remove it.",
     ],
@@ -210,11 +210,11 @@ const TEMPLATES: TemplateDef[] = [
     whyTheseNames: [
       "Widest scenario bull-case upside, with a 3x/5x or speculative classification.",
       "Higher risk is allowed by design — this basket trades durability for asymmetric optionality.",
-      "Conviction score is a tiebreaker, not the main driver, so high-variance names can still rank.",
+      "Model score is a tiebreaker, not the main driver, so high-variance names can still rank.",
     ],
     whatWouldChange: [
       "Tightening the max risk tolerance removes the most speculative names and shrinks the basket.",
-      "A higher minimum conviction score filters out the lowest-conviction lottery tickets.",
+      "A higher minimum model score filters out the lowest-scoring lottery tickets.",
       "A name's bull case being revised down would drop its fit score.",
     ],
     riskProfile: "Higher risk by design",
@@ -224,9 +224,9 @@ const TEMPLATES: TemplateDef[] = [
     id: "ai-infrastructure",
     name: "AI Infrastructure",
     blurb:
-      "Compute, silicon, networking and data names powering the AI build-out, ranked by conviction and trend.",
+      "Compute, silicon, networking and data names powering the AI build-out, ranked by model score and trend.",
     modelLens:
-      "Filters to AI-infrastructure themes (compute / semis / networking / data / cloud) from the universe metadata, then ranks on conviction and momentum.",
+      "Filters to AI-infrastructure themes (compute / semis / networking / data / cloud) from the universe metadata, then ranks on model score and momentum.",
     presetId: "growth-tilt",
     themeMatch: (c) =>
       themeHas(c, [
@@ -252,15 +252,15 @@ const TEMPLATES: TemplateDef[] = [
       return base;
     },
     rationale: (c) =>
-      `AI-infrastructure theme (${c.themes.slice(0, 2).join(", ") || "thematic"}); conviction ${c.convictionScore}/100, ${c.riskLevel ?? "n/a"} risk.`,
+      `AI-infrastructure theme (${c.themes.slice(0, 2).join(", ") || "thematic"}); model score ${c.convictionScore}/100, ${c.riskLevel ?? "n/a"} risk.`,
     whyTheseNames: [
       "Selected by AI-infrastructure theme tags (compute, semis, networking, data, cloud) already on each name.",
-      "Within the theme, names are ranked by curated conviction and trailing trend.",
+      "Within the theme, names are ranked by model score and trailing trend.",
       "Scenario upside breaks ties so the higher-optionality infra names rank ahead of equally-rated peers.",
     ],
     whatWouldChange: [
       "A name losing its AI-infrastructure theme tags would drop out of the universe filter.",
-      "Raising the minimum conviction score concentrates the basket on the highest-conviction infra names.",
+      "Raising the minimum model score concentrates the basket on the highest-scoring infra names.",
       "Lowering max risk removes the more speculative infra plays.",
     ],
     riskProfile: "Mixed (theme-driven)",
@@ -272,7 +272,7 @@ const TEMPLATES: TemplateDef[] = [
     blurb:
       "Generation, grid, nuclear/uranium and power names levered to AI-driven electricity demand.",
     modelLens:
-      "Filters to energy/power themes (power, grid, nuclear, uranium, utilities, IPP) from the universe, then ranks on conviction and risk-adjusted trend.",
+      "Filters to energy/power themes (power, grid, nuclear, uranium, utilities, IPP) from the universe, then ranks on model score and risk-adjusted trend.",
     presetId: "default",
     themeMatch: (c) =>
       themeHas(c, [
@@ -296,15 +296,15 @@ const TEMPLATES: TemplateDef[] = [
       return base;
     },
     rationale: (c) =>
-      `Energy/power theme (${c.themes.slice(0, 2).join(", ") || "thematic"}); conviction ${c.convictionScore}/100, ${c.riskLevel ?? "n/a"} risk.`,
+      `Energy/power theme (${c.themes.slice(0, 2).join(", ") || "thematic"}); model score ${c.convictionScore}/100, ${c.riskLevel ?? "n/a"} risk.`,
     whyTheseNames: [
       "Selected by energy/power theme tags (power, grid, nuclear, uranium, utilities, IPP) on each name.",
-      "Ranked by conviction with a trend read and a mild lower-risk tilt for the regulated/utility names.",
+      "Ranked by model score with a trend read and a mild lower-risk tilt for the regulated/utility names.",
       "Scenario upside breaks ties so the higher-beta power names can still surface.",
     ],
     whatWouldChange: [
       "A name losing its energy/power theme tags would drop out of the universe filter.",
-      "Raising the minimum conviction score tightens the basket.",
+      "Raising the minimum model score tightens the basket.",
       "Lowering max risk removes the most volatile uranium/IPP names.",
     ],
     riskProfile: "Mixed (theme-driven)",
@@ -314,9 +314,9 @@ const TEMPLATES: TemplateDef[] = [
     id: "risk-controlled",
     name: "Risk-Controlled Watchlist",
     blurb:
-      "Positive-conviction names with the lowest relative risk and downside — a calmer research book.",
+      "Constructive-model-score names with the lowest relative risk and downside — a calmer research book.",
     modelLens:
-      "Ranks on lower risk level and a shallower scenario downside, gated to names with a constructive conviction score.",
+      "Ranks on lower risk level and a shallower scenario downside, gated to names with a constructive model score.",
     presetId: "risk-control",
     themeMatch: (c) =>
       c.riskLevel === "low" || c.riskLevel === "moderate",
@@ -335,16 +335,16 @@ const TEMPLATES: TemplateDef[] = [
       return score;
     },
     rationale: (c) =>
-      `${c.riskLevel ?? "n/a"} risk, bear case ${c.downsidePct == null ? "n/a" : `${Math.round(c.downsidePct)}%`}, conviction ${c.convictionScore}/100 — a lower-volatility candidate.`,
+      `${c.riskLevel ?? "n/a"} risk, bear case ${c.downsidePct == null ? "n/a" : `${Math.round(c.downsidePct)}%`}, model score ${c.convictionScore}/100 — a lower-volatility candidate.`,
     whyTheseNames: [
       "Lowest relative risk levels are preferred, with a shallower scenario bear-case downside.",
-      "A constructive curated conviction score keeps the basket to names with a real thesis.",
+      "A constructive model score keeps the basket to names with a real thesis.",
       "Momentum is intentionally not a driver here — the goal is a calmer book, not the hottest trend.",
     ],
     whatWouldChange: [
       "Lowering the max risk tolerance tightens the basket to only the calmest names.",
       "A name's scenario downside deepening would lower its fit and could remove it.",
-      "Raising the minimum conviction score filters out lower-conviction defensives.",
+      "Raising the minimum model score filters out lower-scored defensives.",
     ],
     riskProfile: "Lowest relative risk",
     upsideProfile: "Capital-preservation tilt",
@@ -355,7 +355,7 @@ const TEMPLATES: TemplateDef[] = [
     blurb:
       "Names with the strongest trailing trend — momentum/breakout-oriented, ranked on price performance.",
     modelLens:
-      "Ranks on trailing 6m/12m price performance (momentum), with conviction as a quality gate.",
+      "Ranks on trailing 6m/12m price performance (momentum), with model score as a quality gate.",
     presetId: "momentum-tilt",
     themeMatch: (c) => (c.change6mPct ?? 0) > 0 || (c.change12mPct ?? 0) > 0,
     fit: (c) => {
@@ -367,12 +367,12 @@ const TEMPLATES: TemplateDef[] = [
       `Trend 6m ${c.change6mPct == null ? "n/a" : `${c.change6mPct >= 0 ? "+" : ""}${Math.round(c.change6mPct)}%`} / 12m ${c.change12mPct == null ? "n/a" : `${c.change12mPct >= 0 ? "+" : ""}${Math.round(c.change12mPct)}%`} — momentum candidate.`,
     whyTheseNames: [
       "Ranked primarily on trailing 6m/12m price performance — the strongest trends rank first.",
-      "Curated conviction acts as a light quality gate so the basket isn't pure chart-chasing.",
+      "The model score acts as a light quality gate so the basket isn't pure chart-chasing.",
       "Names without price history fall toward the bottom and are usually filtered out.",
     ],
     whatWouldChange: [
       "A name's trend rolling over (negative 6m/12m) would drop it down or out of the basket.",
-      "Raising the minimum conviction score removes lower-quality momentum names.",
+      "Raising the minimum model score removes lower-quality momentum names.",
       "Fresh price history arriving for an unscored name could pull it into the basket.",
     ],
     riskProfile: "Trend-dependent",
@@ -517,22 +517,22 @@ export async function getInvestmentGroups(
 
   const empty = members.length === 0;
   const emptyNote = empty
-    ? `No names in the current universe cleared the filters (min conviction ${minConvictionScore}, max risk "${maxRiskLevel}"${thematic ? `, ${template.name} theme` : ""}). Loosen the controls to see candidates.`
+    ? `No names in the current universe cleared the filters (min model score ${minConvictionScore}, max risk "${maxRiskLevel}"${thematic ? `, ${template.name} theme` : ""}). Loosen the controls to see candidates.`
     : null;
 
   const thesisByTemplate: Record<InvestmentGroupTemplateId, string> = {
     "core-compounders":
-      "A research basket of the highest-conviction, durable compounders with a constructive trend and lower relative risk — the kind of names a researcher might treat as long-term anchors.",
+      "A research basket of the highest-model-scored, durable compounders with a constructive trend and lower relative risk — the kind of names a researcher might treat as long-term anchors.",
     "high-upside-speculative":
       "A research basket of higher-risk names with the widest scenario upside, where the goal is asymmetric optionality. These are speculative by design and would be sized small.",
     "ai-infrastructure":
-      "A thematic research basket of names powering the AI build-out — compute, silicon, networking, data and cloud — ranked by conviction and trend.",
+      "A thematic research basket of names powering the AI build-out — compute, silicon, networking, data and cloud — ranked by model score and trend.",
     "energy-power":
       "A thematic research basket levered to AI-driven electricity demand — generation, grid, nuclear/uranium, utilities and independent power producers.",
     "risk-controlled":
-      "A calmer research book: positive-conviction names with the lowest relative risk and shallowest scenario downside, prioritising capital preservation over upside.",
+      "A calmer research book: constructive-model-score names with the lowest relative risk and shallowest scenario downside, prioritising capital preservation over upside.",
     "momentum-breakouts":
-      "A trend-following research basket ranked on trailing 6m/12m price performance, with conviction acting as a light quality gate so it isn't pure chart-chasing.",
+      "A trend-following research basket ranked on trailing 6m/12m price performance, with the model score acting as a light quality gate so it isn't pure chart-chasing.",
   };
 
   const group: InvestmentGroup = {

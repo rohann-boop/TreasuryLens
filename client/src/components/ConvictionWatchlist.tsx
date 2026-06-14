@@ -496,6 +496,35 @@ function ConvictionChart({ ticker }: { ticker: string }) {
 // panel: TTM headline, a mini annual bar chart, a small quarterly table, and a
 // projections row. Graceful "not available / not meaningful" states for
 // ETFs/funds/foreign/ambiguous tickers.
+// Compact at-a-glance headline for the collapsed Revenue accordion row — shows
+// TTM revenue and YoY growth without expanding. Reuses the same query cache.
+function RevenueHeadline({ ticker }: { ticker: string }) {
+  const { data, isLoading, isError } = useQuery<EquityRevenueResponse>({
+    queryKey: ["/api/conviction-ideas/revenue", ticker],
+    enabled: !!ticker,
+  });
+  if (isLoading)
+    return <span className="text-[11px] text-muted-foreground tabular-nums">Loading…</span>;
+  const currency = data?.currency ?? "USD";
+  const hasSeries = (data?.annual?.length ?? 0) > 0 || (data?.quarterly?.length ?? 0) > 0;
+  const available = data?.status === "available" && hasSeries;
+  if (isError || !available || data?.ttmRevenue == null)
+    return <span className="text-[11px] text-muted-foreground tabular-nums">N/A</span>;
+  return (
+    <span className="text-[11px] text-muted-foreground" data-testid="revenue-headline">
+      TTM{" "}
+      <span className="font-semibold text-foreground tabular-nums">
+        {fmtCompactCurrency(data.ttmRevenue, currency)}
+      </span>
+      {data.annualGrowthPct != null && (
+        <span className={`ml-2 tabular-nums ${perfTone(data.annualGrowthPct)}`}>
+          YoY {fmtPct(data.annualGrowthPct, 0)}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function RevenuePanel({ ticker }: { ticker: string }) {
   const query = useQuery<EquityRevenueResponse>({
     queryKey: ["/api/conviction-ideas/revenue", ticker],
@@ -509,17 +538,10 @@ function RevenuePanel({ ticker }: { ticker: string }) {
   const available = data?.status === "available" && hasSeries;
 
   return (
-    <div
-      className="rounded-md border border-border/70 bg-card/40 p-3 space-y-3"
-      data-testid="idea-revenue-card"
-    >
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          <DollarSign className="h-3.5 w-3.5 text-primary/80" aria-hidden />
-          Revenue (current &amp; historical)
-        </div>
-        {available && (
-          <div className="text-[11px] text-muted-foreground" data-testid="revenue-ttm">
+    <div className="space-y-3" data-testid="idea-revenue-card">
+      {available && (
+        <div className="flex items-center justify-end" data-testid="revenue-ttm">
+          <div className="text-[11px] text-muted-foreground">
             TTM:{" "}
             <span className="font-semibold text-foreground">
               {data?.ttmRevenue != null ? fmtCompactCurrency(data.ttmRevenue, currency) : "—"}
@@ -533,8 +555,8 @@ function RevenuePanel({ ticker }: { ticker: string }) {
               </span>
             )}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {query.isLoading ? (
         <Skeleton className="h-[140px] rounded-md" data-testid="revenue-loading" />
@@ -662,6 +684,25 @@ function RevenuePanel({ ticker }: { ticker: string }) {
         </p>
       )}
     </div>
+  );
+}
+
+// Revenue rendered as a default-collapsed accordion row matching the signal
+// stack. Owns its own open state; expands only on user click/tap. Preserves all
+// revenue content (TTM, annual bar chart, quarterly table, projections).
+function RevenueSection({ ticker }: { ticker: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <SignalSection
+      icon={DollarSign}
+      title="Revenue"
+      testId="signal-row-revenue"
+      open={open}
+      onToggle={() => setOpen((o) => !o)}
+      headline={<RevenueHeadline ticker={ticker} />}
+    >
+      <RevenuePanel ticker={ticker} />
+    </SignalSection>
   );
 }
 
@@ -976,9 +1017,9 @@ function QuantScoreRowBody({ ticker }: { ticker: string }) {
 
 function SignalStack({ idea }: { idea: ConvictionIdea }) {
   const [open, setOpen] = useState<Record<SignalRowKey, boolean>>({
-    action: true,
+    action: false,
     quant: false,
-    scenario: true,
+    scenario: false,
     buffett: false,
     analyst: false,
     backtest: false,
@@ -1151,15 +1192,6 @@ function IdeaDetail({
                 </div>
               )}
             </div>
-            <div className="text-right">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                Conviction
-              </div>
-              <div className="text-xl font-bold text-primary">
-                {idea.convictionScore}
-                <span className="text-sm text-muted-foreground">/100</span>
-              </div>
-            </div>
             <Button
               type="button"
               variant="ghost"
@@ -1294,12 +1326,13 @@ function IdeaDetail({
       </div>
 
       {/* Collapsible signal stack — one accordion row per lens, each with an
-          at-a-glance headline and an expandable body. Model Action and Scenario
-          default open; the rest start collapsed. */}
+          at-a-glance headline and an expandable body. All rows default collapsed;
+          they expand only on user click/tap. */}
       <SignalStack idea={idea} />
 
-      {/* Revenue / fundamentals (current + historical from SEC EDGAR) */}
-      <RevenuePanel ticker={idea.ticker} />
+      {/* Revenue / fundamentals (current + historical from SEC EDGAR) — a
+          default-collapsed accordion row; expands only on user click/tap. */}
+      <RevenueSection ticker={idea.ticker} />
 
       {/* Thesis / what must be true. For freshly added custom tickers with no
           authored research yet, show a clear pending state instead. */}
@@ -1520,9 +1553,9 @@ function AddIdeaDialog({
           <DialogTitle>Add to watchlist</DialogTitle>
           <DialogDescription data-testid="add-idea-explainer">
             Only the ticker is required. Market data loads automatically; thesis
-            and additional fields can be auto-updated later. Name, theme, role
-            and conviction are all optional — leave them blank and the name is
-            inferred from market data (falling back to the ticker).
+            and additional fields can be auto-updated later. Name, theme and role
+            are all optional — leave them blank and the name is inferred from
+            market data (falling back to the ticker).
           </DialogDescription>
         </DialogHeader>
 
@@ -1615,44 +1648,25 @@ function AddIdeaDialog({
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label className="text-xs">Role</Label>
-              <Select
-                value={form.role}
-                onValueChange={(v) =>
-                  setForm((f) => ({ ...f, role: v as ConvictionRole }))
-                }
-              >
-                <SelectTrigger className="mt-1" data-testid="select-idea-role">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {ROLE_OPTIONS.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>
-                      {o.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label htmlFor="idea-score" className="text-xs">
-                Conviction (0–100)
-              </Label>
-              <Input
-                id="idea-score"
-                type="number"
-                min={0}
-                max={100}
-                value={form.convictionScore}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, convictionScore: e.target.value }))
-                }
-                className="mt-1 mono"
-                data-testid="input-idea-score"
-              />
-            </div>
+          <div>
+            <Label className="text-xs">Role</Label>
+            <Select
+              value={form.role}
+              onValueChange={(v) =>
+                setForm((f) => ({ ...f, role: v as ConvictionRole }))
+              }
+            >
+              <SelectTrigger className="mt-1" data-testid="select-idea-role">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {ROLE_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <DialogFooter>
@@ -2627,7 +2641,7 @@ export function ConvictionWatchlist({
                 Starter research ideas, not recommendations.
               </span>{" "}
               A small, deliberate research book — not personalized financial
-              advice. Conviction scores, checklist scores, and scenario models
+              advice. Model scores, checklist scores, and scenario models
               are hypothetical research inputs, not predictions or targets.
               Position-sizing bands are educational labels, not allocation
               guidance. Investments can lose value. Consult a qualified
