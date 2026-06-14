@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Area,
@@ -22,6 +22,7 @@ import type {
   ConvictionRole,
   ConvictionRoleInfo,
   EquityRevenueResponse,
+  RevenueBridge,
   RevenueBridgeSource,
   RevenueBridgeYear,
   ScenarioModel,
@@ -708,12 +709,248 @@ function RevenueKpi({
   );
 }
 
+// A small labelled section header used inside the Revenue Intelligence body so
+// the panel reads as discrete blocks (KPIs / growth-came-from / growth-going)
+// rather than one cramped scroll. Optional trailing slot for a source note.
+function RevenueSectionHeader({
+  title,
+  hint,
+  right,
+}: {
+  title: string;
+  hint?: string;
+  right?: ReactNode;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <div className="flex items-baseline gap-2 min-w-0">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-foreground/80">
+          {title}
+        </span>
+        {hint && (
+          <span className="text-[10px] text-muted-foreground truncate">{hint}</span>
+        )}
+      </div>
+      {right}
+    </div>
+  );
+}
+
+// "Where growth came from" — built strictly from the real, reported portion of
+// the revenue bridge (sec-actual rows). Each year is rendered as a horizontal
+// contribution bar: the YoY dollar change and its share of the period's total
+// added revenue. No fabricated segment attribution — this is the truthful
+// total-revenue growth bridge the task calls for when segments are unavailable.
+function GrowthCameFrom({
+  bridge,
+  currency,
+}: {
+  bridge: RevenueBridge;
+  currency: string;
+}) {
+  // Reported actuals only, ascending. We need ≥2 to compute a YoY delta.
+  const actuals = useMemo(
+    () =>
+      bridge.years
+        .filter((y) => y.source === "sec-actual" && y.value != null)
+        .sort((a, b) => a.fy - b.fy),
+    [bridge.years],
+  );
+
+  const deltas = useMemo(() => {
+    const out: {
+      label: string;
+      delta: number;
+      growthPct: number | null;
+    }[] = [];
+    for (let i = 1; i < actuals.length; i++) {
+      const prev = actuals[i - 1].value!;
+      const cur = actuals[i].value!;
+      out.push({
+        label: actuals[i].label,
+        delta: cur - prev,
+        growthPct: prev !== 0 ? ((cur - prev) / prev) * 100 : null,
+      });
+    }
+    return out;
+  }, [actuals]);
+
+  if (deltas.length === 0) return null;
+
+  // Scale bars to the largest absolute delta so positive/negative years are
+  // comparable within the panel.
+  const maxAbs = Math.max(...deltas.map((d) => Math.abs(d.delta)), 1);
+
+  return (
+    <div className="space-y-2" data-testid="revenue-growth-came-from">
+      <RevenueSectionHeader
+        title="Where growth came from"
+        hint="Reported YoY revenue change"
+        right={<BridgeSourceBadge source="sec-actual" />}
+      />
+      <div className="space-y-1.5">
+        {deltas.map((d) => {
+          const pct = Math.min(100, (Math.abs(d.delta) / maxAbs) * 100);
+          const up = d.delta >= 0;
+          return (
+            <div
+              key={d.label}
+              className="grid grid-cols-[3.2rem_1fr_5rem] items-center gap-2"
+              data-testid={`growth-came-row-${d.label}`}
+            >
+              <span className="text-[10px] tabular-nums text-muted-foreground">
+                {d.label}
+              </span>
+              <div className="h-3 rounded-sm bg-muted/50 overflow-hidden">
+                <div
+                  className={`h-full rounded-sm ${up ? "bg-emerald-500/70" : "bg-rose-500/70"}`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              <span
+                className={`text-[10px] text-right tabular-nums ${perfTone(d.delta)}`}
+              >
+                {up ? "+" : "−"}
+                {fmtCompactCurrency(Math.abs(d.delta), currency)}
+                {d.growthPct != null && (
+                  <span className="text-muted-foreground">
+                    {" "}
+                    ({fmtPct(d.growthPct, 0)})
+                  </span>
+                )}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// "Where growth is going" — a Bear / Base / Bull forward view derived from the
+// existing scenario model. Reuses the fundamentals bridge where present
+// (per-case future revenue + revenue CAGR) and otherwise falls back to the
+// case's implied revenue CAGR assumption. No new compute or API calls. Source
+// badges reflect whether analyst estimates anchored the scenario.
+function GrowthGoing({
+  model,
+  currency,
+}: {
+  model: ScenarioModel;
+  currency: string;
+}) {
+  const horizon = model.horizonYears;
+  // Analyst-anchored when the scenario carried live analyst estimates;
+  // otherwise the forward CAGRs are TreasuryLens model assumptions.
+  const analystAnchored = model.analystEstimates?.status === "available";
+
+  const cases: {
+    key: string;
+    label: string;
+    tone: string;
+    bar: string;
+    cagr: number | null;
+    futureRev: number | null;
+  }[] = [
+    {
+      key: "bear",
+      label: "Bear",
+      tone: "text-neg",
+      bar: "bg-rose-500/70",
+      cagr: model.bear.assumptions.revenueCagrPct,
+      futureRev: model.bear.derivation?.futureRevenue ?? null,
+    },
+    {
+      key: "base",
+      label: "Base",
+      tone: "text-foreground",
+      bar: "bg-sky-500/70",
+      cagr: model.base.assumptions.revenueCagrPct,
+      futureRev: model.base.derivation?.futureRevenue ?? null,
+    },
+    {
+      key: "bull",
+      label: "Bull",
+      tone: "text-pos",
+      bar: "bg-emerald-500/70",
+      cagr: model.bull.assumptions.revenueCagrPct,
+      futureRev: model.bull.derivation?.futureRevenue ?? null,
+    },
+  ];
+
+  const haveRev = cases.some((c) => c.futureRev != null);
+  const maxRev = haveRev
+    ? Math.max(...cases.map((c) => c.futureRev ?? 0), 1)
+    : 1;
+
+  return (
+    <div className="space-y-2" data-testid="revenue-growth-going">
+      <RevenueSectionHeader
+        title="Where growth is going"
+        hint={`${horizon}y forward · ${model.classification}`}
+        right={
+          <BridgeSourceBadge
+            source={analystAnchored ? "analyst-estimate" : "treasurylens-model"}
+          />
+        }
+      />
+      <div className="grid grid-cols-3 gap-2">
+        {cases.map((c) => (
+          <div
+            key={c.key}
+            className="rounded border border-border/60 bg-background/40 px-2 py-2 space-y-1.5"
+            data-testid={`growth-going-${c.key}`}
+          >
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              {c.label}
+            </div>
+            <div className={`text-sm font-semibold tabular-nums ${c.tone}`}>
+              {c.cagr != null ? `${fmtPct(c.cagr, 0)}` : "—"}
+            </div>
+            <div className="text-[9px] text-muted-foreground">rev. CAGR</div>
+            {haveRev && (
+              <>
+                <div className="h-2 rounded-sm bg-muted/50 overflow-hidden">
+                  <div
+                    className={`h-full rounded-sm ${c.bar}`}
+                    style={{
+                      width: `${c.futureRev != null ? Math.min(100, (c.futureRev / maxRev) * 100) : 0}%`,
+                    }}
+                  />
+                </div>
+                <div className="text-[10px] tabular-nums text-foreground/80">
+                  {c.futureRev != null
+                    ? fmtCompactCurrency(c.futureRev, currency)
+                    : "—"}
+                </div>
+                <div className="text-[9px] text-muted-foreground">
+                  FY+{horizon} rev.
+                </div>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+      {model.methodology && (
+        <p
+          className="text-[10px] text-muted-foreground leading-relaxed"
+          data-testid="growth-going-method"
+        >
+          {model.methodology}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function RevenuePanel({
   ticker,
   keyMetrics,
+  scenarioModel,
 }: {
   ticker: string;
   keyMetrics?: ConvictionIdea["keyMetrics"] | null;
+  scenarioModel?: ScenarioModel | null;
 }) {
   const query = useQuery<EquityRevenueResponse>({
     queryKey: ["/api/conviction-ideas/revenue", ticker],
@@ -786,15 +1023,21 @@ function RevenuePanel({
             "Historical revenue is not available from free SEC data for this ticker."}
         </div>
       ) : (
-        <div className="space-y-3" data-testid="revenue-body">
-          {/* Summary sentence */}
+        <div className="space-y-4" data-testid="revenue-body">
+          {/* Top narrative block — the research-context header for the section,
+              styled as a lead card the way the Hybrid artifact opens. */}
           {revNarrative && (
-            <p
-              className="text-xs leading-relaxed text-foreground/90"
-              data-testid="revenue-narrative"
+            <div
+              className="rounded-md border border-border/60 bg-muted/30 px-3 py-2.5"
+              data-testid="revenue-narrative-block"
             >
-              {revNarrative}
-            </p>
+              <p
+                className="text-xs leading-relaxed text-foreground/90"
+                data-testid="revenue-narrative"
+              >
+                {revNarrative}
+              </p>
+            </div>
           )}
 
           {/* KPI cards */}
@@ -855,6 +1098,19 @@ function RevenuePanel({
             />
           </div>
 
+          {/* ── Where growth came from ──────────────────────────────────
+              Real reported history: the annual revenue chart, a YoY
+              contribution view, and the full year-by-year bridge table with
+              source badges. Grouped into one card for clear hierarchy. */}
+          <div
+            className="rounded-md border border-border/60 bg-background/30 p-3 space-y-3"
+            data-testid="revenue-history-card"
+          >
+          {/* YoY contribution bars built from reported actuals only. */}
+          {bridge && bridge.status === "available" && (
+            <GrowthCameFrom bridge={bridge} currency={currency} />
+          )}
+
           {/* Annual revenue chart (actual reported series). */}
           {annual.length > 0 && (
             <div className="h-[140px]" data-testid="revenue-chart">
@@ -904,9 +1160,10 @@ function RevenuePanel({
               with a source badge and YoY growth on every row. */}
           {bridge && bridge.status === "available" && bridge.years.length > 0 ? (
             <div className="space-y-1" data-testid="revenue-bridge">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                Revenue bridge
-              </div>
+              <RevenueSectionHeader
+                title="Year-by-year bridge"
+                hint="Actuals → estimates → model"
+              />
               <div className="overflow-x-auto">
                 <table className="w-full text-[11px]">
                   <thead>
@@ -955,14 +1212,14 @@ function RevenuePanel({
               className="rounded border border-dashed border-border/60 bg-background/30 px-3 py-2 text-[11px] text-muted-foreground"
               data-testid="revenue-bridge-unavailable"
             >
-              <span className="font-semibold text-foreground/90">Forward bridge:</span>{" "}
+              <span className="font-semibold text-foreground/90">Year-by-year bridge:</span>{" "}
               {bridge?.note ??
                 data?.projections?.note ??
-                "Forward revenue bridge unavailable with current data sources."}
+                "Year-by-year revenue bridge unavailable with current data sources."}
             </div>
           )}
 
-          {/* Quarterly detail (reported). */}
+          {/* Quarterly detail (reported) — kept inside the history card. */}
           {quarterly.length > 0 && (
             <details className="group" data-testid="revenue-quarterly">
               <summary className="cursor-pointer text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -994,6 +1251,33 @@ function RevenuePanel({
               </div>
             </details>
           )}
+          </div>
+          {/* end Where-growth-came-from card */}
+
+          {/* ── Where growth is going ───────────────────────────────────
+              Forward Bear/Base/Bull view from the existing scenario model
+              (no new compute). Falls back to a truthful unavailable note when
+              no scenario is attached. */}
+          <div
+            className="rounded-md border border-border/60 bg-background/30 p-3 space-y-2"
+            data-testid="revenue-forward-card"
+          >
+            {scenarioModel ? (
+              <GrowthGoing model={scenarioModel} currency={currency} />
+            ) : (
+              <>
+                <RevenueSectionHeader
+                  title="Where growth is going"
+                  right={<BridgeSourceBadge source="unavailable" />}
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  A forward Bear/Base/Bull revenue scenario is unavailable for
+                  this ticker — the scenario model has not resolved (no analyst
+                  estimates or sufficient fundamentals).
+                </p>
+              </>
+            )}
+          </div>
 
           {/* Segment breakdown — free SEC company-facts does not expose a
               reliable per-segment revenue split, so we surface a transparent
@@ -1002,9 +1286,10 @@ function RevenuePanel({
             className="rounded border border-dashed border-border/60 bg-background/30 px-3 py-2 text-[11px] text-muted-foreground"
             data-testid="revenue-segments-unavailable"
           >
-            <span className="font-semibold text-foreground/90">Segments:</span>{" "}
-            Segment-level revenue breakdown is unavailable from free SEC company-facts
-            for this ticker.
+            <span className="font-semibold text-foreground/90">Segment breakdown:</span>{" "}
+            Segment-level revenue split is unavailable from free SEC company-facts
+            for this ticker. The bridge above reflects total reported revenue, not
+            illustrative segment data.
           </div>
         </div>
       )}
@@ -1024,21 +1309,27 @@ function RevenuePanel({
 function RevenueSection({
   ticker,
   keyMetrics,
+  scenarioModel,
 }: {
   ticker: string;
   keyMetrics?: ConvictionIdea["keyMetrics"] | null;
+  scenarioModel?: ScenarioModel | null;
 }) {
   const [open, setOpen] = useState(false);
   return (
     <SignalSection
       icon={DollarSign}
-      title="Revenue"
+      title="Revenue Intelligence"
       testId="signal-row-revenue"
       open={open}
       onToggle={() => setOpen((o) => !o)}
       headline={<RevenueHeadline ticker={ticker} />}
     >
-      <RevenuePanel ticker={ticker} keyMetrics={keyMetrics} />
+      <RevenuePanel
+        ticker={ticker}
+        keyMetrics={keyMetrics}
+        scenarioModel={scenarioModel}
+      />
     </SignalSection>
   );
 }
@@ -1667,7 +1958,11 @@ function IdeaDetail({
 
       {/* Revenue / fundamentals (current + historical from SEC EDGAR) — a
           default-collapsed accordion row; expands only on user click/tap. */}
-      <RevenueSection ticker={idea.ticker} keyMetrics={idea.keyMetrics} />
+      <RevenueSection
+        ticker={idea.ticker}
+        keyMetrics={idea.keyMetrics}
+        scenarioModel={idea.scenarioModel}
+      />
 
       {/* Thesis / what must be true. For freshly added custom tickers with no
           authored research yet, show a clear pending state instead. */}
