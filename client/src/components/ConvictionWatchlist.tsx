@@ -34,6 +34,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider";
 import {
   Select,
   SelectContent,
@@ -829,120 +830,569 @@ function GrowthCameFrom({
   );
 }
 
-// "Where growth is going" — a Bear / Base / Bull forward view derived from the
-// existing scenario model. Reuses the fundamentals bridge where present
-// (per-case future revenue + revenue CAGR) and otherwise falls back to the
-// case's implied revenue CAGR assumption. No new compute or API calls. Source
-// badges reflect whether analyst estimates anchored the scenario.
-function GrowthGoing({
+// ── Where growth is going · next 3–5 years ──────────────────────────────────
+// A forward, year-by-year revenue bridge with a Bear / Base / Bull toggle and
+// client-side tweakable assumptions. Everything is derived deterministically
+// from data already on the page — no new API calls, no LLM:
+//
+//   • The base (FY0) anchor is the latest reported annual revenue (SEC actual).
+//   • Near-term years reuse analyst-estimate years from the revenue bridge when
+//     present (badged "Analyst est."); they are kept SEPARATE from user tweaks.
+//   • Remaining years compound the selected scenario's revenue CAGR (the
+//     TreasuryLens model assumption from the scenario model), badged "TL model".
+//   • When the user tweaks the growth assumption, projected years switch to a
+//     "User scenario" badge so model/analyst vs. user-driven is always explicit.
+//   • Tweaks are client-side only (no persistence) and reset to model defaults.
+//
+// Tweak granularity: if real multi-year segment data exists we expose a slider
+// per major segment (top segments by revenue) and roll the company total up
+// from the segment projections. Otherwise we expose a single total-revenue
+// growth slider. Either way the displayed bridge + target + CAGR update live.
+
+type ForwardScenarioKey = "bear" | "base" | "bull";
+
+const FORWARD_CASE_META: Record<
+  ForwardScenarioKey,
+  { label: string; tone: string; activeCls: string }
+> = {
+  bear: {
+    label: "Bear",
+    tone: "text-neg",
+    activeCls: "bg-rose-500/15 border-rose-500/40 text-rose-600 dark:text-rose-400",
+  },
+  base: {
+    label: "Base",
+    tone: "text-foreground",
+    activeCls: "bg-sky-500/15 border-sky-500/40 text-sky-600 dark:text-sky-400",
+  },
+  bull: {
+    label: "Bull",
+    tone: "text-pos",
+    activeCls:
+      "bg-emerald-500/15 border-emerald-500/40 text-emerald-600 dark:text-emerald-400",
+  },
+};
+
+// One projected forward year for the rendered bridge.
+interface ForwardYear {
+  label: string;
+  fy: number;
+  value: number;
+  growthPct: number | null;
+  source: RevenueBridgeSource | "user-scenario";
+  analystCount?: number | null;
+}
+
+const FORWARD_SOURCE_META: Record<
+  RevenueBridgeSource | "user-scenario",
+  { label: string; cls: string }
+> = {
+  ...BRIDGE_SOURCE_META,
+  "user-scenario": {
+    label: "User scenario",
+    cls: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30",
+  },
+};
+
+function ForwardSourceBadge({
+  source,
+  analystCount,
+}: {
+  source: RevenueBridgeSource | "user-scenario";
+  analystCount?: number | null;
+}) {
+  const meta = FORWARD_SOURCE_META[source] ?? FORWARD_SOURCE_META.unavailable;
+  return (
+    <span
+      className={`inline-flex items-center rounded-sm border px-1 py-px text-[9px] font-medium ${meta.cls}`}
+      data-testid={`forward-source-${source}`}
+    >
+      {meta.label}
+      {source === "analyst-estimate" && analystCount != null && analystCount > 0
+        ? ` · ${analystCount}`
+        : ""}
+    </span>
+  );
+}
+
+function ForwardGrowthScenario({
   model,
+  revenue,
+  segments,
   currency,
 }: {
   model: ScenarioModel;
+  revenue: EquityRevenueResponse;
+  segments?: SegmentBreakdownResponse | null;
   currency: string;
 }) {
-  const horizon = model.horizonYears;
-  // Analyst-anchored when the scenario carried live analyst estimates;
-  // otherwise the forward CAGRs are TreasuryLens model assumptions.
-  const analystAnchored = model.analystEstimates?.status === "available";
+  const horizon = Math.max(1, Math.min(model.horizonYears || 5, 7));
+  const [activeCase, setActiveCase] = useState<ForwardScenarioKey>("base");
 
-  const cases: {
-    key: string;
-    label: string;
-    tone: string;
-    bar: string;
-    cagr: number | null;
-    futureRev: number | null;
-  }[] = [
-    {
-      key: "bear",
-      label: "Bear",
-      tone: "text-neg",
-      bar: "bg-rose-500/70",
-      cagr: model.bear.assumptions.revenueCagrPct,
-      futureRev: model.bear.derivation?.futureRevenue ?? null,
-    },
-    {
-      key: "base",
-      label: "Base",
-      tone: "text-foreground",
-      bar: "bg-sky-500/70",
-      cagr: model.base.assumptions.revenueCagrPct,
-      futureRev: model.base.derivation?.futureRevenue ?? null,
-    },
-    {
-      key: "bull",
-      label: "Bull",
-      tone: "text-pos",
-      bar: "bg-emerald-500/70",
-      cagr: model.bull.assumptions.revenueCagrPct,
-      futureRev: model.bull.derivation?.futureRevenue ?? null,
-    },
-  ];
+  // FY0 anchor: latest reported annual revenue (SEC actual). This is what we
+  // compound forward. Falls back to TTM revenue when no annual point resolved.
+  const annual = revenue.annual ?? [];
+  const baseRevenue =
+    annual.length > 0
+      ? annual[annual.length - 1].value
+      : (revenue.ttmRevenue ?? null);
+  const baseFy =
+    annual.length > 0 && annual[annual.length - 1].fy != null
+      ? annual[annual.length - 1].fy!
+      : new Date().getFullYear();
+  const baseLabel =
+    annual.length > 0 ? annual[annual.length - 1].label : `FY${baseFy}`;
 
-  const haveRev = cases.some((c) => c.futureRev != null);
-  const maxRev = haveRev
-    ? Math.max(...cases.map((c) => c.futureRev ?? 0), 1)
-    : 1;
+  // Analyst-estimate forward years from the revenue bridge (total revenue only).
+  // These anchor the near-term years and are kept separate from user tweaks.
+  const analystForwardYears = useMemo(() => {
+    const b = revenue.bridge;
+    if (!b || b.status !== "available") return [];
+    return b.years
+      .filter(
+        (y) =>
+          y.source === "analyst-estimate" &&
+          y.value != null &&
+          (baseFy == null || y.fy > baseFy),
+      )
+      .sort((a, b) => a.fy - b.fy);
+  }, [revenue.bridge, baseFy]);
+
+  // Default per-case revenue CAGR (TreasuryLens model assumption).
+  const caseCagr: Record<ForwardScenarioKey, number> = {
+    bear: model.bear.assumptions.revenueCagrPct,
+    base: model.base.assumptions.revenueCagrPct,
+    bull: model.bull.assumptions.revenueCagrPct,
+  };
+
+  // Do we have real, tweakable segment data? Require ≥2 segments with revenue.
+  const segRows =
+    segments?.status === "available"
+      ? (segments.segments ?? []).filter((s) => s.revenue != null)
+      : [];
+  const segmentMode = segRows.length >= 2 && baseRevenue != null;
+  // Cap the number of sliders to keep the UI tidy; remainder folds into "Other".
+  const MAJOR_SEG_LIMIT = 4;
+  const majorSegments = useMemo(
+    () =>
+      [...segRows]
+        .sort((a, b) => (b.revenue ?? 0) - (a.revenue ?? 0))
+        .slice(0, MAJOR_SEG_LIMIT),
+    [segRows],
+  );
+
+  // ── Tweak state ───────────────────────────────────────────────────────────
+  // Total-revenue growth override (non-segment mode): one CAGR % per case.
+  const [totalCagrOverride, setTotalCagrOverride] = useState<
+    Record<ForwardScenarioKey, number | null>
+  >({ bear: null, base: null, bull: null });
+  // Segment-mode: per-segment CAGR override keyed by segment name, per case.
+  const [segCagrOverride, setSegCagrOverride] = useState<
+    Record<ForwardScenarioKey, Record<string, number | null>>
+  >({ bear: {}, base: {}, bull: {} });
+
+  // Default per-segment CAGR seed: the segment's reported YoY where available,
+  // otherwise the case's total CAGR. This makes the segment sliders start from a
+  // sensible, data-anchored position rather than zero.
+  const segDefaultCagr = (segName: string, c: ForwardScenarioKey): number => {
+    const row = majorSegments.find((s) => s.name === segName);
+    const reported = row?.revenueYoYPct;
+    if (reported != null && Number.isFinite(reported)) {
+      // Blend reported YoY toward the case CAGR so bear/bull still differentiate.
+      const blend =
+        c === "base"
+          ? reported
+          : c === "bull"
+            ? Math.max(reported, caseCagr.bull)
+            : Math.min(reported, caseCagr.bear);
+      return round1(blend);
+    }
+    return caseCagr[c];
+  };
+
+  const effectiveTotalCagr = (c: ForwardScenarioKey): number =>
+    totalCagrOverride[c] ?? caseCagr[c];
+
+  const effectiveSegCagr = (segName: string, c: ForwardScenarioKey): number =>
+    segCagrOverride[c]?.[segName] ?? segDefaultCagr(segName, c);
+
+  // Whether the active case has any user tweak (drives the source badge).
+  const userTweaked = segmentMode
+    ? Object.values(segCagrOverride[activeCase] ?? {}).some((v) => v != null)
+    : totalCagrOverride[activeCase] != null;
+
+  // ── Build the forward year-by-year bridge for the active case ─────────────
+  const forward = useMemo<ForwardYear[]>(() => {
+    if (baseRevenue == null) return [];
+    const out: ForwardYear[] = [];
+    let prev = baseRevenue;
+
+    if (segmentMode && userTweaked) {
+      // Segment-driven projection: compound each major segment independently
+      // plus an "Other" remainder held at the case total CAGR, then sum.
+      const majorBase = majorSegments.reduce(
+        (acc, s) => acc + (s.revenue ?? 0),
+        0,
+      );
+      const otherBase = Math.max(0, baseRevenue - majorBase);
+      const segState = majorSegments.map((s) => ({
+        name: s.name,
+        value: s.revenue ?? 0,
+        cagr: effectiveSegCagr(s.name, activeCase),
+      }));
+      let otherVal = otherBase;
+      const otherCagr = effectiveTotalCagr(activeCase);
+      for (let i = 1; i <= horizon; i++) {
+        for (const st of segState) st.value *= 1 + st.cagr / 100;
+        otherVal *= 1 + otherCagr / 100;
+        const total =
+          segState.reduce((acc, st) => acc + st.value, 0) + otherVal;
+        out.push({
+          label: `FY${baseFy + i}`,
+          fy: baseFy + i,
+          value: total,
+          growthPct: prev !== 0 ? ((total - prev) / prev) * 100 : null,
+          source: "user-scenario",
+        });
+        prev = total;
+      }
+      return out;
+    }
+
+    // Total-revenue projection. Near-term years use analyst estimates (unless
+    // the user has overridden the total growth); later years compound the
+    // effective case CAGR (model default OR user override).
+    const cagr = effectiveTotalCagr(activeCase);
+    const useAnalyst = !userTweaked && analystForwardYears.length > 0;
+    for (let i = 1; i <= horizon; i++) {
+      const fy = baseFy + i;
+      const analystMatch = useAnalyst
+        ? analystForwardYears.find((y) => y.fy === fy)
+        : undefined;
+      let value: number;
+      let source: ForwardYear["source"];
+      let analystCount: number | null | undefined;
+      if (analystMatch && analystMatch.value != null) {
+        value = analystMatch.value;
+        source = "analyst-estimate";
+        analystCount = analystMatch.analystCount;
+      } else {
+        value = prev * (1 + cagr / 100);
+        source = userTweaked ? "user-scenario" : "treasurylens-model";
+      }
+      out.push({
+        label: `FY${fy}`,
+        fy,
+        value,
+        growthPct: prev !== 0 ? ((value - prev) / prev) * 100 : null,
+        source,
+        analystCount,
+      });
+      prev = value;
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    baseRevenue,
+    baseFy,
+    horizon,
+    activeCase,
+    segmentMode,
+    userTweaked,
+    analystForwardYears,
+    majorSegments,
+    totalCagrOverride,
+    segCagrOverride,
+  ]);
+
+  // Summary: target revenue at the horizon and implied CAGR over the full span.
+  const target = forward.length > 0 ? forward[forward.length - 1].value : null;
+  const impliedCagr =
+    target != null && baseRevenue != null && baseRevenue > 0 && forward.length > 0
+      ? (Math.pow(target / baseRevenue, 1 / forward.length) - 1) * 100
+      : null;
+
+  const analystAnchored = analystForwardYears.length > 0;
+  const maxVal = Math.max(baseRevenue ?? 0, ...forward.map((f) => f.value), 1);
+
+  const resetTweaks = () => {
+    setTotalCagrOverride({ bear: null, base: null, bull: null });
+    setSegCagrOverride({ bear: {}, base: {}, bull: {} });
+  };
+
+  if (baseRevenue == null) {
+    return (
+      <>
+        <RevenueSectionHeader
+          title="Where growth is going · next 3–5 years"
+          right={<ForwardSourceBadge source="unavailable" />}
+        />
+        <p className="text-[11px] text-muted-foreground">
+          A forward revenue scenario needs a reported revenue anchor, which did
+          not resolve for this ticker.
+        </p>
+      </>
+    );
+  }
 
   return (
-    <div className="space-y-2" data-testid="revenue-growth-going">
+    <div className="space-y-3" data-testid="revenue-forward-scenario">
       <RevenueSectionHeader
-        title="Where growth is going"
-        hint={`${horizon}y forward · ${model.classification}`}
+        title="Where growth is going · next 3–5 years"
+        hint={`${forward.length}y forward · ${model.classification}`}
         right={
-          <BridgeSourceBadge
-            source={analystAnchored ? "analyst-estimate" : "treasurylens-model"}
+          <ForwardSourceBadge
+            source={
+              userTweaked
+                ? "user-scenario"
+                : analystAnchored
+                  ? "analyst-estimate"
+                  : "treasurylens-model"
+            }
           />
         }
       />
-      <div className="grid grid-cols-3 gap-2">
-        {cases.map((c) => (
+
+      {/* Scenario toggle: Bear / Base / Bull */}
+      <div
+        className="inline-flex rounded-md border border-border/60 bg-background/40 p-0.5"
+        role="tablist"
+        data-testid="forward-case-toggle"
+      >
+        {(["bear", "base", "bull"] as ForwardScenarioKey[]).map((k) => {
+          const meta = FORWARD_CASE_META[k];
+          const active = activeCase === k;
+          return (
+            <button
+              key={k}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setActiveCase(k)}
+              data-testid={`forward-case-${k}`}
+              className={`px-3 py-1 text-[11px] font-medium rounded-[5px] transition-colors ${
+                active
+                  ? `border ${meta.activeCls}`
+                  : "border border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {meta.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Summary strip: base → target, implied CAGR */}
+      <div className="grid grid-cols-3 gap-2" data-testid="forward-summary">
+        <div className="rounded border border-border/60 bg-background/40 px-2 py-2">
+          <div className="text-[9px] uppercase tracking-wide text-muted-foreground">
+            {baseLabel} base
+          </div>
+          <div className="text-sm font-semibold tabular-nums text-foreground">
+            {fmtCompactCurrency(baseRevenue, currency)}
+          </div>
+        </div>
+        <div className="rounded border border-border/60 bg-background/40 px-2 py-2">
+          <div className="text-[9px] uppercase tracking-wide text-muted-foreground">
+            FY{baseFy + forward.length} target
+          </div>
           <div
-            key={c.key}
-            className="rounded border border-border/60 bg-background/40 px-2 py-2 space-y-1.5"
-            data-testid={`growth-going-${c.key}`}
+            className={`text-sm font-semibold tabular-nums ${FORWARD_CASE_META[activeCase].tone}`}
+            data-testid="forward-target"
           >
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              {c.label}
+            {target != null ? fmtCompactCurrency(target, currency) : "—"}
+          </div>
+        </div>
+        <div className="rounded border border-border/60 bg-background/40 px-2 py-2">
+          <div className="text-[9px] uppercase tracking-wide text-muted-foreground">
+            Implied CAGR
+          </div>
+          <div
+            className={`text-sm font-semibold tabular-nums ${impliedCagr != null ? perfTone(impliedCagr) : "text-foreground"}`}
+            data-testid="forward-cagr"
+          >
+            {impliedCagr != null ? fmtPct(impliedCagr, 1, false) : "—"}
+          </div>
+        </div>
+      </div>
+
+      {/* Year-by-year forward bridge with per-year source badges */}
+      <div className="overflow-x-auto" data-testid="forward-bridge">
+        <table className="w-full text-[11px]">
+          <thead>
+            <tr className="text-muted-foreground">
+              <th className="text-left font-medium py-1 pr-2">Year</th>
+              <th className="text-right font-medium py-1 pr-2">Revenue</th>
+              <th className="text-right font-medium py-1 pr-2">YoY</th>
+              <th className="text-right font-medium py-1">Source</th>
+            </tr>
+          </thead>
+          <tbody>
+            {/* FY0 reported anchor */}
+            <tr className="border-t border-border/50" data-testid="forward-row-base">
+              <td className="py-1 pr-2 text-foreground/90">{baseLabel}</td>
+              <td className="py-1 pr-2 text-right font-medium text-foreground tabular-nums">
+                {fmtCompactCurrency(baseRevenue, currency)}
+              </td>
+              <td className="py-1 pr-2 text-right text-muted-foreground">—</td>
+              <td className="py-1 text-right">
+                <ForwardSourceBadge source="sec-actual" />
+              </td>
+            </tr>
+            {forward.map((y, i) => (
+              <tr
+                key={`${y.fy}-${i}`}
+                className="border-t border-border/50"
+                data-testid={`forward-row-${y.fy}`}
+              >
+                <td className="py-1 pr-2 text-foreground/90">{y.label}</td>
+                <td className="py-1 pr-2 text-right font-medium text-foreground tabular-nums">
+                  {fmtCompactCurrency(y.value, currency)}
+                </td>
+                <td
+                  className={`py-1 pr-2 text-right tabular-nums ${y.growthPct != null ? perfTone(y.growthPct) : "text-muted-foreground"}`}
+                >
+                  {y.growthPct != null ? fmtPct(y.growthPct, 0, true) : "—"}
+                </td>
+                <td className="py-1 text-right">
+                  <ForwardSourceBadge
+                    source={y.source}
+                    analystCount={y.analystCount}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Mini bar chart of the projected path (base + forward years) */}
+      <div className="flex items-end gap-1 h-16" data-testid="forward-bars" aria-hidden>
+        {[
+          { label: baseLabel, value: baseRevenue, base: true },
+          ...forward.map((f) => ({ label: f.label, value: f.value, base: false })),
+        ].map(
+          (b, i) => (
+            <div key={i} className="flex-1 flex flex-col items-center gap-0.5">
+              <div className="w-full flex items-end justify-center h-12">
+                <div
+                  className={`w-full rounded-sm ${b.base ? "bg-foreground/30" : FORWARD_CASE_META[activeCase].tone === "text-neg" ? "bg-rose-500/60" : FORWARD_CASE_META[activeCase].tone === "text-pos" ? "bg-emerald-500/60" : "bg-sky-500/60"}`}
+                  style={{ height: `${Math.max(4, (b.value / maxVal) * 100)}%` }}
+                />
+              </div>
+              <span className="text-[8px] text-muted-foreground tabular-nums">
+                {b.label.replace("FY", "'").replace("20", "")}
+              </span>
             </div>
-            <div className={`text-sm font-semibold tabular-nums ${c.tone}`}>
-              {c.cagr != null ? `${fmtPct(c.cagr, 0)}` : "—"}
-            </div>
-            <div className="text-[9px] text-muted-foreground">rev. CAGR</div>
-            {haveRev && (
-              <>
-                <div className="h-2 rounded-sm bg-muted/50 overflow-hidden">
-                  <div
-                    className={`h-full rounded-sm ${c.bar}`}
-                    style={{
-                      width: `${c.futureRev != null ? Math.min(100, (c.futureRev / maxRev) * 100) : 0}%`,
-                    }}
+          ),
+        )}
+      </div>
+
+      {/* Tweakable assumptions */}
+      <div
+        className="rounded border border-border/60 bg-background/40 p-2.5 space-y-2.5"
+        data-testid="forward-tweaks"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Tweak assumptions
+            <span className="ml-1.5 font-normal normal-case text-muted-foreground/80">
+              {segmentMode
+                ? "segment growth (CAGR %)"
+                : "total-revenue growth (CAGR %)"}
+            </span>
+          </span>
+          <button
+            type="button"
+            onClick={resetTweaks}
+            disabled={!userTweaked}
+            data-testid="forward-reset"
+            className="text-[10px] text-primary disabled:text-muted-foreground/50 hover:underline"
+          >
+            Reset to model
+          </button>
+        </div>
+
+        {segmentMode ? (
+          <div className="space-y-2.5">
+            {majorSegments.map((s) => {
+              const val = effectiveSegCagr(s.name, activeCase);
+              return (
+                <div key={s.name} className="space-y-1" data-testid={`forward-seg-slider-${s.name}`}>
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-foreground/80 truncate max-w-[12rem]" title={s.name}>
+                      {s.name}
+                    </span>
+                    <span className="tabular-nums text-muted-foreground">
+                      {fmtPct(val, 1, true)}
+                    </span>
+                  </div>
+                  <Slider
+                    min={-20}
+                    max={60}
+                    step={0.5}
+                    value={[val]}
+                    onValueChange={([v]) =>
+                      setSegCagrOverride((prev) => ({
+                        ...prev,
+                        [activeCase]: { ...prev[activeCase], [s.name]: v },
+                      }))
+                    }
+                    aria-label={`${s.name} growth assumption`}
                   />
                 </div>
-                <div className="text-[10px] tabular-nums text-foreground/80">
-                  {c.futureRev != null
-                    ? fmtCompactCurrency(c.futureRev, currency)
-                    : "—"}
-                </div>
-                <div className="text-[9px] text-muted-foreground">
-                  FY+{horizon} rev.
-                </div>
-              </>
-            )}
+              );
+            })}
+            <p className="text-[9px] text-muted-foreground">
+              Remaining revenue (other/unsegmented) compounds at the {FORWARD_CASE_META[activeCase].label.toLowerCase()}-case
+              total CAGR ({fmtPct(effectiveTotalCagr(activeCase), 1, false)}). Sliders seed from
+              reported segment YoY; edits become a User scenario.
+            </p>
           </div>
-        ))}
+        ) : (
+          <div className="space-y-1" data-testid="forward-total-slider">
+            <div className="flex items-center justify-between text-[10px]">
+              <span className="text-foreground/80">
+                {FORWARD_CASE_META[activeCase].label}-case revenue CAGR
+              </span>
+              <span className="tabular-nums text-muted-foreground">
+                {fmtPct(effectiveTotalCagr(activeCase), 1, true)}
+              </span>
+            </div>
+            <Slider
+              min={-20}
+              max={60}
+              step={0.5}
+              value={[effectiveTotalCagr(activeCase)]}
+              onValueChange={([v]) =>
+                setTotalCagrOverride((prev) => ({ ...prev, [activeCase]: v }))
+              }
+              aria-label="Total revenue growth assumption"
+            />
+            <p className="text-[9px] text-muted-foreground">
+              {analystAnchored && !userTweaked
+                ? "Near-term years are anchored to analyst consensus; later years use this model CAGR. Moving the slider switches projected years to a User scenario."
+                : "Default is the TreasuryLens model CAGR. Moving the slider creates a User scenario."}
+            </p>
+          </div>
+        )}
       </div>
+
       {model.methodology && (
         <p
           className="text-[10px] text-muted-foreground leading-relaxed"
-          data-testid="growth-going-method"
+          data-testid="forward-method"
         >
           {model.methodology}
         </p>
       )}
     </div>
   );
+}
+
+// Round to one decimal — small local helper for slider seeds.
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
 }
 
 // Tiny inline sparkline for a segment's multi-year revenue history. Renders a
@@ -1217,6 +1667,208 @@ function GrowthCameFromSegments({
   );
 }
 
+// ── Revenue Story ───────────────────────────────────────────────────────────
+// A deterministic, source-aware narrative built ENTIRELY from already-resolved
+// structured data (revenue response, key metrics, segment breakdown, scenario
+// model). No LLM call, no fabricated analyst commentary. Every clause is gated
+// on the underlying data actually existing, and source-aware wording is used so
+// the reader always knows whether a figure is reported (SEC filing), an analyst
+// estimate/consensus, or a TreasuryLens model assumption.
+//
+// Returns an array of paragraph strings (1–2 paragraphs). Empty array when not
+// enough structured data resolved to say anything truthful.
+function buildRevenueStory({
+  data,
+  keyMetrics,
+  segments,
+  scenarioModel,
+  currency,
+  ticker,
+}: {
+  data: EquityRevenueResponse;
+  keyMetrics?: ConvictionIdea["keyMetrics"] | null;
+  segments?: SegmentBreakdownResponse | null;
+  scenarioModel?: ScenarioModel | null;
+  currency: string;
+  ticker: string;
+}): string[] {
+  const annual = data.annual ?? [];
+  const latest = annual.length > 0 ? annual[annual.length - 1] : null;
+  if (!latest) return [];
+
+  const name = data.entityName ?? ticker;
+  const paras: string[] = [];
+
+  // ── Paragraph 1: reported revenue, growth, margin, top segment ────────────
+  const s1: string[] = [];
+  s1.push(
+    `${name} reported ${fmtCompactCurrency(latest.value, currency)} of revenue in ${latest.label} (SEC filing).`,
+  );
+  if (data.annualGrowthPct != null) {
+    const dir = data.annualGrowthPct >= 0 ? "up" : "down";
+    s1.push(
+      `That is ${dir} ${fmtPct(Math.abs(data.annualGrowthPct), 0, false)} year over year.`,
+    );
+  }
+  // Operating income / margin where available (key metrics, TTM basis).
+  if (keyMetrics?.operatingMargin != null) {
+    const opInc = keyMetrics.operatingIncomeTtm;
+    s1.push(
+      opInc != null
+        ? `Trailing operating income runs about ${fmtCompactCurrency(opInc, currency)}, a ${fmtPct(keyMetrics.operatingMargin, 0, false)} operating margin (SEC filing).`
+        : `Trailing operating margin is about ${fmtPct(keyMetrics.operatingMargin, 0, false)} (SEC filing).`,
+    );
+  }
+
+  // Top segment by revenue, with mix, and — only when profit data exists —
+  // profit mix / margin. Gated on real segment data.
+  const segRows =
+    segments?.status === "available" ? (segments.segments ?? []) : [];
+  const topByRev =
+    segRows.length > 0
+      ? [...segRows]
+          .filter((s) => s.revenue != null)
+          .sort((a, b) => (b.revenue ?? 0) - (a.revenue ?? 0))[0]
+      : null;
+  const segSourceWord =
+    segments?.source === "sec-segments"
+      ? "SEC filing"
+      : segments?.source === "finance-segments"
+        ? "segment data"
+        : "reported segments";
+  if (topByRev) {
+    const mix =
+      topByRev.revenueMixPct != null
+        ? ` — about ${fmtPct(topByRev.revenueMixPct, 0, false)} of revenue`
+        : "";
+    s1.push(
+      `${topByRev.name} is the largest reported segment${mix} (${segSourceWord}).`,
+    );
+    // Profit-mix / punch claim ONLY when segment profit data exists.
+    if (
+      topByRev.profitMixPct != null &&
+      topByRev.revenueMixPct != null
+    ) {
+      const punch = topByRev.punchPpts;
+      if (punch != null && Math.abs(punch) >= 1) {
+        s1.push(
+          punch > 0
+            ? `It punches above its weight on profit, contributing ${fmtPct(topByRev.profitMixPct, 0, false)} of segment operating profit${topByRev.operatingMarginPct != null ? ` at a ${fmtPct(topByRev.operatingMarginPct, 0, false)} margin` : ""}.`
+            : `It carries a lighter profit share (${fmtPct(topByRev.profitMixPct, 0, false)} of segment operating profit) than its revenue weight.`,
+        );
+      } else {
+        s1.push(
+          `Its profit share (${fmtPct(topByRev.profitMixPct, 0, false)}) tracks its revenue weight.`,
+        );
+      }
+    }
+  }
+  paras.push(s1.join(" "));
+
+  // ── Paragraph 2: growth attribution + forward outlook ─────────────────────
+  const s2: string[] = [];
+
+  // Which segment drove last year's growth — ONLY when multi-year segment
+  // history exists for ≥2 segments (so the attribution is real, not guessed).
+  if (segments?.status === "available" && segments.hasMultiYear) {
+    const deltas = segRows
+      .map((s) => {
+        const hist = s.history.filter((p) => p.revenue != null);
+        if (hist.length < 2) return null;
+        const cur = hist[hist.length - 1].revenue!;
+        const prev = hist[hist.length - 2].revenue!;
+        return { name: s.name, delta: cur - prev };
+      })
+      .filter((d): d is { name: string; delta: number } => d != null);
+    const totalAdded = deltas.reduce(
+      (acc, d) => acc + (d.delta > 0 ? d.delta : 0),
+      0,
+    );
+    const topDriver = [...deltas].sort(
+      (a, b) => b.delta - a.delta,
+    )[0];
+    if (topDriver && topDriver.delta > 0 && totalAdded > 0) {
+      const share = (topDriver.delta / totalAdded) * 100;
+      s2.push(
+        `Most of last year's revenue gain came from ${topDriver.name}, which drove roughly ${fmtPct(share, 0, false)} of the added revenue (${segSourceWord}).`,
+      );
+    }
+  }
+
+  // Forward outlook: prefer analyst consensus for TOTAL revenue when present in
+  // the bridge; otherwise TreasuryLens model language. Never attribute
+  // segment-specific commentary to analysts.
+  const bridge = data.bridge;
+  const analystYears =
+    bridge?.years.filter(
+      (y) => y.source === "analyst-estimate" && y.value != null,
+    ) ?? [];
+  const modelYears =
+    bridge?.years.filter(
+      (y) => y.source === "treasurylens-model" && y.value != null,
+    ) ?? [];
+  if (analystYears.length > 0) {
+    const lastEst = analystYears[analystYears.length - 1];
+    const cov =
+      lastEst.analystCount != null && lastEst.analystCount > 0
+        ? ` (${lastEst.analystCount} analysts)`
+        : "";
+    s2.push(
+      `Analyst consensus for total revenue${cov} points to about ${fmtCompactCurrency(lastEst.value!, currency)} by ${lastEst.label}${bridge?.estimateSource ? `, via ${bridge.estimateSource}` : ""}.`,
+    );
+    if (modelYears.length > 0) {
+      s2.push(
+        `Years beyond consensus are filled by the TreasuryLens growth-fade model (assumption, not analyst commentary).`,
+      );
+    }
+  } else if (scenarioModel) {
+    const baseCagr = scenarioModel.base.assumptions.revenueCagrPct;
+    const baseRev = scenarioModel.base.derivation?.futureRevenue ?? null;
+    s2.push(
+      baseRev != null
+        ? `No analyst revenue consensus is available, so the forward view is a TreasuryLens model assumption: a ${fmtPct(baseCagr, 0, false)} base-case revenue CAGR implies about ${fmtCompactCurrency(baseRev, currency)} in revenue by FY+${scenarioModel.horizonYears}.`
+        : `No analyst revenue consensus is available; the forward view uses a TreasuryLens model assumption of a ${fmtPct(baseCagr, 0, false)} base-case revenue CAGR.`,
+    );
+  } else if (modelYears.length > 0) {
+    s2.push(
+      `Forward years are TreasuryLens model estimates — no analyst revenue consensus is available for this name.`,
+    );
+  }
+
+  if (s2.length > 0) paras.push(s2.join(" "));
+  return paras;
+}
+
+function RevenueStoryBlock({
+  paragraphs,
+}: {
+  paragraphs: string[];
+}) {
+  if (paragraphs.length === 0) return null;
+  return (
+    <div
+      className="rounded-md border border-border/60 bg-muted/30 px-3 py-2.5 space-y-2"
+      data-testid="revenue-story-block"
+    >
+      <div className="flex items-center gap-1.5">
+        <Sparkles className="h-3 w-3 text-primary/80" aria-hidden />
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Revenue story
+        </span>
+      </div>
+      {paragraphs.map((p, i) => (
+        <p
+          key={i}
+          className="text-xs leading-relaxed text-foreground/90"
+          data-testid={`revenue-story-para-${i}`}
+        >
+          {p}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 function RevenuePanel({
   ticker,
   keyMetrics,
@@ -1276,28 +1928,19 @@ function RevenuePanel({
     return best;
   }, [bridge]);
 
-  // Build a tidy narrative summary sentence for the panel from resolved data.
-  const revNarrative = useMemo(() => {
-    if (!available || !data) return null;
-    const parts: string[] = [];
-    if (latestAnnual)
-      parts.push(
-        `${data.entityName ?? ticker} reported ${fmtCompactCurrency(latestAnnual.value, currency)} in ${latestAnnual.label} revenue`,
-      );
-    if (data.annualGrowthPct != null)
-      parts.push(
-        `${data.annualGrowthPct >= 0 ? "up" : "down"} ${fmtPct(Math.abs(data.annualGrowthPct), 0)} YoY`,
-      );
-    let lead = parts.join(", ");
-    if (lead) lead += ".";
-    const fwd =
-      bridge && bridge.years.some((y) => y.source === "analyst-estimate")
-        ? ` Forward years blend analyst consensus (${bridge.estimateSource ?? "estimate"}) with a TreasuryLens growth-fade model.`
-        : bridge && bridge.years.some((y) => y.source === "treasurylens-model")
-          ? " Forward years are TreasuryLens model estimates (no analyst consensus available)."
-          : "";
-    return (lead + fwd).trim() || null;
-  }, [available, data, latestAnnual, currency, ticker, bridge]);
+  // Deterministic, source-aware Revenue Story built from already-resolved
+  // structured data (revenue, key metrics, segments, scenario model). No LLM.
+  const revenueStory = useMemo(() => {
+    if (!available || !data) return [];
+    return buildRevenueStory({
+      data,
+      keyMetrics,
+      segments,
+      scenarioModel,
+      currency,
+      ticker,
+    });
+  }, [available, data, keyMetrics, segments, scenarioModel, currency, ticker]);
 
   return (
     <div className="space-y-3" data-testid="idea-revenue-card">
@@ -1320,21 +1963,10 @@ function RevenuePanel({
         </div>
       ) : (
         <div className="space-y-4" data-testid="revenue-body">
-          {/* Top narrative block — the research-context header for the section,
-              styled as a lead card the way the Hybrid artifact opens. */}
-          {revNarrative && (
-            <div
-              className="rounded-md border border-border/60 bg-muted/30 px-3 py-2.5"
-              data-testid="revenue-narrative-block"
-            >
-              <p
-                className="text-xs leading-relaxed text-foreground/90"
-                data-testid="revenue-narrative"
-              >
-                {revNarrative}
-              </p>
-            </div>
-          )}
+          {/* Revenue Story — a deterministic, source-aware narrative (1–2
+              paragraphs) built from the resolved structured data. Opens the
+              section the way the Hybrid artifact leads. */}
+          <RevenueStoryBlock paragraphs={revenueStory} />
 
           {/* KPI cards */}
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" data-testid="revenue-kpis">
@@ -1560,21 +2192,30 @@ function RevenuePanel({
           </div>
           {/* end Where-growth-came-from card */}
 
-          {/* ── Where growth is going ───────────────────────────────────
-              Forward Bear/Base/Bull view from the existing scenario model
-              (no new compute). Falls back to a truthful unavailable note when
-              no scenario is attached. */}
+          {/* ── Where growth is going · next 3–5 years ──────────────────
+              Forward Bear/Base/Bull year-by-year revenue bridge with per-year
+              source badges and client-side tweakable growth assumptions
+              (segment sliders when real segment data exists, else a single
+              total-revenue slider). Reuses the scenario model + revenue bridge
+              + segments already on the page — no new compute or API calls.
+              Falls back to a truthful unavailable note when no scenario or
+              revenue anchor resolved. */}
           <div
             className="rounded-md border border-border/60 bg-background/30 p-3 space-y-2"
             data-testid="revenue-forward-card"
           >
-            {scenarioModel ? (
-              <GrowthGoing model={scenarioModel} currency={currency} />
+            {scenarioModel && data ? (
+              <ForwardGrowthScenario
+                model={scenarioModel}
+                revenue={data}
+                segments={segments}
+                currency={currency}
+              />
             ) : (
               <>
                 <RevenueSectionHeader
-                  title="Where growth is going"
-                  right={<BridgeSourceBadge source="unavailable" />}
+                  title="Where growth is going · next 3–5 years"
+                  right={<ForwardSourceBadge source="unavailable" />}
                 />
                 <p className="text-[11px] text-muted-foreground">
                   A forward Bear/Base/Bull revenue scenario is unavailable for
