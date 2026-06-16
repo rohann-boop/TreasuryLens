@@ -38,6 +38,7 @@ import type {
   AnalystConsensusLabel,
   AnalystRecommendationPeriod,
 } from "@shared/schema";
+import { getFinnhubJson } from "./finnhubClient";
 
 const DEFAULT_BASE = "https://finnhub.io/api/v1";
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6h — recommendation trends update monthly
@@ -452,12 +453,99 @@ function unavailable(symbol: string, message: string): AnalystConsensus {
     bearishPercent: null,
     trendDirection: null,
     history: [],
+    priceTarget: null,
+    priceTargetHigh: null,
+    priceTargetLow: null,
+    priceTargetAnalystCount: null,
+    priceTargetAsOf: null,
     message,
   };
 }
 
 function errored(symbol: string, message: string): AnalystConsensus {
   return { ...unavailable(symbol, message), status: "error" };
+}
+
+// The price-target slice we fold into the consensus. Fetched from Finnhub's
+// /stock/price-target via the shared client so we reuse the exact credential
+// plumbing. Independent of recommendation coverage: a thinly-covered name (e.g.
+// RKLB) can have a mean price target with no recommendation-trend rows, so we
+// surface it rather than reporting "no analyst information".
+interface PriceTargetSlice {
+  priceTarget: number | null;
+  priceTargetHigh: number | null;
+  priceTargetLow: number | null;
+  priceTargetAnalystCount: number | null;
+  priceTargetAsOf: string | null;
+}
+
+const EMPTY_PRICE_TARGET: PriceTargetSlice = {
+  priceTarget: null,
+  priceTargetHigh: null,
+  priceTargetLow: null,
+  priceTargetAnalystCount: null,
+  priceTargetAsOf: null,
+};
+
+const ptCache = new Map<string, { at: number; data: PriceTargetSlice }>();
+
+function ptNumOrNull(v: unknown): number | null {
+  const n = typeof v === "string" ? Number(v) : (v as number);
+  return typeof n === "number" && Number.isFinite(n) ? n : null;
+}
+
+// Fetch only the price target. Never throws — any failure (premium-gated, quota,
+// uncovered, network) yields the empty slice so the recommendation path is
+// unaffected. Cached independently (6h) to stay efficient on free-tier credits.
+async function fetchPriceTargetSlice(symbol: string): Promise<PriceTargetSlice> {
+  const cached = ptCache.get(symbol);
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.data;
+
+  let slice = EMPTY_PRICE_TARGET;
+  let ttlBackdate = CACHE_TTL_MS - NEG_CACHE_TTL_MS; // retry sooner unless we got data
+  try {
+    const res = await getFinnhubJson(
+      `/stock/price-target?symbol=${encodeURIComponent(symbol)}`,
+    );
+    if (res.kind === "ok") {
+      const obj = res.json as {
+        targetMean?: number;
+        targetHigh?: number;
+        targetLow?: number;
+        numberAnalysts?: number;
+        lastUpdated?: string;
+      };
+      const mean = ptNumOrNull(obj?.targetMean);
+      slice = {
+        priceTarget: mean,
+        priceTargetHigh: ptNumOrNull(obj?.targetHigh),
+        priceTargetLow: ptNumOrNull(obj?.targetLow),
+        priceTargetAnalystCount: ptNumOrNull(obj?.numberAnalysts),
+        priceTargetAsOf:
+          typeof obj?.lastUpdated === "string" ? obj.lastUpdated.slice(0, 10) : null,
+      };
+      if (mean != null) ttlBackdate = 0; // cache real data for the full TTL
+    }
+  } catch {
+    slice = EMPTY_PRICE_TARGET;
+  }
+  ptCache.set(symbol, { at: Date.now() - ttlBackdate, data: slice });
+  return slice;
+}
+
+function hasPriceTarget(pt: PriceTargetSlice): boolean {
+  return pt.priceTarget != null;
+}
+
+function priceTargetSentence(pt: PriceTargetSlice): string {
+  const round = (n: number) => (Math.abs(n) >= 100 ? Math.round(n) : Number(n.toFixed(2)));
+  const range =
+    pt.priceTargetLow != null && pt.priceTargetHigh != null
+      ? ` (range ${round(pt.priceTargetLow)}–${round(pt.priceTargetHigh)})`
+      : "";
+  const analysts =
+    pt.priceTargetAnalystCount != null ? ` from ${pt.priceTargetAnalystCount} analysts` : "";
+  return `Mean price target ${round(pt.priceTarget as number)}${range}${analysts}.`;
 }
 
 export async function getAnalystConsensus(
@@ -513,6 +601,11 @@ export async function getAnalystConsensus(
     cache.set(symbol, { at: Date.now() - (CACHE_TTL_MS - NEG_CACHE_TTL_MS), data });
     return data;
   }
+
+  // Fetch the price target in parallel with the recommendation trend. It is an
+  // independent slice (and a separate Finnhub endpoint), so a name with no
+  // recommendation rows can still surface a real mean target. Never throws.
+  const ptPromise = fetchPriceTargetSlice(symbol).catch(() => EMPTY_PRICE_TARGET);
 
   let json: unknown;
   try {
@@ -576,8 +669,22 @@ export async function getAnalystConsensus(
   }
 
   if (!Array.isArray(json) || json.length === 0) {
-    // Empty array = no analyst coverage (typical for ETFs / funds / uncovered
-    // small caps / ambiguous tickers). This is an expected, graceful state.
+    // Empty array = no recommendation-trend coverage (typical for ETFs / funds /
+    // uncovered small caps / thinly-covered or younger names like RKLB). Before
+    // declaring "no analyst information", check whether a price target exists —
+    // Finnhub often serves /stock/price-target for names that have no
+    // recommendation rows, and that is still real analyst data worth showing.
+    const pt = await ptPromise;
+    if (hasPriceTarget(pt)) {
+      const data: AnalystConsensus = {
+        ...unavailable(symbol, ""),
+        status: "available",
+        ...pt,
+        message: `No recommendation-trend coverage from Finnhub, but a Wall-Street price target is available. ${priceTargetSentence(pt)}`,
+      };
+      cache.set(symbol, { at: Date.now(), data });
+      return data;
+    }
     const data = unavailable(
       symbol,
       "No analyst coverage from Finnhub for this ticker (common for ETFs, funds, or thinly-covered names).",
@@ -593,6 +700,17 @@ export async function getAnalystConsensus(
     .sort((a, b) => (a.period < b.period ? 1 : a.period > b.period ? -1 : 0));
 
   if (periods.length === 0) {
+    const pt = await ptPromise;
+    if (hasPriceTarget(pt)) {
+      const data: AnalystConsensus = {
+        ...unavailable(symbol, ""),
+        status: "available",
+        ...pt,
+        message: `No usable recommendation counts from Finnhub, but a Wall-Street price target is available. ${priceTargetSentence(pt)}`,
+      };
+      cache.set(symbol, { at: Date.now(), data });
+      return data;
+    }
     const data = unavailable(
       symbol,
       "Finnhub returned recommendation rows but no analyst counts for this ticker.",
@@ -610,6 +728,8 @@ export async function getAnalystConsensus(
     trendDirection =
       delta > 0.15 ? "improving" : delta < -0.15 ? "deteriorating" : "stable";
   }
+
+  const pt = await ptPromise;
 
   const data: AnalystConsensus = {
     status: "available",
@@ -630,7 +750,10 @@ export async function getAnalystConsensus(
     bearishPercent: latest.bearishPercent,
     trendDirection,
     history: periods.slice(0, MAX_HISTORY),
-    message: `${latest.total} analyst${latest.total === 1 ? "" : "s"} · consensus ${latest.label ?? "—"} (as of ${latest.period}).`,
+    ...pt,
+    message:
+      `${latest.total} analyst${latest.total === 1 ? "" : "s"} · consensus ${latest.label ?? "—"} (as of ${latest.period}).` +
+      (hasPriceTarget(pt) ? ` ${priceTargetSentence(pt)}` : ""),
   };
 
   cache.set(symbol, { at: Date.now(), data });

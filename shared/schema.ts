@@ -1531,6 +1531,16 @@ export interface AnalystConsensus {
   trendDirection: "improving" | "stable" | "deteriorating" | null;
   // Last few months of recommendation trends (newest first), for the mini-trend.
   history: AnalystRecommendationPeriod[];
+  // Wall-Street price target (mean/high/low), sourced from Finnhub's
+  // /stock/price-target and folded in alongside the recommendation trend. These
+  // are populated independently of the recommendation rows: a name can have a
+  // price target with no recommendation-trend coverage (or vice-versa), so the
+  // panel can show whatever real analyst data exists rather than nothing.
+  priceTarget: number | null; // mean target price
+  priceTargetHigh: number | null;
+  priceTargetLow: number | null;
+  priceTargetAnalystCount: number | null;
+  priceTargetAsOf: string | null; // provider "lastUpdated" date if present
   // Human-readable message — always present, especially for non-available cases.
   message: string;
 }

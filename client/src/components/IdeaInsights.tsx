@@ -1033,6 +1033,11 @@ export function AnalystConsensusPanel({
   const query = useIdeaAnalystConsensus(ticker);
   const data = query.data;
   const available = data?.status === "available";
+  // Recommendation-trend counts and the price target are independent slices: a
+  // thinly-covered name (e.g. RKLB) can have a price target with no
+  // recommendation rows. Render whichever real data exists.
+  const hasRecs = available && (data?.totalAnalysts ?? 0) > 0;
+  const hasPt = available && data?.priceTarget != null;
 
   return (
     <div
@@ -1049,7 +1054,7 @@ export function AnalystConsensusPanel({
             <Users2 className="h-3.5 w-3.5 text-primary/80" aria-hidden />
             Analyst consensus (Finnhub)
           </div>
-          {available && (
+          {hasRecs ? (
             <div className="flex items-center gap-2">
               <span
                 className={cn(
@@ -1068,7 +1073,14 @@ export function AnalystConsensusPanel({
                 {data!.totalAnalysts} analysts
               </span>
             </div>
-          )}
+          ) : hasPt ? (
+            <span
+              className="inline-flex items-center gap-1 rounded border border-primary/30 bg-primary/10 text-[11px] font-semibold tracking-wide uppercase px-2 py-0.5 text-primary"
+              data-testid="analyst-consensus-pt-only"
+            >
+              Price target
+            </span>
+          ) : null}
         </div>
       )}
 
@@ -1090,6 +1102,8 @@ export function AnalystConsensusPanel({
         </div>
       ) : (
         <>
+          {hasRecs && (
+          <>
           {/* Bull / bear split bar */}
           <div data-testid="analyst-consensus-split">
             <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-1">
@@ -1163,6 +1177,49 @@ export function AnalystConsensusPanel({
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+          </>
+          )}
+
+          {/* Wall-Street price target — shown whenever available, including when
+              there is no recommendation-trend coverage for the name. */}
+          {hasPt && (
+            <div data-testid="analyst-consensus-price-target">
+              {hasRecs && (
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+                  Price target
+                </div>
+              )}
+              <div className="rounded border border-border/60 bg-background/40 px-3 py-2.5">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                    Mean target
+                  </span>
+                  <span className="text-base font-semibold tabular-nums text-foreground">
+                    {fmtPrice(data.priceTarget)}
+                  </span>
+                </div>
+                {(data.priceTargetLow != null || data.priceTargetHigh != null) && (
+                  <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground tabular-nums">
+                    <span>Low {data.priceTargetLow != null ? fmtPrice(data.priceTargetLow) : "—"}</span>
+                    <span>High {data.priceTargetHigh != null ? fmtPrice(data.priceTargetHigh) : "—"}</span>
+                  </div>
+                )}
+                <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
+                  <span>
+                    {data.priceTargetAnalystCount != null
+                      ? `${data.priceTargetAnalystCount} analyst${data.priceTargetAnalystCount === 1 ? "" : "s"}`
+                      : ""}
+                  </span>
+                  {data.priceTargetAsOf && <span>as of {data.priceTargetAsOf}</span>}
+                </div>
+              </div>
+              {!hasRecs && (
+                <p className="mt-2 text-[11px] text-muted-foreground leading-relaxed">
+                  {data.message}
+                </p>
+              )}
             </div>
           )}
         </>
@@ -2312,6 +2369,26 @@ export function AnalystHeadline({ ticker }: { ticker: string }) {
   const { data, isLoading, isError } = useIdeaAnalystConsensus(ticker);
   if (isLoading) return <HeadlineMuted>Loading…</HeadlineMuted>;
   if (isError || !data || data.status !== "available") {
+    return <HeadlineMuted>No coverage</HeadlineMuted>;
+  }
+  // PT-only coverage (no recommendation-trend rows): show the price target so
+  // the headline still reflects the real analyst data we have.
+  if ((data.totalAnalysts ?? 0) <= 0) {
+    if (data.priceTarget != null) {
+      return (
+        <>
+          <HeadlinePill
+            label="Price target"
+            className="border-primary/30 bg-primary/10 text-primary"
+            testId="headline-analyst-label"
+          />
+          <HeadlineMuted>
+            {fmtPrice(data.priceTarget)} mean
+            {data.priceTargetAnalystCount != null ? ` · ${data.priceTargetAnalystCount} analysts` : ""}
+          </HeadlineMuted>
+        </>
+      );
+    }
     return <HeadlineMuted>No coverage</HeadlineMuted>;
   }
   return (
