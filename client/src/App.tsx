@@ -11,32 +11,49 @@ import StockPicks from "@/pages/StockPicks";
 import ModelLab from "@/pages/ModelLab";
 import InvestmentGroups from "@/pages/InvestmentGroups";
 import TradeIdeas from "@/pages/TradeIdeas";
+import Ideas from "@/pages/Ideas";
+import PortfolioLab from "@/pages/PortfolioLab";
 import { AssistantWidget } from "@/components/AssistantWidget";
 import { ThemeProvider } from "@/lib/theme";
 
-// The root route renders the merged Dashboard, which now embeds the Watchlist /
-// conviction-ideas experience. Three primary tabs: Dashboard, Stock Picks, 13F
-// Filings. Legacy /ideas and /conviction routes resolve to the Dashboard so old
-// links land on the merged watchlist section; /themes still maps to Stock
-// Picks; /superinvestors to 13F.
+// Five primary destinations: Dashboard (monitor & research), Ideas (discover),
+// Portfolio Lab (construct), Model Lab (tune/validate), 13F (investor
+// intelligence). The legacy discovery routes (/stock-picks, /themes,
+// /trade-ideas, /groups) and construction routes (/investment-groups,
+// /baskets) are kept as backwards-compatible entries that resolve to the
+// consolidated surfaces but no longer appear in the primary nav. /conviction
+// resolves to the Dashboard so old watchlist links keep working.
 function AppRouter() {
   return (
     <Switch>
       <Route path="/" component={Dashboard} />
       <Route path="/dashboard" component={Dashboard} />
       <Route path="/app" component={Dashboard} />
-      <Route path="/ideas" component={Dashboard} />
       <Route path="/conviction" component={Dashboard} />
       <Route path="/13f" component={ThirteenF} />
       <Route path="/superinvestors" component={ThirteenF} />
-      <Route path="/stock-picks" component={StockPicks} />
-      <Route path="/themes" component={StockPicks} />
       <Route path="/model-lab" component={ModelLab} />
-      <Route path="/investment-groups" component={InvestmentGroups} />
-      <Route path="/baskets" component={InvestmentGroups} />
-      <Route path="/trade-ideas" component={TradeIdeas} />
-      <Route path="/trade-ideas/longs" component={TradeIdeas} />
-      <Route path="/trade-ideas/options" component={TradeIdeas} />
+
+      {/* Ideas — consolidated discovery surface */}
+      <Route path="/ideas" component={Ideas} />
+      <Route path="/stock-picks" component={Ideas} />
+      <Route path="/themes" component={Ideas} />
+      <Route path="/groups" component={Ideas} />
+      <Route path="/trade-ideas" component={Ideas} />
+      <Route path="/trade-ideas/longs" component={Ideas} />
+      <Route path="/trade-ideas/options" component={Ideas} />
+
+      {/* Portfolio Lab — model / paper portfolio construction */}
+      <Route path="/portfolio-lab" component={PortfolioLab} />
+      <Route path="/portfolio" component={PortfolioLab} />
+      <Route path="/investment-groups" component={PortfolioLab} />
+      <Route path="/baskets" component={PortfolioLab} />
+
+      {/* Standalone legacy pages (off-nav, still directly reachable) */}
+      <Route path="/stock-picks-classic" component={StockPicks} />
+      <Route path="/trade-ideas-classic" component={TradeIdeas} />
+      <Route path="/investment-groups-classic" component={InvestmentGroups} />
+
       <Route component={NotFound} />
     </Switch>
   );

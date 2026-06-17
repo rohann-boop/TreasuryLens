@@ -742,10 +742,12 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-// ─── Page ────────────────────────────────────────────────────────────────────
+// ─── Body (embeddable) ───────────────────────────────────────────────────────
+// The Trade Ideas content without the page chrome (header / mobile nav). The
+// Ideas screen embeds this directly under its "Trade Ideas" sub-tab; the
+// standalone /trade-ideas route wraps it with the shared header below.
 
-export default function TradeIdeas() {
-  const { dark, setDark } = useTheme();
+export function TradeIdeasBody({ embedded = false }: { embedded?: boolean }) {
   const [tab, setTab] = useState<SubTab>("longs");
 
   const { data, isLoading, isError, error } = useQuery<TradeIdeasResponse>({
@@ -817,39 +819,19 @@ export default function TradeIdeas() {
   };
 
   return (
+    <>
     <div
-      className="min-h-[100dvh] flex flex-col bg-background text-foreground pb-16 md:pb-0"
-      data-testid="trade-ideas-page"
+      className="w-full max-w-[1500px] mx-auto px-4 md:px-6 py-5 space-y-4"
+      data-testid="trade-ideas-body"
     >
-      <header className="h-14 border-b border-border bg-background/80 backdrop-blur sticky top-0 z-20 flex items-center justify-between px-4 md:px-6 shrink-0">
-        <div className="flex items-center gap-3 min-w-0">
-          <WordMark />
-          <span className="hidden md:inline text-[11px] text-muted-foreground border-l border-border pl-3">
-            Trade Ideas — actionable longs &amp; bullish option structures
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <PrimaryNav className="mr-1" />
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={() => setDark(!dark)}
-            aria-label="Toggle theme"
-            data-testid="button-theme"
-          >
-            {dark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
-          </Button>
-        </div>
-      </header>
-
-      <main className="flex-1 w-full max-w-[1500px] mx-auto px-4 md:px-6 py-5 space-y-4">
-        {/* Intro */}
+      {/* Intro */}
         <div className="space-y-1.5">
+          {!embedded && (
           <h1 className="flex items-center gap-2 text-lg font-semibold">
             <Target className="h-5 w-5 text-primary" aria-hidden />
             Trade Ideas
           </h1>
+          )}
           <p className="text-[12px] text-muted-foreground leading-relaxed max-w-3xl">
             The most model-ranked ideas distilled from the curated universe. <b>Longs</b> ranks equity
             ideas by a computed Model Score — scenario reward/risk, base-case room, entry quality and
@@ -1065,7 +1047,7 @@ export default function TradeIdeas() {
             {data.asOf ? ` · Updated ${fmtAgo(data.asOf)}.` : ""}
           </footer>
         )}
-      </main>
+      </div>
 
       {/* Long detail drawer */}
       <Sheet open={!!selectedLongRow} onOpenChange={(o) => !o && setSelectedLong(null)}>
@@ -1114,7 +1096,43 @@ export default function TradeIdeas() {
           )}
         </SheetContent>
       </Sheet>
+    </>
+  );
+}
 
+// ─── Page (standalone /trade-ideas route) ────────────────────────────────────
+
+export default function TradeIdeas() {
+  const { dark, setDark } = useTheme();
+  return (
+    <div
+      className="min-h-[100dvh] flex flex-col bg-background text-foreground pb-16 md:pb-0"
+      data-testid="trade-ideas-page"
+    >
+      <header className="h-14 border-b border-border bg-background/80 backdrop-blur sticky top-0 z-20 flex items-center justify-between px-4 md:px-6 shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <WordMark />
+          <span className="hidden md:inline text-[11px] text-muted-foreground border-l border-border pl-3">
+            Trade Ideas — actionable longs &amp; bullish option structures
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <PrimaryNav className="mr-1" />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setDark(!dark)}
+            aria-label="Toggle theme"
+            data-testid="button-theme"
+          >
+            {dark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+          </Button>
+        </div>
+      </header>
+      <main className="flex-1">
+        <TradeIdeasBody />
+      </main>
       <MobileNav />
     </div>
   );

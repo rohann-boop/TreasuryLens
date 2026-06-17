@@ -2497,8 +2497,7 @@ function BacktestPanel() {
   );
 }
 
-export default function StockPicksPage() {
-  const { dark, setDark } = useTheme();
+export function StockPicksBody({ embedded = false }: { embedded?: boolean }) {
   const [selectedTheme, setSelectedTheme] = useState<StockPickTheme>(
     "ai-hardware",
   );
@@ -2597,24 +2596,12 @@ export default function StockPicksPage() {
 
   return (
     <div
-      className="min-h-[100dvh] flex flex-col bg-background text-foreground"
-      data-testid="page-stock-picks"
+      className="px-4 md:px-6 py-5 space-y-5 max-w-[1600px] mx-auto pb-20 md:pb-5"
+      data-testid="stock-picks-body"
     >
-      <header className="h-14 border-b border-border bg-background/80 backdrop-blur sticky top-0 z-20 flex items-center justify-between px-4 md:px-6">
-        <div className="flex items-center gap-3 min-w-0">
-          <Link href="/dashboard" data-testid="link-home">
-            <WordMark />
-          </Link>
-          <span className="text-muted-foreground hidden md:inline">·</span>
-          <h1
-            className="hidden md:inline text-base font-semibold"
-            data-testid="text-page-title"
-          >
-            Stock Picks &amp; Themes
-          </h1>
-        </div>
-        <div className="flex items-center gap-2">
-          <PrimaryNav className="mr-1" />
+      {!embedded && (
+        <div className="flex items-center justify-between gap-2">
+          <h1 className="text-lg font-semibold">Stock Picks &amp; Themes</h1>
           {lastUpdated && (
             <span
               className="hidden lg:inline text-[11px] text-muted-foreground"
@@ -2623,30 +2610,10 @@ export default function StockPicksPage() {
               Updated {fmtAgo(lastUpdated)}
             </span>
           )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            onClick={() => setDark(!dark)}
-            aria-label="Toggle theme"
-            data-testid="button-theme"
-          >
-            {dark ? (
-              <Sun className="h-3.5 w-3.5" />
-            ) : (
-              <Moon className="h-3.5 w-3.5" />
-            )}
-          </Button>
         </div>
-      </header>
+      )}
 
-      <main className="flex-1">
-        <div className="px-4 md:px-6 py-5 space-y-5 max-w-[1600px] mx-auto pb-20 md:pb-5">
-          <div className="md:hidden">
-            <h1 className="text-lg font-semibold">Stock Picks &amp; Themes</h1>
-          </div>
-
-          <div
+      <div
             className="flex items-start gap-2 rounded-md border border-border/70 bg-card/40 px-3 py-2 text-[11px] text-muted-foreground"
             data-testid="page-disclaimer"
           >
@@ -2815,15 +2782,58 @@ export default function StockPicksPage() {
             </div>
           </div>
 
-          {query.data?.disclaimer && (
-            <footer
-              className="text-[10px] text-muted-foreground py-3 leading-relaxed"
-              data-testid="page-footer-disclaimer"
-            >
-              {query.data.disclaimer} {query.data.notes}
-            </footer>
-          )}
+      {query.data?.disclaimer && (
+        <footer
+          className="text-[10px] text-muted-foreground py-3 leading-relaxed"
+          data-testid="page-footer-disclaimer"
+        >
+          {query.data.disclaimer} {query.data.notes}
+        </footer>
+      )}
+    </div>
+  );
+}
+
+export default function StockPicksPage() {
+  const { dark, setDark } = useTheme();
+  return (
+    <div
+      className="min-h-[100dvh] flex flex-col bg-background text-foreground pb-16 md:pb-0"
+      data-testid="page-stock-picks"
+    >
+      <header className="h-14 border-b border-border bg-background/80 backdrop-blur sticky top-0 z-20 flex items-center justify-between px-4 md:px-6 shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <Link href="/dashboard" data-testid="link-home">
+            <WordMark />
+          </Link>
+          <span className="text-muted-foreground hidden md:inline">·</span>
+          <h1
+            className="hidden md:inline text-base font-semibold"
+            data-testid="text-page-title"
+          >
+            Stock Picks &amp; Themes
+          </h1>
         </div>
+        <div className="flex items-center gap-2">
+          <PrimaryNav className="mr-1" />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => setDark(!dark)}
+            aria-label="Toggle theme"
+            data-testid="button-theme"
+          >
+            {dark ? (
+              <Sun className="h-3.5 w-3.5" />
+            ) : (
+              <Moon className="h-3.5 w-3.5" />
+            )}
+          </Button>
+        </div>
+      </header>
+      <main className="flex-1">
+        <StockPicksBody />
       </main>
       <MobileNav />
     </div>

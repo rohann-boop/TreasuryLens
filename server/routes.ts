@@ -16,6 +16,7 @@ import { getStockPicksBacktest } from "./backtest";
 import { getQuantBacktest } from "./quantBacktest";
 import { runModelLabBacktest } from "./modelLab";
 import { getInvestmentGroups } from "./investmentGroups";
+import { getPortfolioLab } from "./portfolioLab";
 import { getTradeIdeas } from "./tradeIdeas";
 import {
   getConvictionIdeas,
@@ -508,6 +509,101 @@ export async function registerRoutes(
             : undefined,
         }),
       );
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // Portfolio Lab v1 — construct a MODEL / PAPER portfolio (research only) from
+  // the conviction universe under a chosen source (themes / sections / manual
+  // tickers / full universe), a weighting style, and constraints (max holdings,
+  // max position size, max theme exposure, max high-risk exposure, min model
+  // score, cash buffer). Deterministic; no LLM, no orders, no brokerage. POST
+  // body carries style/source/constraints; GET returns defaults so the page can
+  // bootstrap the style + source option lists.
+  const PORTFOLIO_STYLE_IDS = [
+    "equal-weight",
+    "model-score-weighted",
+    "risk-weighted",
+    "core-satellite",
+    "high-upside",
+    "risk-controlled",
+  ] as const;
+  const PORTFOLIO_SOURCE_KINDS = [
+    "universe",
+    "themes",
+    "sections",
+    "manual",
+  ] as const;
+  const parsePortfolioLabBody = (body: unknown) => {
+    const b = (body ?? {}) as Record<string, unknown>;
+    const out: {
+      styleId?: (typeof PORTFOLIO_STYLE_IDS)[number];
+      source?: {
+        kind?: (typeof PORTFOLIO_SOURCE_KINDS)[number];
+        themes?: string[];
+        sections?: string[];
+        tickers?: string[];
+      };
+      constraints?: Record<string, number>;
+    } = {};
+    if (
+      typeof b.styleId === "string" &&
+      (PORTFOLIO_STYLE_IDS as readonly string[]).includes(b.styleId)
+    ) {
+      out.styleId = b.styleId as (typeof PORTFOLIO_STYLE_IDS)[number];
+    }
+    const toStrArr = (v: unknown): string[] =>
+      Array.isArray(v)
+        ? v
+            .filter((x): x is string => typeof x === "string")
+            .map((x) => x.trim())
+            .filter(Boolean)
+            .slice(0, 100)
+        : [];
+    if (b.source && typeof b.source === "object") {
+      const s = b.source as Record<string, unknown>;
+      const source: NonNullable<typeof out.source> = {};
+      if (
+        typeof s.kind === "string" &&
+        (PORTFOLIO_SOURCE_KINDS as readonly string[]).includes(s.kind)
+      ) {
+        source.kind = s.kind as (typeof PORTFOLIO_SOURCE_KINDS)[number];
+      }
+      source.themes = toStrArr(s.themes);
+      source.sections = toStrArr(s.sections);
+      source.tickers = toStrArr(s.tickers);
+      out.source = source;
+    }
+    if (b.constraints && typeof b.constraints === "object") {
+      const cs = b.constraints as Record<string, unknown>;
+      const keys = [
+        "maxHoldings",
+        "maxPositionPct",
+        "maxThemePct",
+        "maxHighRiskPct",
+        "minModelScore",
+        "cashBufferPct",
+      ];
+      const w: Record<string, number> = {};
+      for (const k of keys) {
+        const v = cs[k];
+        if (typeof v === "number" && Number.isFinite(v)) w[k] = v;
+      }
+      if (Object.keys(w).length > 0) out.constraints = w;
+    }
+    return out;
+  };
+  app.post("/api/portfolio-lab", async (req, res) => {
+    try {
+      res.json(await getPortfolioLab(parsePortfolioLabBody(req.body)));
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+  app.get("/api/portfolio-lab", async (_req, res) => {
+    try {
+      res.json(await getPortfolioLab({}));
     } catch (e) {
       res.status(500).json({ message: (e as Error).message });
     }

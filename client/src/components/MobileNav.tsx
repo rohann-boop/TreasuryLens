@@ -1,14 +1,14 @@
 import { Link, useLocation } from "wouter";
 import { PRIMARY_TABS } from "@/components/PrimaryNav";
 
-// Mobile bottom-bar navigation. Shows short labels for the three primary tabs;
+// Mobile bottom-bar navigation. Shows short labels for the five primary tabs;
 // the source of truth for the tabs themselves is PRIMARY_TABS in PrimaryNav.
+// Labels are kept short so all five fit the bottom bar on small Android phones.
 const MOBILE_LABELS: Record<string, string> = {
   "nav-dashboard": "Dashboard",
-  "nav-stock-picks": "Stock Picks",
+  "nav-ideas": "Ideas",
+  "nav-portfolio-lab": "Portfolio",
   "nav-model-lab": "Model Lab",
-  "nav-investment-groups": "Groups",
-  "nav-trade-ideas": "Ideas",
   "nav-13f": "13F",
 };
 

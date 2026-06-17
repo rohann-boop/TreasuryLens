@@ -2357,3 +2357,144 @@ export interface TradeIdeasResponse {
   };
   disclaimer: string;
 }
+
+// =============================================================================
+// Portfolio Lab v1 — model/paper portfolio construction workbench.
+//
+// HONEST FRAMING: Portfolio Lab assembles a *model/paper portfolio* (research
+// only) from the existing conviction universe. The user picks a source (themes,
+// watchlist sections, ETFs/exposure, or manual tickers), a portfolio style
+// (weighting scheme), and a set of constraints. The engine selects holdings and
+// computes target weights deterministically from the universe's curated model
+// score, scenario model (upside/downside/risk) and trailing performance. It is
+// NOT a brokerage, NOT trading, NOT personalized advice, and is NOT backtested
+// as a portfolio. No orders are ever placed.
+// =============================================================================
+
+// Where the candidate universe comes from.
+export type PortfolioSourceKind =
+  | "universe" // the full conviction universe
+  | "themes" // names matching selected theme tags
+  | "sections" // names in selected watchlist sections
+  | "manual"; // an explicit list of tickers
+
+// Portfolio weighting style.
+export type PortfolioStyleId =
+  | "equal-weight"
+  | "model-score-weighted"
+  | "risk-weighted"
+  | "core-satellite"
+  | "high-upside"
+  | "risk-controlled";
+
+export interface PortfolioStyleInfo {
+  id: PortfolioStyleId;
+  name: string;
+  blurb: string;
+}
+
+// Constraints / rules the user can set. All optional with sensible server
+// defaults + clamps.
+export interface PortfolioConstraints {
+  maxHoldings: number; // total names in the portfolio
+  maxPositionPct: number; // cap on any single position weight (%)
+  maxThemePct: number; // cap on aggregate exposure to any one theme (%)
+  maxHighRiskPct: number; // cap on aggregate high/very-high risk exposure (%)
+  minModelScore: number; // 0-100 floor on the curated model score
+  cashBufferPct: number; // % held in cash (the equities are scaled to 100-cash)
+}
+
+// One holding line in the constructed model portfolio.
+export interface PortfolioHolding {
+  ticker: string;
+  companyName: string;
+  weightPct: number; // target weight in the equity sleeve net of cash
+  rawWeightPct: number; // pre-constraint weight (before caps/renormalisation)
+  modelScore: number; // 0-100 curated model score
+  riskLevel: RiskLevel | null;
+  scenarioClassification: ScenarioClassification | null;
+  upsidePct: number | null;
+  downsidePct: number | null;
+  change6mPct: number | null;
+  change12mPct: number | null;
+  themes: string[];
+  sectionLabel: string | null;
+  role: "core" | "satellite" | "holding"; // sleeve tag for core/satellite styles
+  // One short line explaining the size / inclusion.
+  note: string;
+}
+
+// Aggregate theme exposure across the portfolio (equity sleeve).
+export interface PortfolioThemeExposure {
+  theme: string;
+  weightPct: number;
+  holdings: number;
+}
+
+// Aggregate risk-bucket exposure across the portfolio.
+export interface PortfolioRiskExposure {
+  riskLevel: RiskLevel | "unknown";
+  weightPct: number;
+  holdings: number;
+}
+
+export interface PortfolioWarning {
+  // "info" = transparency note; "warn" = a constraint that bound or a thin set.
+  level: "info" | "warn";
+  message: string;
+}
+
+export interface ModelPortfolio {
+  styleId: PortfolioStyleId;
+  styleName: string;
+  name: string; // human label for the portfolio
+  thesis: string; // one-paragraph framing of the construction
+  holdings: PortfolioHolding[];
+  cashPct: number; // cash buffer actually applied (%)
+  // Aggregate reads across the equity sleeve.
+  themeExposure: PortfolioThemeExposure[];
+  riskExposure: PortfolioRiskExposure[];
+  avgModelScore: number | null;
+  weightedUpsidePct: number | null; // weighted scenario bull upside
+  weightedDownsidePct: number | null; // weighted scenario bear downside
+  // Explainability.
+  howItWasBuilt: string[];
+  warnings: PortfolioWarning[];
+  // The controls actually applied (echoed back, post-clamp).
+  appliedSource: {
+    kind: PortfolioSourceKind;
+    themes: string[];
+    sections: string[];
+    tickers: string[];
+  };
+  appliedConstraints: PortfolioConstraints;
+  empty: boolean;
+  emptyNote: string | null;
+}
+
+// POST body for /api/portfolio-lab. All optional; server clamps + defaults.
+export interface PortfolioLabRequest {
+  styleId?: PortfolioStyleId;
+  source?: {
+    kind?: PortfolioSourceKind;
+    themes?: string[];
+    sections?: string[];
+    tickers?: string[];
+  };
+  constraints?: Partial<PortfolioConstraints>;
+}
+
+export interface PortfolioLabResponse {
+  asOf: number;
+  styles: PortfolioStyleInfo[];
+  // The available source options derived from the live universe.
+  availableThemes: { key: string; count: number }[];
+  availableSections: { key: string; label: string; count: number }[];
+  universeSize: number;
+  portfolio: ModelPortfolio;
+  metricsStatus: {
+    livePricing: boolean;
+    fundamentals: boolean;
+  };
+  disclaimer: string;
+}

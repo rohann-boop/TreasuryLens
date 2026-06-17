@@ -4,29 +4,36 @@ import {
   Users,
   Lightbulb,
   FlaskConical,
-  Boxes,
-  Target,
+  Briefcase,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-// Routes that resolve to the merged Dashboard (which now embeds the watchlist).
-// Legacy /ideas and /conviction live here so the Dashboard tab stays active on
-// those backward-compatible routes.
-const DASHBOARD_ROUTES = [
-  "/",
-  "",
-  "/dashboard",
-  "/app",
+// Routes that resolve to the merged Dashboard (which embeds the watchlist).
+// Legacy /conviction lives here so the Dashboard tab stays active on the
+// backward-compatible route.
+const DASHBOARD_ROUTES = ["/", "", "/dashboard", "/app", "/conviction"];
+
+// The consolidated Ideas surface now owns discovery: Stock Picks / themes /
+// ETFs, Trade Ideas (longs + options) and theme/group discovery. The old
+// top-level routes resolve here so legacy links keep working.
+const IDEAS_ROUTES = [
   "/ideas",
-  "/conviction",
-];
-
-const STOCK_PICKS_ROUTES = ["/stock-picks", "/themes"];
-
-const TRADE_IDEAS_ROUTES = [
+  "/stock-picks",
+  "/themes",
   "/trade-ideas",
   "/trade-ideas/longs",
   "/trade-ideas/options",
+  "/groups",
+];
+
+// Portfolio Lab — model/paper portfolio construction. The legacy Investment
+// Groups / Baskets routes resolve here so old links land on the construction
+// workflow.
+const PORTFOLIO_ROUTES = [
+  "/portfolio-lab",
+  "/portfolio",
+  "/investment-groups",
+  "/baskets",
 ];
 
 type Tab = {
@@ -37,9 +44,9 @@ type Tab = {
   match: (loc: string) => boolean;
 };
 
-// The primary tabs. Order is intentional: Dashboard (merged dashboard +
-// watchlist), Stock Picks (theme discovery), Model Lab (quant weight sandbox),
-// 13F Filings.
+// The five primary destinations, in intentional order:
+//   Dashboard (monitor & research) · Ideas (discover) · Portfolio Lab
+//   (construct) · Model Lab (tune/validate) · 13F (investor intelligence).
 export const PRIMARY_TABS: Tab[] = [
   {
     href: "/dashboard",
@@ -49,11 +56,18 @@ export const PRIMARY_TABS: Tab[] = [
     match: (loc) => DASHBOARD_ROUTES.includes(loc),
   },
   {
-    href: "/stock-picks",
-    label: "Stock Picks",
-    testId: "nav-stock-picks",
+    href: "/ideas",
+    label: "Ideas",
+    testId: "nav-ideas",
     icon: Lightbulb,
-    match: (loc) => STOCK_PICKS_ROUTES.includes(loc),
+    match: (loc) => IDEAS_ROUTES.includes(loc),
+  },
+  {
+    href: "/portfolio-lab",
+    label: "Portfolio Lab",
+    testId: "nav-portfolio-lab",
+    icon: Briefcase,
+    match: (loc) => PORTFOLIO_ROUTES.includes(loc),
   },
   {
     href: "/model-lab",
@@ -63,22 +77,8 @@ export const PRIMARY_TABS: Tab[] = [
     match: (loc) => loc === "/model-lab",
   },
   {
-    href: "/investment-groups",
-    label: "Groups",
-    testId: "nav-investment-groups",
-    icon: Boxes,
-    match: (loc) => loc === "/investment-groups" || loc === "/baskets",
-  },
-  {
-    href: "/trade-ideas",
-    label: "Trade Ideas",
-    testId: "nav-trade-ideas",
-    icon: Target,
-    match: (loc) => TRADE_IDEAS_ROUTES.includes(loc),
-  },
-  {
     href: "/13f",
-    label: "13F Filings",
+    label: "13F",
     testId: "nav-13f",
     icon: Users,
     match: (loc) => loc === "/13f" || loc === "/superinvestors",
