@@ -14,6 +14,7 @@ import {
 import { WordMark } from "@/components/Logo";
 import { PrimaryNav } from "@/components/PrimaryNav";
 import { MobileNav } from "@/components/MobileNav";
+import { AllWeatherBody } from "./AllWeather";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -82,6 +83,7 @@ export default function PortfolioLab() {
   const { dark, setDark } = useTheme();
   const { toast } = useToast();
 
+  const [mode, setMode] = useState<"builder" | "all-weather">("builder");
   const [styleId, setStyleId] = useState<PortfolioStyleId>("model-score-weighted");
   const [sourceKind, setSourceKind] = useState<PortfolioSourceKind>("universe");
   const [selectedThemes, setSelectedThemes] = useState<string[]>([]);
@@ -194,34 +196,73 @@ export default function PortfolioLab() {
       </header>
 
       <main className="flex-1 w-full max-w-6xl mx-auto px-4 md:px-6 py-5 space-y-5">
-        <div className="space-y-1.5">
+        <div className="space-y-2.5">
           <h1 className="flex items-center gap-2 text-lg font-semibold">
             <Briefcase className="h-5 w-5 text-primary" aria-hidden />
             Portfolio Lab
           </h1>
-          <p className="text-[12px] text-muted-foreground leading-relaxed max-w-3xl">
-            Construct an explainable{" "}
-            <span className="font-medium text-foreground/90">
-              model / paper portfolio
-            </span>{" "}
-            from the model-scored universe. Pick a source and a weighting style,
-            set your rules, and the engine sizes positions deterministically with
-            the reasoning shown for every name.
-          </p>
           <div
-            className="flex items-start gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-600 dark:text-amber-400 max-w-3xl"
-            data-testid="portfolio-lab-disclaimer"
+            className="inline-flex rounded-md border border-border/70 overflow-hidden text-[12px]"
+            role="tablist"
+            data-testid="portfolio-lab-modes"
           >
-            <ShieldAlert className="h-3.5 w-3.5 mt-0.5 shrink-0" aria-hidden />
-            <span>
-              Research / paper portfolio only — no brokerage, no orders, no
-              trading actions. Weights are hypothetical and assembled from model
-              scores, scenario models and trailing performance. Not personalized
-              financial advice.
-            </span>
+            <button
+              role="tab"
+              aria-selected={mode === "builder"}
+              data-testid="mode-builder"
+              onClick={() => setMode("builder")}
+              className={`px-4 py-1.5 transition-colors ${
+                mode === "builder"
+                  ? "bg-primary/15 text-foreground"
+                  : "bg-background/30 text-muted-foreground hover:bg-card/60"
+              }`}
+            >
+              Builder
+            </button>
+            <button
+              role="tab"
+              aria-selected={mode === "all-weather"}
+              data-testid="mode-all-weather"
+              onClick={() => setMode("all-weather")}
+              className={`px-4 py-1.5 transition-colors border-l border-border/70 ${
+                mode === "all-weather"
+                  ? "bg-primary/15 text-foreground"
+                  : "bg-background/30 text-muted-foreground hover:bg-card/60"
+              }`}
+            >
+              All-Weather
+            </button>
           </div>
+          {mode === "builder" && (
+            <>
+              <p className="text-[12px] text-muted-foreground leading-relaxed max-w-3xl">
+                Construct an explainable{" "}
+                <span className="font-medium text-foreground/90">
+                  model / paper portfolio
+                </span>{" "}
+                from the model-scored universe. Pick a source and a weighting style,
+                set your rules, and the engine sizes positions deterministically with
+                the reasoning shown for every name.
+              </p>
+              <div
+                className="flex items-start gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-600 dark:text-amber-400 max-w-3xl"
+                data-testid="portfolio-lab-disclaimer"
+              >
+                <ShieldAlert className="h-3.5 w-3.5 mt-0.5 shrink-0" aria-hidden />
+                <span>
+                  Research / paper portfolio only — no brokerage, no orders, no
+                  trading actions. Weights are hypothetical and assembled from model
+                  scores, scenario models and trailing performance. Not personalized
+                  financial advice.
+                </span>
+              </div>
+            </>
+          )}
         </div>
 
+        {mode === "all-weather" && <AllWeatherBody />}
+
+        {mode === "builder" && (
         <div className="grid grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)] gap-5">
           {/* Controls */}
           <aside className="space-y-4" data-testid="portfolio-controls">
@@ -614,6 +655,7 @@ export default function PortfolioLab() {
             )}
           </div>
         </div>
+        )}
       </main>
 
       <MobileNav />

@@ -2498,3 +2498,214 @@ export interface PortfolioLabResponse {
   };
   disclaimer: string;
 }
+
+// =============================================================================
+// Tactical Ideas v1 — short-term / tactical setups ranked from the SAME curated
+// universe Trade Ideas uses (no universe expansion in this pass). Where Trade
+// Ideas' Longs view ranks multi-year conviction, Tactical Ideas ranks names
+// where the deterministic model sees a near-term, actionable mispricing: a
+// constructive-but-not-parabolic trend, real remaining base-case room, a
+// contained invalidation level and (where present) catalysts. Every score is a
+// transparent weighted blend of model-derived inputs — momentum windows, the
+// scenario model and entry quality. NO live intraday technicals, NO LLM, NO
+// price prediction. Research only — short-term setups carry elevated risk.
+// =============================================================================
+
+// The kind of tactical setup the model recognised, from momentum + scenario.
+export type TacticalSetupKind =
+  | "momentum-continuation" // healthy uptrend with room left to base case
+  | "breakout-watch" // pushing toward / through prior strength
+  | "pullback-in-uptrend" // constructive name that recently cooled off
+  | "mean-reversion-rebound" // washed-out name stabilising with upside
+  | "value-dislocation"; // base case implies large room vs muted momentum
+
+// Coarse holding horizon for a tactical setup.
+export type TacticalHorizon =
+  | "2-6 weeks"
+  | "1-3 months"
+  | "3-6 months";
+
+// One ranked tactical (short-term) equity setup.
+export interface TacticalIdea {
+  ticker: string;
+  companyName: string;
+  themes: StockPickTheme[];
+  subTheme: StockPickSubTheme | null;
+  // 0-100 transparent tactical score (momentum + setup quality + room + entry).
+  tacticalScore: number;
+  tier: TradeIdeaTier;
+  setupKind: TacticalSetupKind;
+  setupLabel: string;
+  horizon: TacticalHorizon;
+  riskLevel: RiskLevel;
+  // Signal quality 0-100 — how much data backed the setup read (momentum +
+  // scenario coverage). Low when momentum windows or scenario model are missing.
+  signalQuality: number;
+  signalQualityLabel: "strong" | "moderate" | "thin";
+  // Pricing / scenario math.
+  price: number | null;
+  priceCurrency: string | null;
+  // Expected tactical upside range — a near-term window between a conservative
+  // and a stretch model-implied move (NOT the multi-year bull case). Percent.
+  upsideLowPct: number | null;
+  upsideHighPct: number | null;
+  upsideLabel: string; // e.g. "potential +30–40%"
+  // Concrete downside / invalidation level + the % drop it implies.
+  invalidationLevel: number | null;
+  invalidationPct: number | null; // negative
+  // Momentum context surfaced as the trend read.
+  change1mPct: number | null;
+  change6mPct: number | null;
+  change12mPct: number | null;
+  // Analyst target gap when available (% from price to mean target). Null today
+  // unless the scenario analyst block carried a reference target.
+  analystTargetGapPct: number | null;
+  // Whether a near-term catalyst exists in the curated thesis.
+  hasCatalyst: boolean;
+  catalyst: string | null;
+  // Why the model sees a mispricing — short readable bullets.
+  whyMispriced: string[];
+  // Transparent factor contributions to the tactical score (each 0-100 with the
+  // weight it carried), for the "Why this is ranked" detail area.
+  factors: TacticalFactor[];
+  // Invalidation rules — what would take the setup off the list.
+  invalidationRules: string[];
+  // Whether modeled bullish option structures are available for this name.
+  optionsAvailable: boolean;
+  dataConfidence: DataConfidence;
+}
+
+// One transparent factor contribution to the tactical score.
+export interface TacticalFactor {
+  key: "momentum" | "base-room" | "entry" | "reward-risk" | "catalyst";
+  label: string;
+  score: number; // 0-100
+  weight: number; // 0-1 contribution weight
+  note: string;
+}
+
+// A tactical option idea — same five structures as Trade Ideas but modeled on a
+// SHORTER horizon to fit the tactical timeframe. Reuses TradeIdeaOption shape.
+export type TacticalOption = TradeIdeaOption & {
+  // The tactical setup this structure maps to.
+  setupKind: TacticalSetupKind;
+  setupLabel: string;
+  horizon: TacticalHorizon;
+};
+
+export interface TacticalIdeasResponse {
+  asOf: number;
+  ideas: TacticalIdea[];
+  options: TacticalOption[];
+  setups: { kind: TacticalSetupKind; label: string; blurb: string }[];
+  universeSize: number;
+  optionsDataMode: TradeIdeaDataMode;
+  metricsStatus: {
+    livePricing: boolean;
+    fundamentals: boolean;
+    optionChain: boolean;
+  };
+  methodology: {
+    tactical: string;
+    options: string;
+  };
+  disclaimer: string;
+}
+
+// =============================================================================
+// All-Weather Portfolios v1 — curated multi-asset portfolio templates inside
+// Portfolio Lab. Unlike the equity basket builder, these allocate across asset
+// SLEEVES (equities, gold/precious metals, bitcoin/crypto, bonds/T-bills/cash,
+// commodities/real assets, optional AI/growth) using a small starter set of
+// broad proxy ETFs/assets. Allocations are CURATED model templates for research
+// only — not optimised, not backtested, not personalized advice. A risk-profile
+// dial tilts a template toward defense or growth deterministically.
+// =============================================================================
+
+// The asset sleeve a holding belongs to.
+export type AllWeatherSleeve =
+  | "equities"
+  | "ai-growth"
+  | "gold"
+  | "bitcoin"
+  | "bonds"
+  | "cash"
+  | "commodities"
+  | "real-assets";
+
+// Risk dial position — tilts the template toward defense or growth.
+export type AllWeatherRisk = "defensive" | "balanced" | "growth";
+
+// Market regimes the template is expected to behave across.
+export type AllWeatherRegime =
+  | "inflation-rising"
+  | "rates-falling"
+  | "growth-accelerating"
+  | "recession-risk-off"
+  | "dollar-weakness"
+  | "bitcoin-bull"
+  | "ai-boom";
+
+export interface AllWeatherSleeveInfo {
+  key: AllWeatherSleeve;
+  label: string;
+  role: string; // one-line role of this sleeve in the portfolio
+}
+
+// One proxy holding inside a sleeve.
+export interface AllWeatherHolding {
+  ticker: string; // proxy ETF / asset symbol
+  name: string;
+  sleeve: AllWeatherSleeve;
+  weightPct: number; // target weight after the risk tilt
+  role: string; // why it's here
+}
+
+// How a template is expected to behave in a given regime.
+export interface AllWeatherRegimeNote {
+  regime: AllWeatherRegime;
+  label: string;
+  // -2..+2 qualitative tilt: how the portfolio is expected to fare.
+  expectation: "strong" | "ok" | "neutral" | "headwind" | "weak";
+  note: string;
+}
+
+export interface AllWeatherTemplate {
+  id: string;
+  name: string;
+  blurb: string;
+  // Base risk profile this template is authored at.
+  baseRisk: AllWeatherRisk;
+  rebalanceCadence: string; // e.g. "Quarterly, or on a >5% sleeve drift"
+  // Base sleeve weights (sum to 100 before the risk tilt). Keyed by sleeve.
+  baseSleeveWeights: { sleeve: AllWeatherSleeve; weightPct: number }[];
+  holdings: AllWeatherHolding[];
+  keyRisks: string[];
+  regimeNotes: AllWeatherRegimeNote[];
+}
+
+// A template resolved at a chosen risk profile — sleeve + holding weights are
+// the post-tilt result the UI renders.
+export interface AllWeatherResolved {
+  templateId: string;
+  name: string;
+  risk: AllWeatherRisk;
+  sleeves: {
+    sleeve: AllWeatherSleeve;
+    label: string;
+    role: string;
+    weightPct: number;
+  }[];
+  holdings: AllWeatherHolding[];
+  rebalanceCadence: string;
+  keyRisks: string[];
+  regimeNotes: AllWeatherRegimeNote[];
+  howItWorks: string[];
+}
+
+export interface AllWeatherResponse {
+  asOf: number;
+  sleeves: AllWeatherSleeveInfo[];
+  templates: AllWeatherTemplate[];
+  disclaimer: string;
+}

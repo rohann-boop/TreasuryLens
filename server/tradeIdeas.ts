@@ -83,7 +83,7 @@ const CLASS_VOL_BUMP: Partial<Record<ScenarioClassification, number>> = {
   speculative: 12,
 };
 
-function ivProxyPct(pick: StockPick): number {
+export function ivProxyPct(pick: StockPick): number {
   const base = RISK_VOL_PROXY[pick.riskLevel] ?? 40;
   const bump = pick.scenarioModel
     ? CLASS_VOL_BUMP[pick.scenarioModel.classification] ?? 0
@@ -221,7 +221,7 @@ function downsideGuardPoints(pick: StockPick): number {
   return clamp(pts, 0, 95);
 }
 
-function buildLong(pick: StockPick): TradeIdeaLong {
+export function buildLong(pick: StockPick): TradeIdeaLong {
   const sm = pick.scenarioModel ?? null;
   const km = pick.keyMetrics ?? null;
   const entry = deriveEntryQuality(pick);
@@ -652,7 +652,7 @@ function buildStructure(
 // Which structures make sense for a given thesis. Higher-upside, higher-vol
 // names lean to calls/spreads/diagonals; steadier names also get the
 // put-selling structures (entry-oriented, income).
-function structuresFor(long: TradeIdeaLong): OptionStructureKind[] {
+export function structuresFor(long: TradeIdeaLong): OptionStructureKind[] {
   const c = long.scenarioClassification;
   const highUpside = c === "2x potential" || c === "3x potential" || c === "5x potential" || c === "speculative";
   const steady = c === "defensive" || c === "compounder";
@@ -676,9 +676,9 @@ const STRUCTURE_LABEL: Record<OptionStructureKind, string> = {
 
 // Extend TradeIdeaLong with a scratch field for the vol proxy so buildStructure
 // can read it without recomputation. Kept internal to this module.
-type LongWithVol = TradeIdeaLong & { ivProxyForOptions: number };
+export type LongWithVol = TradeIdeaLong & { ivProxyForOptions: number };
 
-function buildOption(
+export function buildOption(
   kind: OptionStructureKind,
   long: LongWithVol,
   pick: StockPick,

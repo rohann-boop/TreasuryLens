@@ -8,11 +8,13 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useTheme } from "@/lib/theme";
 import { StockPicksBody } from "./StockPicks";
 import { TradeIdeasBody } from "./TradeIdeas";
+import { TacticalIdeasBody } from "./TacticalIdeas";
 
-// Consolidated discovery surface. Two sub-sections, both reusing the existing
-// page bodies (no duplicated logic): Discovery (stock picks / themes / ETFs)
-// and Trade Ideas (actionable longs + bullish option structures).
-type IdeasTab = "discovery" | "trade-ideas";
+// Consolidated discovery surface. Three sub-sections, all reusing the existing
+// page bodies (no duplicated logic): Discovery (stock picks / themes / ETFs),
+// Trade Ideas (actionable longs + bullish option structures) and Tactical
+// (short-term setups + tactical option structures).
+type IdeasTab = "discovery" | "trade-ideas" | "tactical";
 
 export default function Ideas() {
   const { dark, setDark } = useTheme();
@@ -68,6 +70,9 @@ export default function Ideas() {
                 <TabsTrigger value="trade-ideas" data-testid="tab-trade-ideas">
                   Trade Ideas
                 </TabsTrigger>
+                <TabsTrigger value="tactical" data-testid="tab-tactical">
+                  Tactical
+                </TabsTrigger>
               </TabsList>
             </div>
           </div>
@@ -77,6 +82,9 @@ export default function Ideas() {
           </TabsContent>
           <TabsContent value="trade-ideas" className="mt-0">
             <TradeIdeasBody embedded />
+          </TabsContent>
+          <TabsContent value="tactical" className="mt-0">
+            <TacticalIdeasBody />
           </TabsContent>
         </Tabs>
       </main>

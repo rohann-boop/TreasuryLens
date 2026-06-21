@@ -18,6 +18,8 @@ import { runModelLabBacktest } from "./modelLab";
 import { getInvestmentGroups } from "./investmentGroups";
 import { getPortfolioLab } from "./portfolioLab";
 import { getTradeIdeas } from "./tradeIdeas";
+import { getTacticalIdeas } from "./tacticalIdeas";
+import { getAllWeather, resolveTemplate } from "./allWeather";
 import {
   getConvictionIdeas,
   addConvictionIdea,
@@ -619,6 +621,46 @@ export async function registerRoutes(
   app.get("/api/trade-ideas", async (_req, res) => {
     try {
       res.json(await getTradeIdeas());
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // Tactical Ideas — deterministic ranking of SHORT-TERM setups from the same
+  // curated Stock Picks universe Trade Ideas uses, plus tactical option
+  // structures (MODELED FALLBACKS). Research only; cached server-side (30 min).
+  app.get("/api/tactical-ideas", async (_req, res) => {
+    try {
+      res.json(await getTacticalIdeas());
+    } catch (e) {
+      res.status(500).json({ message: (e as Error).message });
+    }
+  });
+
+  // All-Weather Portfolios — curated multi-asset model TEMPLATES inside
+  // Portfolio Lab. GET returns the catalog; the optional ?templateId=&risk=
+  // params return a single deterministically risk-tilted resolution. Research
+  // only — no orders placed.
+  app.get("/api/all-weather", async (req, res) => {
+    try {
+      const templateId =
+        typeof req.query.templateId === "string" ? req.query.templateId : null;
+      if (templateId) {
+        const riskParam =
+          typeof req.query.risk === "string" ? req.query.risk : "balanced";
+        const risk =
+          riskParam === "defensive" || riskParam === "growth"
+            ? riskParam
+            : "balanced";
+        const resolved = resolveTemplate(templateId, risk);
+        if (!resolved) {
+          res.status(404).json({ message: `Unknown template: ${templateId}` });
+          return;
+        }
+        res.json(resolved);
+        return;
+      }
+      res.json(getAllWeather());
     } catch (e) {
       res.status(500).json({ message: (e as Error).message });
     }
