@@ -550,6 +550,11 @@ export interface StockPickPerformance {
   price12mAgo: number | null;
   price12mDate: string | null;
   change12mPct: number | null;
+  // Simple moving averages of daily closes. Null when the series is shorter
+  // than the window (e.g. newly-listed names lack a 200D average).
+  sma20: number | null;
+  sma50: number | null;
+  sma200: number | null;
   source: string; // e.g. "massive" | "yahoo" | "unavailable"
   confidence: DataConfidence;
   warnings: string[];
@@ -2545,6 +2550,19 @@ export interface TacticalIdea {
   // Pricing / scenario math.
   price: number | null;
   priceCurrency: string | null;
+  // Market context — sourced from the same enriched universe that powers price
+  // elsewhere in the app. marketCap is null (with a fallback label) when no
+  // provider returned one.
+  marketCap: number | null;
+  marketCapLabel: string | null;
+  // Trend averages (simple moving averages of daily closes) and the current
+  // price's percentage distance to each. Null when history is too short.
+  sma20: number | null;
+  sma50: number | null;
+  sma200: number | null;
+  sma20DistPct: number | null;
+  sma50DistPct: number | null;
+  sma200DistPct: number | null;
   // Expected tactical upside range — a near-term window between a conservative
   // and a stretch model-implied move (NOT the multi-year bull case). Percent.
   upsideLowPct: number | null;
@@ -2570,9 +2588,28 @@ export interface TacticalIdea {
   factors: TacticalFactor[];
   // Invalidation rules — what would take the setup off the list.
   invalidationRules: string[];
+  // Modeled Hit Probability — a PROVISIONAL, deterministic estimate of the
+  // chance the ticker reaches its base-case upside target before hitting the
+  // invalidation level over the tactical horizon. NOT the Setup Score and NOT
+  // a calibrated backtest result (see `hitProbabilityCalibrated` on the
+  // response). Rounded to a coarse band to avoid false precision.
+  hitProbabilityPct: number | null; // rounded midpoint 0-100
+  hitProbabilityLabel: string; // e.g. "~45–55%" or "n/a"
+  // Plain-English inputs that fed the estimate, for the "How hit probability is
+  // derived" detail area.
+  hitProbabilityInputs: string[];
   // Whether modeled bullish option structures are available for this name.
   optionsAvailable: boolean;
   dataConfidence: DataConfidence;
+}
+
+// One scoring component definition for the "How scoring works" panel. Weight is
+// the exact contribution the server uses in the Setup Score blend.
+export interface TacticalScoreComponent {
+  key: TacticalFactor["key"];
+  label: string;
+  weightPct: number; // 0-100, matches the server blend
+  definition: string;
 }
 
 // One transparent factor contribution to the tactical score.
@@ -2598,6 +2635,14 @@ export interface TacticalIdeasResponse {
   ideas: TacticalIdea[];
   options: TacticalOption[];
   setups: { kind: TacticalSetupKind; label: string; blurb: string }[];
+  // Definitions + exact weights for each Setup Score component, for the
+  // "How scoring works" panel.
+  scoreComponents: TacticalScoreComponent[];
+  // Whether the Modeled Hit Probability is backed by a calibrated backtest.
+  // false in V1 — the estimate is PROVISIONAL and derived deterministically.
+  hitProbabilityCalibrated: boolean;
+  // The success rule the hit probability estimates against, shown in the UI.
+  hitProbabilitySuccessRule: string;
   universeSize: number;
   optionsDataMode: TradeIdeaDataMode;
   metricsStatus: {
@@ -2608,6 +2653,7 @@ export interface TacticalIdeasResponse {
   methodology: {
     tactical: string;
     options: string;
+    hitProbability: string;
   };
   disclaimer: string;
 }

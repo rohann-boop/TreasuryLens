@@ -8,6 +8,7 @@ import type {
   TacticalIdea,
   TacticalIdeasResponse,
   TacticalOption,
+  TacticalScoreComponent,
   TacticalSetupKind,
   TradeIdeaTier,
 } from "@shared/schema";
@@ -28,6 +29,9 @@ import {
   Zap,
   Layers,
   Gauge,
+  ChevronDown,
+  Percent,
+  BookOpen,
 } from "lucide-react";
 import { fmtAgo, fmtPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -69,6 +73,55 @@ function fmtSignedPct(p: number | null | undefined, digits = 0): string {
   if (p == null || !Number.isFinite(p)) return "—";
   const v = p.toFixed(digits);
   return `${p >= 0 ? "+" : ""}${v}%`;
+}
+
+// Compact provisional hit-probability badge. Never styled like a confident
+// "signal" — muted and always paired with the word "prov." in the UI copy.
+function HitProbBadge({ idea }: { idea: TacticalIdea }) {
+  if (idea.hitProbabilityPct == null) {
+    return <span className="text-[11px] text-muted-foreground">—</span>;
+  }
+  return (
+    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium tabular-nums border border-border/60 bg-muted/30 text-foreground/90">
+      {idea.hitProbabilityLabel}
+    </span>
+  );
+}
+
+// A single trend-average row: value + above/below relationship + distance.
+function TrendAvgRow({
+  label,
+  ma,
+  distPct,
+  cur,
+}: {
+  label: string;
+  ma: number | null;
+  distPct: number | null;
+  cur: string;
+}) {
+  return (
+    <div className="flex items-center justify-between text-[11px] px-3 py-1.5">
+      <span className="text-muted-foreground">{label}</span>
+      {ma == null ? (
+        <span className="text-muted-foreground">N/A</span>
+      ) : (
+        <span className="flex items-center gap-2 tabular-nums">
+          <span className="text-foreground/90">{fmtPrice(ma, cur)}</span>
+          <span
+            className={cn(
+              "text-[10px] uppercase tracking-wider",
+              distPct != null && distPct >= 0 ? "text-pos" : "text-neg",
+            )}
+          >
+            {distPct != null
+              ? `${distPct >= 0 ? "above" : "below"} ${fmtSignedPct(distPct, 1)}`
+              : ""}
+          </span>
+        </span>
+      )}
+    </div>
+  );
 }
 
 function ScoreBadge({ score, tier }: { score: number; tier: TradeIdeaTier }) {
@@ -262,7 +315,9 @@ function compareNum(a: number | null, b: number | null, dir: "asc" | "desc") {
 type SetupSortKey =
   | "tacticalScore"
   | "ticker"
+  | "price"
   | "upside"
+  | "hitprob"
   | "invalidation"
   | "horizon"
   | "risk"
@@ -292,8 +347,12 @@ function SetupsTable({
       switch (sortKey) {
         case "ticker":
           return compareStr(a.ticker, b.ticker, sortDir);
+        case "price":
+          return compareNum(a.price, b.price, sortDir);
         case "upside":
           return compareNum(a.upsideHighPct, b.upsideHighPct, sortDir);
+        case "hitprob":
+          return compareNum(a.hitProbabilityPct, b.hitProbabilityPct, sortDir);
         case "invalidation":
           return compareNum(a.invalidationPct, b.invalidationPct, sortDir);
         case "horizon":
@@ -323,17 +382,23 @@ function SetupsTable({
         <thead className="border-b border-border/70 bg-card/60">
           <tr>
             <th className="px-3 py-2 text-left">
-              <SortHeader label="Score" k="tacticalScore" active={sortKey} dir={sortDir} onSort={onSort} />
+              <SortHeader label="Setup Score" k="tacticalScore" active={sortKey} dir={sortDir} onSort={onSort} />
             </th>
             <th className="px-3 py-2 text-left">
               <SortHeader label="Ticker" k="ticker" active={sortKey} dir={sortDir} onSort={onSort} />
             </th>
             <th className="px-3 py-2 text-left hidden sm:table-cell">Setup</th>
+            <th className="px-3 py-2 text-right hidden sm:table-cell">
+              <SortHeader label="Price" k="price" active={sortKey} dir={sortDir} onSort={onSort} align="right" />
+            </th>
             <th className="px-3 py-2 text-left hidden md:table-cell">
               <SortHeader label="Horizon" k="horizon" active={sortKey} dir={sortDir} onSort={onSort} />
             </th>
             <th className="px-3 py-2 text-right">
               <SortHeader label="Upside" k="upside" active={sortKey} dir={sortDir} onSort={onSort} align="right" />
+            </th>
+            <th className="px-3 py-2 text-right">
+              <SortHeader label="Hit prob*" k="hitprob" active={sortKey} dir={sortDir} onSort={onSort} align="right" />
             </th>
             <th className="px-3 py-2 text-right hidden md:table-cell">
               <SortHeader label="Invalidation" k="invalidation" active={sortKey} dir={sortDir} onSort={onSort} align="right" />
@@ -368,6 +433,9 @@ function SetupsTable({
               <td className="px-3 py-2 hidden sm:table-cell">
                 <SetupBadge label={r.setupLabel} />
               </td>
+              <td className="px-3 py-2 text-right tabular-nums text-[11px] hidden sm:table-cell">
+                {fmtPrice(r.price, r.priceCurrency ?? "USD")}
+              </td>
               <td className="px-3 py-2 text-[11px] text-foreground/90 hidden md:table-cell">
                 {r.horizon}
               </td>
@@ -375,6 +443,9 @@ function SetupsTable({
                 {r.upsideLowPct != null && r.upsideHighPct != null
                   ? `+${r.upsideLowPct}–${r.upsideHighPct}%`
                   : "—"}
+              </td>
+              <td className="px-3 py-2 text-right">
+                <HitProbBadge idea={r} />
               </td>
               <td className={cn("px-3 py-2 text-right tabular-nums text-[11px] hidden md:table-cell", pctTone(r.invalidationPct))}>
                 {fmtSignedPct(r.invalidationPct)}
@@ -584,8 +655,17 @@ function FactorBar({ factor }: { factor: TacticalFactor }) {
   );
 }
 
-function SetupDetail({ idea }: { idea: TacticalIdea }) {
+function SetupDetail({
+  idea,
+  successRule,
+  hitProbabilityNote,
+}: {
+  idea: TacticalIdea;
+  successRule: string;
+  hitProbabilityNote: string;
+}) {
   const cur = idea.priceCurrency ?? "USD";
+  const hasTrend = idea.sma20 != null || idea.sma50 != null || idea.sma200 != null;
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -627,6 +707,12 @@ function SetupDetail({ idea }: { idea: TacticalIdea }) {
           Price <span className="text-foreground tabular-nums">{fmtPrice(idea.price, cur)}</span>
         </span>
         <span className="text-muted-foreground">
+          Market cap{" "}
+          <span className="text-foreground tabular-nums">
+            {idea.marketCapLabel ?? "N/A"}
+          </span>
+        </span>
+        <span className="text-muted-foreground">
           1m <span className={cn("tabular-nums", pctTone(idea.change1mPct))}>{fmtSignedPct(idea.change1mPct)}</span>
         </span>
         <span className="text-muted-foreground">
@@ -647,6 +733,65 @@ function SetupDetail({ idea }: { idea: TacticalIdea }) {
 
       <Bullets label="Why this is mispriced" items={idea.whyMispriced} />
 
+      {/* Market context — trend averages */}
+      <div>
+        <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1.5">
+          Market context · trend averages
+        </div>
+        {hasTrend ? (
+          <div className="rounded-md border border-border/60 bg-background/35 divide-y divide-border/40">
+            <TrendAvgRow label="20-day avg" ma={idea.sma20} distPct={idea.sma20DistPct} cur={cur} />
+            <TrendAvgRow label="50-day avg" ma={idea.sma50} distPct={idea.sma50DistPct} cur={cur} />
+            <TrendAvgRow label="200-day avg" ma={idea.sma200} distPct={idea.sma200DistPct} cur={cur} />
+          </div>
+        ) : (
+          <div className="rounded-md border border-border/60 bg-background/35 px-3 py-2 text-[11px] text-muted-foreground">
+            Trend averages unavailable — price history too short for this name.
+          </div>
+        )}
+        <div className="text-[10px] text-muted-foreground mt-1">
+          "Above / below" compares the current price to each simple moving average of daily closes.
+        </div>
+      </div>
+
+      {/* Modeled Hit Probability — separate from Setup Score, provisional */}
+      <div className="rounded-md border border-border/60 bg-background/40 p-3 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5">
+            <Percent className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+            <span className="text-[11px] font-medium text-foreground/90">
+              Modeled Hit Probability
+            </span>
+          </div>
+          <span className="text-[14px] font-semibold tabular-nums">
+            {idea.hitProbabilityLabel}
+          </span>
+        </div>
+        <div className="inline-flex items-center rounded px-1.5 py-0.5 text-[9px] uppercase tracking-wider border border-warn/40 bg-warn/10 text-warn">
+          Provisional · not yet backtest-calibrated
+        </div>
+        <div className="text-[11px] text-muted-foreground leading-relaxed">
+          <span className="text-foreground/80 font-medium">Success rule: </span>
+          {successRule}
+        </div>
+        {idea.hitProbabilityInputs.length > 0 && (
+          <div>
+            <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">
+              How hit probability is derived
+            </div>
+            <ul className="list-disc list-inside text-[11px] leading-relaxed space-y-0.5 text-muted-foreground">
+              {idea.hitProbabilityInputs.map((b, i) => (
+                <li key={i}>{b}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <div className="text-[10px] text-muted-foreground leading-relaxed border-t border-border/50 pt-2">
+          {hitProbabilityNote} This is <b>not</b> the Setup Score and <b>not</b> personalized
+          financial advice.
+        </div>
+      </div>
+
       <div>
         <div className="text-[10px] uppercase tracking-widest text-muted-foreground mb-2">
           Why this is ranked
@@ -661,10 +806,11 @@ function SetupDetail({ idea }: { idea: TacticalIdea }) {
       <Bullets label="Invalidation rules" items={idea.invalidationRules} />
 
       <div className="text-[10px] text-muted-foreground leading-relaxed border-t border-border/50 pt-3">
-        Tactical Score is a transparent weighted blend of trailing momentum, remaining
-        base-case room, entry quality, scenario reward/risk and catalyst presence — a
-        model-implied read, never a promise. Short-term and options ideas carry elevated
-        risk. Data confidence: {idea.dataConfidence}. Research only — not financial advice.
+        Setup Score is a relative 0-100 <b>ranking</b> score — a transparent weighted blend of
+        trailing momentum, remaining base-case room, entry quality, scenario upside-vs-downside
+        and catalyst presence. It ranks setups against each other; it is <b>not</b> a probability
+        of success. Short-term and options ideas carry elevated risk. Data confidence:{" "}
+        {idea.dataConfidence}. Research only — not financial advice.
       </div>
     </div>
   );
@@ -752,6 +898,87 @@ function OptionDetail({ option }: { option: TacticalOption }) {
         payoff multiple), not raw upside. 2x/3x flags describe a modeled bull scenario, not a
         guaranteed outcome. Options can expire worthless. Research only — not financial advice.
       </div>
+    </div>
+  );
+}
+
+// ─── "How scoring works" panel ───────────────────────────────────────────────
+
+function HowScoringWorks({
+  components,
+  successRule,
+  calibrated,
+  hitProbabilityNote,
+}: {
+  components: TacticalScoreComponent[];
+  successRule: string;
+  calibrated: boolean;
+  hitProbabilityNote: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-md border border-border/70 bg-background/35">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        data-testid="how-scoring-works-toggle"
+        className="w-full flex items-center justify-between gap-2 px-3 py-2 text-[12px] text-foreground/90 hover:bg-card/40 transition-colors"
+      >
+        <span className="inline-flex items-center gap-1.5">
+          <BookOpen className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+          <span className="font-medium">How scoring works</span>
+          <span className="text-[11px] text-muted-foreground">
+            — Setup Score components &amp; Hit Probability
+          </span>
+        </span>
+        <ChevronDown
+          className={cn("h-4 w-4 text-muted-foreground transition-transform", open && "rotate-180")}
+          aria-hidden
+        />
+      </button>
+      {open && (
+        <div className="px-3 pb-3 pt-1 space-y-3 border-t border-border/60">
+          <div className="text-[11px] text-muted-foreground leading-relaxed">
+            <b className="text-foreground/90">Setup Score</b> is a relative 0-100 <b>ranking</b>{" "}
+            score — a way to compare these setups against each other. It is{" "}
+            <b>not a probability of success</b>. It blends the components below at the exact
+            weights the model uses:
+          </div>
+          <div className="space-y-2">
+            {components.map((c) => (
+              <div
+                key={c.key}
+                className="rounded-md border border-border/50 bg-background/30 px-2.5 py-1.5"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-medium text-foreground/90">{c.label}</span>
+                  <span className="text-[10px] tabular-nums text-muted-foreground uppercase tracking-wider">
+                    {c.weightPct}% weight
+                  </span>
+                </div>
+                <div className="text-[11px] text-muted-foreground leading-snug mt-0.5">
+                  {c.definition}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="rounded-md border border-warn/40 bg-warn/10 px-2.5 py-2 space-y-1">
+            <div className="flex items-center gap-1.5 text-[11px] font-medium text-foreground/90">
+              <Percent className="h-3.5 w-3.5 text-warn" aria-hidden />
+              Modeled Hit Probability
+              <span className="inline-flex items-center rounded px-1 py-0.5 text-[9px] uppercase tracking-wider border border-warn/40 bg-warn/10 text-warn">
+                {calibrated ? "calibrated" : "provisional"}
+              </span>
+            </div>
+            <div className="text-[11px] text-muted-foreground leading-relaxed">
+              A separate, {calibrated ? "calibrated" : "provisional / not-yet-backtest-calibrated"}{" "}
+              estimate — shown per idea in its detail drawer. <b>Success rule:</b> {successRule}{" "}
+              {hitProbabilityNote}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -848,6 +1075,12 @@ export function TacticalIdeasBody() {
             where present, a catalyst. <b>Setups</b> ranks the equity ideas; <b>Options</b>{" "}
             maps each thesis to modeled bullish structures. Research ideas, not personalized
             financial advice.
+          </p>
+          <p className="text-[11px] text-muted-foreground leading-relaxed max-w-3xl">
+            The <b>Setup Score</b> is a relative 0-100 <b>ranking</b> score — a way to compare
+            setups against each other — <b>not</b> a probability of success. A separate,
+            provisional <b>Modeled Hit Probability</b> estimates the chance a setup reaches its
+            target. Expand <i>How scoring works</i> below for definitions.
           </p>
           <div className="flex items-start gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-600 dark:text-amber-400 max-w-3xl">
             <ShieldAlert className="h-3.5 w-3.5 mt-0.5 shrink-0" aria-hidden />
@@ -1015,8 +1248,17 @@ export function TacticalIdeasBody() {
             <div className="min-w-0 space-y-3">
               {tab === "setups" ? (
                 <>
+                  {data && (
+                    <HowScoringWorks
+                      components={data.scoreComponents}
+                      successRule={data.hitProbabilitySuccessRule}
+                      calibrated={data.hitProbabilityCalibrated}
+                      hitProbabilityNote={data.methodology.hitProbability}
+                    />
+                  )}
                   <div className="text-[11px] text-muted-foreground">
-                    {filteredIdeas.length} of {ideas.length} tactical setups
+                    {filteredIdeas.length} of {ideas.length} tactical setups · hit prob* is a
+                    provisional estimate, not the Setup Score
                   </div>
                   <SetupsTable rows={filteredIdeas} onSelect={setSelectedSetup} selected={selectedSetup} />
                 </>
@@ -1044,6 +1286,9 @@ export function TacticalIdeasBody() {
               <span className="font-medium">Methodology</span>
             </div>
             {tab === "setups" ? data.methodology.tactical : data.methodology.options}
+            {tab === "setups" && (
+              <div className="mt-2">{data.methodology.hitProbability}</div>
+            )}
             <div className="mt-2">{data.disclaimer}</div>
             {data.asOf ? ` Updated ${fmtAgo(data.asOf)}.` : ""}
           </footer>
@@ -1067,7 +1312,14 @@ export function TacticalIdeasBody() {
                 </SheetDescription>
               </SheetHeader>
               <div className="mt-4">
-                <SetupDetail idea={selectedSetupRow} />
+                <SetupDetail
+                  idea={selectedSetupRow}
+                  successRule={
+                    data?.hitProbabilitySuccessRule ??
+                    "Estimated chance the ticker reaches its base-case upside target before hitting the invalidation level over the tactical horizon."
+                  }
+                  hitProbabilityNote={data?.methodology.hitProbability ?? ""}
+                />
               </div>
             </>
           )}

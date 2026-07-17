@@ -19,7 +19,7 @@ import type {
   StockPicksResponse,
 } from "@shared/schema";
 import type { Bar } from "./indicators";
-import { sma } from "./indicators";
+import { lastSma, sma } from "./indicators";
 import {
   fetchMassiveChart,
   fetchMassiveTickerDetails,
@@ -4181,6 +4181,9 @@ function computePerformance(
     price12mAgo: null,
     price12mDate: null,
     change12mPct: null,
+    sma20: null,
+    sma50: null,
+    sma200: null,
     source,
     confidence: "low",
     warnings,
@@ -4189,6 +4192,12 @@ function computePerformance(
     warnings.push("Performance unavailable — no historical bars.");
     return perf;
   }
+  // Trend averages from the daily close series (same helper the indicators
+  // pipeline uses). Null when the window exceeds available history.
+  const closes = bars.map((b) => b.c).filter((c) => Number.isFinite(c) && c > 0);
+  perf.sma20 = lastSma(closes, 20);
+  perf.sma50 = lastSma(closes, 50);
+  perf.sma200 = lastSma(closes, 200);
   const last = bars[bars.length - 1];
   const now = last.t;
   // Day-over-day move: latest close vs the immediately prior trading-day bar.

@@ -41,6 +41,7 @@ import type {
   TacticalIdea,
   TacticalIdeasResponse,
   TacticalOption,
+  TacticalScoreComponent,
   TacticalSetupKind,
   TradeIdeaLong,
   TradeIdeaTier,
@@ -66,6 +67,100 @@ function tierFromScore(score: number): TradeIdeaTier {
   if (score >= 70) return "high";
   if (score >= 50) return "medium";
   return "low";
+}
+
+// Plain-English definitions + the EXACT weights used in the Setup Score blend
+// below. Surfaced in the "How scoring works" panel so the weights the UI shows
+// always match the server. Setup Score is a RELATIVE 0-100 ranking score — a
+// way to compare setups against each other — NOT a probability of success.
+const SCORE_COMPONENTS: TacticalScoreComponent[] = [
+  {
+    key: "momentum",
+    label: "Trend / momentum",
+    weightPct: 32,
+    definition:
+      "Recent price strength and trend shape from the 1m/6m return windows. Rewards a constructive, established trend and trims parabolic moves — tactical entries chase less.",
+  },
+  {
+    key: "base-room",
+    label: "Base-case room",
+    weightPct: 26,
+    definition:
+      "Model-implied upside left from the current price to the scenario base case. More remaining room scores higher.",
+  },
+  {
+    key: "entry",
+    label: "Entry quality",
+    weightPct: 18,
+    definition:
+      "Whether the current price looks like a clean entry (near support / a pullback / a fresh breakout) versus stretched after a large run.",
+  },
+  {
+    key: "reward-risk",
+    label: "Scenario upside vs downside",
+    weightPct: 14,
+    definition:
+      "Compares the scenario bull-case upside against the bear-case downside / invalidation risk. Shown as upside% vs downside%, not a reward/risk multiplier.",
+  },
+  {
+    key: "catalyst",
+    label: "Catalyst",
+    weightPct: 10,
+    definition:
+      "A near-term reason for the market to re-price the name — earnings, sector momentum, analyst revisions, or a tracked product / macro / theme event.",
+  },
+];
+
+const HIT_PROBABILITY_SUCCESS_RULE =
+  "Estimated chance the ticker reaches its base-case upside target before closing below the invalidation level, over the tactical horizon.";
+
+// Modeled Hit Probability — PROVISIONAL, deterministic, and deliberately
+// conservative for V1. This is NOT the Setup Score and NOT a calibrated
+// backtest. We start from a conservative prior and nudge it with the same
+// transparent factors that drive the Setup Score, then shrink toward the prior
+// when signal quality is thin (less data → less confidence), cap the ceiling to
+// avoid false precision, and round to a coarse 5-point band. Model Lab /
+// backtests should calibrate this later against realised outcomes.
+function hitProbability(
+  momPts: number,
+  entryPts: number,
+  rr: number | null,
+  baseUpside: number | null,
+  quality: number,
+): { mid: number | null; label: string; inputs: string[] } {
+  // No scenario target to reach → we can't define success. Stay honest.
+  if (baseUpside == null || baseUpside <= 0) {
+    return {
+      mid: null,
+      label: "n/a",
+      inputs: [
+        "No scenario base-case target available, so a hit probability cannot be defined for this setup.",
+      ],
+    };
+  }
+  const PRIOR = 40; // conservative neutral prior — below a coin-flip on purpose
+  let p = PRIOR;
+  p += (momPts - 50) * 0.14; // trend alignment
+  p += (entryPts - 50) * 0.16; // a cleaner entry reaches target before the stop more often
+  if (rr != null) p += clamp((rr - 1.5) * 4, -8, 10); // favourable upside/downside skew
+  // Shrink toward the prior when data is thin (quality 100 → full signal, 10 → mostly prior).
+  const q = clamp(quality / 100, 0.1, 1);
+  p = PRIOR + (p - PRIOR) * (0.5 + 0.5 * q);
+  // Cap the range hard: never present a provisional estimate as near-certain.
+  p = clamp(p, 20, 70);
+  const mid = Math.round(p / 5) * 5;
+  const lo = clamp(mid - 5, 5, 95);
+  const hi = clamp(mid + 5, 10, 95);
+  const inputs: string[] = [
+    `Conservative prior of ${PRIOR}% before adjustments.`,
+    `Trend/momentum score of ${Math.round(momPts)} ${momPts >= 50 ? "raised" : "lowered"} the estimate.`,
+    `Entry-quality score of ${Math.round(entryPts)} ${entryPts >= 50 ? "raised" : "lowered"} the estimate.`,
+    rr != null
+      ? `Scenario upside/downside skew (${rr.toFixed(1)} upside-to-downside) ${rr >= 1.5 ? "raised" : "lowered"} the estimate.`
+      : "No scenario upside/downside skew available.",
+    `Signal quality of ${Math.round(quality)}/100 pulled the estimate ${quality >= 75 ? "little" : "toward the conservative prior"}.`,
+  ];
+  return { mid, label: `~${lo}–${hi}%`, inputs };
 }
 
 const SETUPS: { kind: TacticalSetupKind; label: string; blurb: string }[] = [
@@ -203,6 +298,7 @@ function buildTactical(pick: StockPick, long: TradeIdeaLong): TacticalIdea {
   const c12m = perf?.change12mPct ?? null;
   const baseUpside = sm?.base.outputs.impliedReturnPct ?? null;
   const bullUpside = sm?.bullUpsidePct ?? null;
+  const bearDownside = sm?.bearDownsidePct ?? null;
 
   const setup = classifySetup(c1m, c6m, baseUpside);
   const horizon = SETUP_HORIZON[setup];
@@ -262,13 +358,15 @@ function buildTactical(pick: StockPick, long: TradeIdeaLong): TacticalIdea {
     },
     {
       key: "reward-risk",
-      label: "Scenario reward/risk",
+      label: "Scenario upside vs downside",
       score: round(rrPts, 0),
       weight: 0.14,
       note:
-        rr != null
-          ? `Scenario reward/risk ~${rr.toFixed(1)}x.`
-          : "Reward/risk unavailable.",
+        bullUpside != null && bearDownside != null
+          ? `Scenario bull upside ~+${Math.round(bullUpside)}% weighed against ~${Math.round(bearDownside)}% downside to the bear case.`
+          : rr != null
+            ? "Scenario upside is larger than the modeled downside."
+            : "Scenario upside/downside unavailable.",
     },
     {
       key: "catalyst",
@@ -306,6 +404,26 @@ function buildTactical(pick: StockPick, long: TradeIdeaLong): TacticalIdea {
       : "potential upside n/a";
 
   const price = km?.price ?? null;
+
+  // ── Market context ───────────────────────────────────────────────────────
+  // Sourced straight from the enriched universe (same data powering price
+  // elsewhere). marketCap / SMAs may be null; the UI shows a fallback state.
+  const marketCap = km?.marketCap ?? null;
+  const marketCapLabel = km?.marketCapLabel ?? null;
+  const sma20 = perf?.sma20 ?? null;
+  const sma50 = perf?.sma50 ?? null;
+  const sma200 = perf?.sma200 ?? null;
+  const distTo = (ma: number | null): number | null =>
+    price != null && ma != null && ma > 0
+      ? round(((price - ma) / ma) * 100, 1)
+      : null;
+  const sma20DistPct = distTo(sma20);
+  const sma50DistPct = distTo(sma50);
+  const sma200DistPct = distTo(sma200);
+
+  // ── Modeled Hit Probability (provisional) ─────────────────────────────────
+  const hp = hitProbability(momPts, entryPts, rr, baseUpside, quality);
+
   const invalidationLevel = long.invalidationLevel;
   const invalidationPct =
     price != null && invalidationLevel != null && price > 0
@@ -394,6 +512,14 @@ function buildTactical(pick: StockPick, long: TradeIdeaLong): TacticalIdea {
     signalQualityLabel,
     price,
     priceCurrency: km?.priceCurrency ?? null,
+    marketCap,
+    marketCapLabel,
+    sma20,
+    sma50,
+    sma200,
+    sma20DistPct,
+    sma50DistPct,
+    sma200DistPct,
     upsideLowPct: range.low,
     upsideHighPct: range.high,
     upsideLabel,
@@ -408,6 +534,9 @@ function buildTactical(pick: StockPick, long: TradeIdeaLong): TacticalIdea {
     whyMispriced,
     factors,
     invalidationRules,
+    hitProbabilityPct: hp.mid,
+    hitProbabilityLabel: hp.label,
+    hitProbabilityInputs: hp.inputs,
     optionsAvailable: price != null && price > 0,
     dataConfidence: pick.dataConfidence,
   };
@@ -449,6 +578,9 @@ async function buildResponse(): Promise<TacticalIdeasResponse> {
     ideas,
     options,
     setups: SETUPS,
+    scoreComponents: SCORE_COMPONENTS,
+    hitProbabilityCalibrated: false,
+    hitProbabilitySuccessRule: HIT_PROBABILITY_SUCCESS_RULE,
     universeSize: picks.length,
     optionsDataMode: "modeled-fallback",
     metricsStatus: {
@@ -458,9 +590,11 @@ async function buildResponse(): Promise<TacticalIdeasResponse> {
     },
     methodology: {
       tactical:
-        "Each tactical setup is ranked by a transparent 0-100 score blending trailing momentum windows (1m/6m, rewarding constructive non-parabolic trend), remaining scenario base-case room, entry quality, scenario reward/risk and catalyst presence (weights 32/26/18/14/10%). The setup kind (momentum continuation, breakout watch, pullback, mean-reversion rebound, value dislocation) is derived from the same momentum + room thresholds. The expected upside is a model-implied RANGE that compresses scenario base/bull room into a tactical horizon — never a multi-year target and never a promise. Signal quality reflects how much data (momentum + scenario coverage) backed the read. No intraday technicals, no LLM, no price prediction.",
+        "Each tactical setup is ranked by the Setup Score — a transparent, RELATIVE 0-100 ranking score (a way to compare setups against each other, NOT a probability of success) blending trailing momentum windows (1m/6m, rewarding constructive non-parabolic trend), remaining scenario base-case room, entry quality, scenario upside-vs-downside and catalyst presence (weights 32/26/18/14/10%). The setup kind (momentum continuation, breakout watch, pullback, mean-reversion rebound, value dislocation) is derived from the same momentum + room thresholds. The expected upside is a model-implied RANGE that compresses scenario base/bull room into a tactical horizon — never a multi-year target and never a promise. Signal quality reflects how much data (momentum + scenario coverage) backed the read. No intraday technicals, no LLM, no price prediction.",
       options:
         "Tactical option structures reuse Trade Ideas' MODELED FALLBACK engine (no live option chain): premiums use an ATM proxy, strikes are placed off current price and the scenario targets, and ideas are ranked by a payoff-adjusted actionability score (not raw upside). They are re-tagged with the tactical setup and horizon. 2x/3x flags describe a modeled bull scenario, not a promise — options can expire worthless.",
+      hitProbability:
+        "Modeled Hit Probability is a PROVISIONAL, NOT-YET-BACKTEST-CALIBRATED estimate of the chance a setup reaches its base-case upside target before closing below the invalidation level over the tactical horizon. It is separate from the Setup Score. It is derived deterministically from a conservative prior nudged by trend/momentum, entry quality and the scenario upside/downside skew, then shrunk toward the prior when signal quality is thin and capped to avoid false precision (shown as a coarse rounded band). It is NOT personalized financial advice. Model Lab / backtests should calibrate it against realised outcomes before it is treated as a real probability.",
     },
     disclaimer: DISCLAIMER,
   };
